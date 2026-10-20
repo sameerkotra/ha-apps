@@ -66,6 +66,44 @@ const Play = (() => {
   function runLabel() { return S.daily ? "Today's challenge · " + modeLabel(S.daily.mode) : modeLabel(S.mode); }
   function modeLabel(id) { const m = S.server && S.server.modes.find((x) => x.id === id); return m ? m.label : id; }
   function isRunning() { return state.tab === "play" && S.phase === "running"; }
+  // A game on screen that Back must not leave: running, or paused (a turn-by-turn match waits by itself, so its pause
+  // isn't counted).
+  function inGame() { return state.tab === "play" && (S.phase === "running" || (S.phase === "paused" && !S.turns)); }
+  function coarse() { return !!(window.matchMedia && window.matchMedia("(pointer: coarse)").matches); }
+  // The header's ‹ (and every "Back to games"): a game being played pauses and asks first; otherwise back.
+  function goBack() {
+    if (holdLeave({ tab: "home" })) return;
+    if (!(window.BackNav && BackNav.back())) showTab("home");
+  }
+  function backButton() {
+    return h("button", { class: "icon-btn", type: "button", id: "backBtn", title: "Back", "aria-label": "Back", onclick: goBack }, "‹");
+  }
+  // A card that says why the game can't be shown, with the way back.
+  function failCard(cls, ...kids) {
+    return h("div", { class: cls, id: "gameMissing" }, kids,
+      h("div", null, h("button", { class: "btn-secondary", type: "button", style: "margin-top:10px", onclick: () => showTab("home") }, "Back to games")));
+  }
+  // Leaving the game page (another tab, ‹, Back, a link) while a game is running or paused: it pauses and asks
+  // (Save & exit / End & exit) instead of ending it at once. → true when it stayed; dest is where to go after.
+  function holdLeave(dest) {
+    if (state.tab !== "play" || S.turns || !S.inst) return false;
+    if (S.phase !== "running" && S.phase !== "paused") return false;
+    S.leaveTo = dest || { tab: "home" };
+    S.leaving = true;
+    if (S.phase === "running") pause(); else showPaused();
+    return true;
+  }
+  function exitGame() {
+    const d = S.leaveTo || { tab: "home" };
+    S.leaveTo = null; S.leaving = false;
+    showTab(d.tab, Object.assign({}, d.opts || {}, { force: true }));
+  }
+  // Back (the gesture): a running game pauses and asks; a paused one asks again.
+  function backPressed() {
+    if (S.phase === "running" && !S.turns) { holdLeave(); return; }
+    if (S.phase === "running") { pause(); return; }
+    if (S.phase === "paused" && !S.turns) { S.leaving = true; S.leaveTo = S.leaveTo || { tab: "home" }; showPaused(); }
+  }
   // Carrying on from the next level (spec §14): the person's progress in a mode, and the level the next game starts at.
   function progressFor(mode) { return (S.server && S.server.progress && S.server.progress[mode]) || null; }
   function chosenStart(mode) {
@@ -85,11 +123,14 @@ const Play = (() => {
     S.openDaily = which === "daily";       // arrived from Home's "Today's challenges"
     S.daily = null;
     const root = $("#tab-play");
-    mount(root, spinner());
+    // the header with its ‹ first, so a slow or failed load always has the way back
+    const known = state.games.find((g) => g.id === gameId) || gameInfo(gameId);
+    const head = () => h("div", { class: "play-head" }, backButton(), h("h2", null, known ? `${known.icon || ""} ${known.name}`.trim() : "Game"));
+    mount(root, head(), spinner());
     try {
       if (!state.games.length || !state.games.some((g) => g.id === gameId)) await refreshGames();
       if (!state.me) await refreshMe();
-    } catch (e) { mount(root, errorCard(e, () => render(gameId, which))); return; }
+    } catch (e) { mount(root, head(), errorCard(e, () => render(gameId, which)), failCard("hint")); return; }
     S.server = state.games.find((g) => g.id === gameId) || null;
     S.def = registryGame(gameId);
     if (!S.def && S.server && window.ArcadeGames && typeof ArcadeGames.load === "function") {
@@ -98,12 +139,11 @@ const Play = (() => {
       if (S.gameId !== gameId || state.tab !== "play") return;       // the page moved on meanwhile
     }
     if (!S.server) {
-      mount(root, pageHead("Game"), h("div", { class: "card empty", id: "gameMissing" }, "That game isn't switched on for you.",
-        h("div", null, h("button", { class: "btn-secondary", type: "button", style: "margin-top:10px", onclick: () => showTab("home") }, "Back to games"))));
+      mount(root, head(), failCard("card empty", "That game isn't switched on for you."));
       return;
     }
     if (!S.def) {
-      mount(root, pageHead(S.server.name), h("div", { class: "card fatal", id: "gameMissing" }, `${S.server.name} couldn't be loaded in this browser. Try reloading the page.`));
+      mount(root, head(), failCard("card fatal", `${S.server.name} couldn't be loaded in this browser. Try reloading the page.`));
       return;
     }
     const saved = lsGet(modeKey(gameId));
@@ -118,7 +158,9 @@ const Play = (() => {
     el.pauseBtn = h("button", { class: "icon-btn", type: "button", id: "pauseBtn", title: S.def.typed ? "Pause (Esc)" : "Pause (P)", "aria-label": "Pause", onclick: () => (S.phase === "paused" ? resume() : pause()) }, "⏸");
     el.timeSlot = h("span", { id: "playTime" });
     // How to play: folded away by default so the game gets the room; ? opens it (remembered per device).
-    const helpText = (S.def.help || "") + (/paus/i.test(S.def.help || "") ? "" : S.def.typed ? " Esc pauses." : " P or Esc pauses.");
+    // (the keyboard's pause keys aren't worth a mention on a touch screen)
+    const helpText = (S.def.help || "") + (/paus/i.test(S.def.help || "") || coarse() ? "" : S.def.typed ? " Esc pauses." : " P or Esc pauses.");
+    S.helpText = helpText.trim();
     el.help = h("div", { class: "play-help", id: "playHelp", hidden: lsGet("arcade.helpOpen") !== "1" }, helpText.trim());
     el.helpBtn = h("button", { class: "icon-btn", type: "button", id: "helpBtn", title: "How to play", "aria-label": "How to play",
       "aria-controls": "playHelp", "aria-expanded": String(!el.help.hidden), onclick: toggleHelp }, "?");
@@ -129,8 +171,8 @@ const Play = (() => {
     // move it is, the end
     el.live = h("div", { class: "sr-only", id: "gameStatus", role: "status", "aria-live": "polite" });
     mount(root,
-      h("div", { class: "play-head" },
-        h("button", { class: "icon-btn", type: "button", id: "backBtn", title: "Back to games", "aria-label": "Back to games", onclick: () => showTab("home") }, "‹"),
+      el.head = h("div", { class: "play-head" },
+        backButton(),
         h("h2", null, `${S.server.icon} ${S.server.name}`), el.favSlot = h("span", { id: "favSlot" }, favButton(S.server)),
         el.timeSlot, el.helpBtn, el.soundBtn, el.pauseBtn, el.raceBar),
       el.help,
@@ -166,6 +208,7 @@ const Play = (() => {
     syncButtons();
   }
   function syncButtons() {
+    if (S.el.head) S.el.head.classList.toggle("in-game", S.phase === "running" || S.phase === "paused");
     if (!S.el.pauseBtn) return;
     S.el.pauseBtn.hidden = !(S.phase === "running" || S.phase === "paused");
     S.el.pauseBtn.textContent = S.phase === "paused" ? "▶" : "⏸";
@@ -237,33 +280,47 @@ const Play = (() => {
     practice.addEventListener("change", () => { S.practice = practice.checked; });
     const blocked = blockReason();
     const turnMode = isTurnMode(S.mode);
+    // one main button: a saved game's Continue, else today's challenge (when it was opened from there), else Play
+    const sv = S.server.saved, d = S.server.daily;
+    const primary = sv && sv.canResume ? "continue" : S.openDaily && d && !d.played ? "daily" : "play";
     // a two-phone mode is only played with someone: no Play button, Play with someone is the way in
-    const playBtn = turnMode ? null : h("button", { class: S.server.saved ? "btn-secondary" : "btn-primary", type: "button", id: "playBtn", disabled: !!blocked, onclick: () => startGame() }, S.server.saved ? "▶ New game" : "▶ Play");
-    setOverlay(
-      h("div", { class: "start-card" },
-        h("h3", null, S.server.name),
-        savedBlock(blocked),
-        bestLine(),
-        h("div", { class: "start-fields" },
-          S.server.modes.length > 1 ? h("label", { class: "field" }, "Mode", modeSel) : null,
-          levelField,
-          h("label", { class: "field" }, "Look", lookSel)),
-        levelLine,
-        optionFields.length ? h("div", { class: "start-fields", id: "startOptions" }, optionFields) : null,
-        dailyBlock(blocked),
-        h("label", { class: "mini-toggle", title: "Nothing is saved in Practice" }, practice, "Practice (not saved)"),
-        turnMode ? h("div", { class: "hint", id: "turnsHint" }, "Two phones: take turns from your own phones — they needn't be open at the same time. Your games on the Games page shows whose move it is.") : null,
-        message ? h("div", { class: "hint warn", role: "alert" }, message) : null,
-        blocked ? h("div", { class: "hint warn", id: "startBlocked", role: "alert" }, blocked) : null,
-        h("div", { class: "ov-row" }, playBtn, raceBtn(blocked))));
+    const playBtn = turnMode ? null : h("button", { class: primary === "play" ? "btn-primary" : "btn-secondary", type: "button", id: "playBtn", disabled: !!blocked, onclick: () => startGame() }, sv ? "▶ New game" : "▶ Play");
+    const more = (el) => { if (el) el.classList.add("start-more"); return el; };    // behind "More…" on a short game
+    const card = h("div", { class: "start-card" },
+      h("h3", null, S.server.name),
+      S.openDaily ? dailyBlock(blocked, primary) : null,
+      savedBlock(blocked, primary),
+      bestLine(),
+      h("div", { class: "start-fields" },
+        S.server.modes.length > 1 ? h("label", { class: "field" }, "Mode", modeSel) : null,
+        more(levelField),
+        more(h("label", { class: "field" }, "Look", lookSel))),
+      more(levelLine),
+      optionFields.length ? more(h("div", { class: "start-fields", id: "startOptions" }, optionFields)) : null,
+      S.openDaily ? null : more(dailyBlock(blocked, primary)),
+      turnMode ? h("div", { class: "hint", id: "turnsHint" }, "Two phones: take turns from your own phones — they needn't be open at the same time. Play together on the Games page shows whose move it is.") : null,
+      message ? h("div", { class: "hint warn", role: "alert" }, message) : null,
+      blocked ? h("div", { class: "hint warn", id: "startBlocked", role: "alert" }, blocked) : null,
+      h("div", { class: "ov-row start-actions" }, playBtn,
+        h("label", { class: "mini-toggle", title: "Nothing is saved in Practice" }, practice, "Practice"),
+        raceBtn(blocked, primary)),
+      h("div", { class: "ov-row start-links" }, boardBtn(S.mode),
+        h("button", { class: "btn-ghost btn-small more-btn", type: "button", id: "startMoreBtn", "aria-expanded": "false",
+          onclick: (ev) => { const open = card.classList.toggle("show-more"); ev.currentTarget.setAttribute("aria-expanded", String(open)); ev.currentTarget.textContent = open ? "Less" : "More…"; } }, "More…")));
+    setOverlay(card);
     S.el.overlay.classList.add("start");
-    const dailyBtn = $("#dailyBtn");
-    const first = S.openDaily && dailyBtn ? dailyBtn : playBtn || $("#togetherBtn");
+    const first = primary === "continue" ? $("#continueBtn") : primary === "daily" ? $("#dailyBtn") : playBtn || $("#togetherBtn");
     if (!blocked && first) first.focus({ preventScroll: true });
+  }
+  // The leaderboard of this game and mode (or today's challenge), when the leaderboard is on for this person.
+  function boardBtn(mode) {
+    if (!state.me || !state.me.leaderboard) return null;
+    return h("button", { class: "btn-ghost btn-small", type: "button", id: "boardBtn",
+      onclick: () => showTab("leaderboard", { arg: S.gameId, arg2: mode }) }, "🏆 Leaderboard");
   }
   // Today's challenge (only while an admin has daily challenges on): the day's mode and puzzle, one ranked try
   // each; after that, Practice. A daily game can't be put aside to finish later.
-  function dailyBlock(blocked) {
+  function dailyBlock(blocked, primary) {
     const d = S.server.daily;
     if (!d) return null;
     const played = !!d.played;
@@ -272,23 +329,23 @@ const Play = (() => {
         played ? (d.score !== null && d.score !== undefined ? ` · your score ${fmtNum(d.score)}` : " · played")
           : h("span", { class: "daily-note" }, " · one ranked try, the same puzzle for everyone")),
       h("div", { class: "ov-row" },
-        h("button", { class: played ? "btn-secondary btn-small" : "btn-primary", type: "button", id: "dailyBtn", disabled: !!blocked,
+        h("button", { class: played ? "btn-secondary btn-small" : primary === "daily" ? "btn-primary" : "btn-secondary", type: "button", id: "dailyBtn", disabled: !!blocked,
           "aria-label": played ? "Practice today's challenge" : "Play today's challenge",
           onclick: () => startGame({ daily: true, practice: played }) },        // Practice only after the ranked try
         played ? "Practice it" : "▶ Play it")));
   }
   // "Play with someone": a race on two phones (offered for the games that can be raced, to a person who isn't
   // blocked themselves).
-  function raceBtn(blocked) {
+  function raceBtn(blocked, primary) {
     if (!window.Together) return null;
     if (isTurnMode(S.mode)) {
       if (!S.def.turns) return null;
-      return h("button", { class: "btn-primary", type: "button", id: "togetherBtn", disabled: !!blocked, onclick: inviteSomeone }, "👥 Play with someone");
+      return h("button", { class: primary === "play" ? "btn-primary" : "btn-secondary", type: "button", id: "togetherBtn", disabled: !!blocked, onclick: inviteSomeone }, "👥 Play with someone");
     }
     if (!S.server.race || S.def.race === false || S.def.players === 2) return null;
     return h("button", { class: "btn-secondary", type: "button", id: "togetherBtn", disabled: !!blocked, onclick: inviteSomeone }, "👥 Play with someone");
   }
-  function savedBlock(blocked) {
+  function savedBlock(blocked, primary) {
     const sv = S.server.saved;
     if (!sv) return null;
     const end = async (keepScore) => {
@@ -304,23 +361,53 @@ const Play = (() => {
       h("div", null, h("strong", null, "Saved game"), ` · ${sv.modeLabel}${sv.practice ? " · Practice" : ""} · score ${fmtNum(sv.score)} · level ${sv.level} · ${fmtDuration(sv.seconds)}`),
       sv.canResume ? null : h("div", { class: "hint warn" }, "Made by an older version: it can't be continued, but its score can be kept."),
       h("div", { class: "ov-row" },
-        sv.canResume ? h("button", { class: "btn-primary", type: "button", id: "continueBtn", disabled: !!blocked, onclick: () => startGame({ resume: true }) }, "▶ Continue") : null,
+        sv.canResume ? h("button", { class: primary === "continue" ? "btn-primary" : "btn-secondary", type: "button", id: "continueBtn", disabled: !!blocked, onclick: () => startGame({ resume: true }) }, "▶ Continue") : null,
         h("button", { class: "btn-ghost btn-small", type: "button", id: "endSavedBtn", onclick: () => end(true) }, "End it"),
         h("button", { class: "btn-ghost btn-small", type: "button", id: "dropSavedBtn", onclick: () => end(false) }, "Throw away")));
   }
 
+  // Paused: Resume; leave (Save & exit, End & exit); start again; how to play; on a phone also ★ and sound (the
+  // header keeps only ‹, the name, the time and pause there). S.leaving: it was opened by ‹, Back or a link.
   function showPaused() {
     if (S.turns) { showTurnPaused(); return; }
     const canSave = !!(S.server.canSave && S.inst && S.inst.canSave) && !S.match && !S.daily;   // a race or a daily challenge can't be put aside
-    setOverlay(h("h3", null, "Paused"),
-      h("div", { class: "hint" }, `${runLabel()}${S.practice || (S.daily && S.daily.practice) ? " · Practice" : ""}${S.match ? " · Race" : ""}`),
+    const practice = S.practice || (S.daily && S.daily.practice);
+    const canRestart = !S.match && !(S.daily && !S.daily.practice);                  // one ranked try at a daily challenge
+    const help = h("div", { class: "pause-help", id: "pauseHelp", hidden: true }, S.helpText || "");
+    const helpBtn = h("button", { class: "btn-ghost btn-small", type: "button", id: "pauseHelpBtn", "aria-expanded": "false", "aria-controls": "pauseHelp",
+      onclick: () => { help.hidden = !help.hidden; helpBtn.setAttribute("aria-expanded", String(!help.hidden)); } }, "? How to play");
+    const fav = S.server ? h("span", { class: "narrow-only", id: "pauseFav" }, favButton(S.server)) : null;
+    const snd = h("button", { class: "btn-ghost btn-small narrow-only", type: "button", id: "pauseSoundBtn",
+      onclick: async () => { await toggleSound(); snd.textContent = sound() ? "🔊 Sound on" : "🔇 Sound off"; } }, sound() ? "🔊 Sound on" : "🔇 Sound off");
+    setOverlay(h("h3", null, S.leaving ? "Leave this game?" : "Paused"),
+      h("div", { class: "hint" }, `${runLabel()}${practice ? " · Practice" : ""}${S.match ? " · Race" : ""}`),
+      S.leaving ? h("div", { class: "hint", id: "leaveHint" }, canSave ? "Save it to carry on later, or end it here." : practice ? "Ending it here keeps nothing (Practice)." : "Ending it here keeps its score so far.") : null,
       h("div", { class: "ov-row" },
         h("button", { class: "btn-primary", type: "button", id: "resumeBtn", onclick: resume }, "▶ Resume")),
       h("div", { class: "ov-row" },
-        canSave ? h("button", { class: "btn-secondary", type: "button", id: "saveBtn", onclick: saveForLater }, "💾 Save for later") : null,
-        h("button", { class: "btn-ghost", type: "button", id: "quitBtn", onclick: quit }, S.match ? "Give up (score kept)" : S.practice || (S.daily && S.daily.practice) ? "End game" : "End game (score kept)")));
+        canSave ? h("button", { class: "btn-secondary", type: "button", id: "saveBtn", onclick: () => saveForLater(true) }, "💾 Save & exit") : null,
+        h("button", { class: canSave ? "btn-ghost" : "btn-secondary", type: "button", id: "exitBtn", onclick: exitGame }, S.match ? "Give up & exit" : "End & exit")),
+      h("div", { class: "ov-row" },
+        canRestart ? h("button", { class: "btn-ghost", type: "button", id: "restartBtn", onclick: restartGame }, "↻ Restart") : null,
+        h("button", { class: "btn-ghost", type: "button", id: "quitBtn", onclick: quit }, S.match ? "Give up (score kept)" : practice ? "End game" : "End game (score kept)")),
+      h("div", { class: "ov-row pause-tools" }, helpBtn, fav, snd),
+      help);
     const b = $("#resumeBtn");
     if (b) b.focus({ preventScroll: true });
+  }
+  // ↻ Restart: this game ends (its score so far counts, as when it is ended) and a new one starts with the same choices.
+  async function restartGame() {
+    if (S.phase !== "paused" || !S.inst) return;
+    const practice = S.practice || (S.daily && S.daily.practice);
+    if (!(await confirmDialog("Start again?", `This game ends here${practice ? "" : " and its score so far is kept"}; a new one starts.`, "Start again"))) return;
+    if (S.phase !== "paused" || !S.inst) return;
+    const how = S.daily ? { daily: true, practice: true } : {};
+    if (S.runSince !== null) { S.activeMs += now() - S.runSince; S.runSince = null; }
+    stopTimers(); releaseAll();
+    await endWithScore(false);
+    destroyInstance();
+    S.phase = "idle"; S.leaving = false; S.leaveTo = null;
+    if (state.tab === "play") startGame(how);
   }
   function showOver(result, saved, error) {
     announce(`Game over. Score ${fmtNum(result.score || 0)}` + (saved && saved.householdRecord ? ", a new household record" :
@@ -345,18 +432,23 @@ const Play = (() => {
     }
     if (saved && saved.startLevel > 1) badges.push(h("span", { class: "badge note" }, `From level ${saved.startLevel} — not on the leaderboard`));
     const blocked = blockReason();
-    setOverlay(h("h3", null, "Game over"),
-      h("div", { class: "big", id: "finalScore" }, fmtNum(result.score)),
-      h("div", { class: "hint" }, `Level ${result.level || 1} · ${fmtDuration(result.seconds)} · ${runLabel()}`),
-      Array.isArray(result.stats.summary) && result.stats.summary.length ? h("div", { class: "hint over-summary", id: "overSummary" }, result.stats.summary.map((t) => h("div", null, t))) : null,
-      progLine,
+    // a board game (won, lost and draw from the board kit) says who won; its score comes second
+    const st = result.stats || {};
+    const board = typeof st.lost === "boolean" && typeof st.draw === "boolean";
+    const headline = board ? (st.won ? "You won" : st.lost ? "You lost" : st.draw ? "Draw" : "Game over") : "Game over";
+    setOverlay(h("h3", { id: "overHeadline", class: board ? "over-headline" : null }, headline),
+      h("div", { class: board ? "big small" : "big", id: "finalScore" }, board ? `Score ${fmtNum(result.score)}` : fmtNum(result.score)),
       badges.length ? h("div", { class: "ov-row", id: "overBadges" }, badges) : null,
-      saved && saved.best !== null && saved.best !== undefined ? h("div", { class: "hint" }, "Your best: ", h("strong", null, fmtNum(saved.best))) : null,
+      h("div", { class: "hint" }, `Level ${result.level || 1} · ${fmtDuration(result.seconds)} · ${runLabel()}`),
+      Array.isArray(st.summary) && st.summary.length ? h("div", { class: "hint over-summary", id: "overSummary" }, st.summary.map((t) => h("div", null, t))) : null,
+      progLine,
+      saved && saved.best !== null && saved.best !== undefined && !saved.personalBest && !saved.householdRecord ? h("div", { class: "hint", id: "overBest" }, "Your best: ", h("strong", null, fmtNum(saved.best))) : null,
       blocked ? h("div", { class: "hint warn", role: "alert", id: "overBlocked" }, blocked) : null,
       h("div", { class: "ov-row" },
-        h("button", { class: "btn-primary", type: "button", id: "againBtn", disabled: !!blocked, onclick: startGame }, "↻ Play again"),
-        h("button", { class: "btn-secondary", type: "button", id: "changeBtn", onclick: () => showStart() }, "Change mode"),
-        h("button", { class: "btn-ghost", type: "button", onclick: () => showTab("home") }, "Games")));
+        h("button", { class: "btn-primary", type: "button", id: "againBtn", disabled: !!blocked, onclick: () => startGame() }, "↻ Play again"),
+        h("button", { class: "btn-secondary", type: "button", id: "changeBtn", onclick: () => showStart() }, "Change mode")),
+      h("div", { class: "ov-row" }, boardBtn(S.daily ? "daily" : S.mode),
+        h("button", { class: "btn-ghost btn-small", type: "button", id: "overGamesBtn", onclick: () => showTab("home") }, "Games")));
     const again = $("#againBtn");
     if (again && !again.disabled) again.focus({ preventScroll: true });
   }
@@ -484,22 +576,23 @@ const Play = (() => {
     finish({ score: r ? r.score : 0, level: r ? r.level : 1, seconds: r ? r.seconds : Math.round(activeSeconds()), stats: {} });
   }
   // Leaving the page in the middle of a game ends it, and its score so far counts like a finished game.
+  // (→ a promise that settles when the server has it; nothing waits for it when the page is going)
   function endWithScore(keepalive) {
-    if (!S.session) return;
-    if (S.turns) { endSession(keepalive); return; }      // a turn-by-turn match's result comes from its moves
+    if (!S.session) return Promise.resolve();
+    if (S.turns) return endSession(keepalive);      // a turn-by-turn match's result comes from its moves
     const r = S.inst ? safe(() => currentResult()) : null;
-    if (!r || (r.score <= 0 && r.seconds < 3)) { endSession(keepalive); return; }
+    if (!r || (r.score <= 0 && r.seconds < 3)) return endSession(keepalive);
     const id = S.session.id;
     S.session = null;
-    api("api/scores", { method: "POST", body: { sessionId: id, score: r.score, level: r.level, seconds: r.seconds, cleared: Math.max(0, (r.level || 1) - 1) }, keepalive })
+    return api("api/scores", { method: "POST", body: { sessionId: id, score: r.score, level: r.level, seconds: r.seconds, cleared: Math.max(0, (r.level || 1) - 1) }, keepalive })
       .catch(() => { /* the game is over either way */ });
   }
   function endSession(keepalive) {
-    if (!S.session) return;
+    if (!S.session) return Promise.resolve();
     const id = S.session.id;
     const secs = activeSeconds();
     S.session = null;
-    api(`api/sessions/${id}/end`, { method: "POST", body: { activeSeconds: secs }, keepalive }).catch(() => { /* housekeeping closes it */ });
+    return api(`api/sessions/${id}/end`, { method: "POST", body: { activeSeconds: secs }, keepalive }).catch(() => { /* housekeeping closes it */ });
   }
   async function finish(result) {
     if (S.phase !== "running" && S.phase !== "paused") return;
@@ -594,12 +687,17 @@ const Play = (() => {
       const names = waitingOn.length > 1 ? waitingOn.slice(0, -1).join(", ") + " and " + waitingOn[waitingOn.length - 1] : waitingOn[0] || (o ? Together.first(o.name) : "them");
       const countLine = !many ? null : m.mine ? (joined ? `${joined} joined so far — start now with ${joined + 1} of you, or wait for the rest.` : "Nobody has joined yet.")
         : `You've joined. The game starts when everyone has, or when ${inviter ? Together.first(inviter.name) : "the one who invited you"} starts it.`;
+      // everyone in the match with ✓ (in) or … (not yet), then one line for the time left
+      const status = (p) => (p.id === m.createdBy || p.invite === "accepted" ? "✓" : p.invite === "declined" ? "✕" : "…");
+      const players = (m.players || []).length ? (m.players || []) : (o ? [o] : []);
       setOverlay(h("h3", null, turns ? "Turn by turn" : "Race"),
-        h("div", { class: "hint", id: "waitingFor" }, `Waiting for ${names} to join…`),
-        countLine ? h("div", { class: "hint", id: "joinedCount" }, countLine) : null,
         h("div", { class: "hint" }, `${modeLabel(m.mode)}${m.practice ? " · Practice (not saved)" : ""}`),
-        turns ? h("div", { class: "hint", id: "turnsWaitHint" }, "They'll get a notification. You needn't wait here: the game shows under Your games on the Games page, and you'll be told when it's your move.") : null,
-        left !== null ? h("div", { class: "hint", id: "inviteLeft" }, `The invite runs out in ${Together.clock(left)}`) : null,
+        h("ul", { class: "wait-list", id: "waitingFor", "aria-label": `Waiting for ${names} to join` }, players.map((p) =>
+          h("li", { class: status(p) === "✓" ? "in" : "" }, h("span", { class: "wait-mark", "aria-hidden": "true" }, status(p)),
+            p.you ? "You" : Together.first(p.name), h("span", { class: "sr-only" }, status(p) === "✓" ? " — in" : status(p) === "✕" ? " — said not now" : " — not yet")))),
+        countLine ? h("div", { class: "hint", id: "joinedCount" }, countLine) : null,
+        turns ? h("div", { class: "hint", id: "turnsWaitHint" }, "They'll get a notification. You needn't wait here: the game shows under Play together on the Games page, and you'll be told when it's your move.") : null,
+        left !== null ? h("div", { class: "hint", id: "inviteLeft" }, `Runs out in ${Together.clock(left)}`) : null,
         h("div", { class: "ov-row" },
           turns && m.mine && joined && m.turns && (m.turns.maxPlayers || 2) > 2 ? h("button", { class: "btn-primary", type: "button", id: "startNowBtn", onclick: startNow }, `Start with ${joined + 1}`) : null,
           turns ? h("button", { class: "btn-secondary", type: "button", id: "waitBackBtn", onclick: () => showTab("home") }, "Back to games") : null,
@@ -709,7 +807,7 @@ const Play = (() => {
     const rematch = S.rematchInvite;
     const summary = result.stats && Array.isArray(result.stats.summary) && result.stats.summary.length ? result.stats.summary : null;
     setOverlay(h("h3", null, done ? (Together.headline(m) || "Race over") : "You finished"),
-      h("div", { class: "big race-big", id: "finalScore" }, fmtNum(result.score)),
+      done ? null : h("div", { class: "big race-big", id: "finalScore" }, fmtNum(result.score)),
       h("div", { class: "hint race-hint" }, m.kind === "turns" ? `${fmtDuration(result.seconds)} on this page · ${modeLabel(S.mode)}`
         : `Level ${result.level || 1} · ${fmtDuration(result.seconds)} · ${modeLabel(S.mode)}`),
       summary ? h("div", { class: "hint over-summary", id: "overSummary" }, summary.map((x) => h("div", null, x))) : null,     // a puzzle: how it went ("Found it in 3 tries")
@@ -720,7 +818,7 @@ const Play = (() => {
       h("div", { class: "ov-row" },
         done && rematch ? h("button", { class: "btn-primary", type: "button", id: "joinRematchBtn", disabled: !!blocked, onclick: () => joinRematch(rematch) }, `Join ${Together.first(o.name)}'s rematch`)
           : done ? h("button", { class: "btn-primary", type: "button", id: "rematchBtn", disabled: !!blocked, onclick: rematchNow }, "↻ Rematch") : null,
-        h("button", { class: "btn-ghost", type: "button", id: "raceBackBtn", onclick: () => showTab("home") }, "Back")));
+        h("button", { class: "btn-ghost", type: "button", id: "raceBackBtn", onclick: () => showTab("home") }, "Back to games")));
     S.el.overlay.classList.add("race");
   }
   async function rematchNow() {
@@ -896,7 +994,9 @@ const Play = (() => {
       h("div", { class: "ov-row" }, h("button", { class: "btn-primary", type: "button", id: "resumeBtn", onclick: resume }, "▶ Resume")),
       h("div", { class: "ov-row" },
         h("button", { class: "btn-secondary", type: "button", id: "turnBackBtn", onclick: () => showTab("home") }, "Back to games (the match waits)"),
-        h("button", { class: "btn-ghost", type: "button", id: "resignBtn", onclick: resignTurns }, "Resign")));
+        h("button", { class: "btn-ghost", type: "button", id: "pauseHelpBtn", onclick: (ev) => { const t = $("#pauseHelp"); if (t) { t.hidden = !t.hidden; ev.currentTarget.setAttribute("aria-expanded", String(!t.hidden)); } } }, "? How to play"),
+        h("button", { class: "btn-ghost", type: "button", id: "resignBtn", onclick: resignTurns }, "Resign")),
+      h("div", { class: "pause-help", id: "pauseHelp", hidden: true }, S.helpText || ""));
     const b = $("#resumeBtn");
     if (b) b.focus({ preventScroll: true });
   }
@@ -939,6 +1039,7 @@ const Play = (() => {
   }
   function resume() {
     if (S.phase !== "paused" || !S.inst) return;
+    S.leaving = false; S.leaveTo = null;
     S.phase = "running";
     S.runSince = now();
     setOverlay();
@@ -963,7 +1064,7 @@ const Play = (() => {
   }
 
   // Put the game aside to finish later (one saved game per kind; saving replaces the last one, whose score is kept).
-  async function saveForLater() {
+  async function saveForLater(exit) {
     if (!S.inst || !S.session || S.phase !== "paused") return;
     const old = S.server.saved;
     if (old && !S.session.resumedFrom) {
@@ -985,7 +1086,8 @@ const Play = (() => {
     S.server.saved = r.saved;
     toast(r.replaced && r.replaced.scoreSaved ? `Saved. Your earlier game's score (${fmtNum(r.replaced.score)}) was kept.` : "Saved — continue it any time.");
     try { await refreshGames(); S.server = state.games.find((g) => g.id === S.gameId) || S.server; } catch (e) { /* keep the old picture */ }
-    if (state.tab === "play") showStart();
+    if (state.tab !== "play") return;
+    if (exit === true) exitGame(); else showStart();
   }
 
   // ---------- leaving ----------
@@ -1010,6 +1112,7 @@ const Play = (() => {
     if (S.resizeObs) { S.resizeObs.disconnect(); S.resizeObs = null; }
     S.phase = "idle";
     S.session = null;
+    S.leaving = false; S.leaveTo = null;
   }
   function leave() { stopEverything(false); }
 
@@ -1056,13 +1159,24 @@ const Play = (() => {
       return h("div", { class: "pad paddle-pad", id: "pad" }, launch, strip);
     }
     if (S.def.controls === "buttons" || S.def.controls === "touch") {
-      const list = S.def.buttons || [];
+      let list = S.def.buttons || [];
+      // the shell's standard tools (def.slots): Hint, Undo, Restart first, with the same labels in every game
+      // (a pad laid out on a grid keeps its own places)
+      const slots = S.def.slots || {};
+      if (!(list.length && list.every((b) => b.place))) {
+        const tools = [["hint", "💡 Hint", "Hint"], ["undo", "↶ Undo", "Undo the last move"], ["restart", "⟲ Restart", "Start this board again"]]
+          .filter(([k]) => slots[k]).map(([k, label, aria]) => {
+            const own = list.find((b) => b.action === slots[k]);
+            return { action: slots[k], label, aria: own ? own.aria : aria, slot: k };
+          });
+        list = tools.concat(list.filter((b) => !tools.some((t) => t.action === b.action)));
+      }
       // buttons with a place [col, row, colSpan, rowSpan] are laid out on a grid; otherwise one wrapping row
       const grid = list.length > 0 && list.every((b) => b.place);
       const row = h("div", { class: "btn-pad" + (grid ? " grid" : ""), id: "btnPad", role: "group", "aria-label": "Game buttons" },
         ...list.map((b) => {
-          const el = h("button", { class: "pad-btn" + (b.wide ? " wide" : "") + (b.action === "fire" ? " launch" : ""), type: "button",
-            "aria-label": b.aria || b.label, dataset: { action: b.action } }, b.label);
+          const el = h("button", { class: "pad-btn" + (b.wide ? " wide" : "") + (b.action === "fire" ? " launch" : "") + (b.slot ? " slot-btn" : ""), type: "button",
+            "aria-label": b.aria || b.label, dataset: b.slot ? { action: b.action, slot: b.slot } : { action: b.action } }, b.label);
           if (grid) el.style.gridArea = `${b.place[1]} / ${b.place[0]} / span ${b.place[3]} / span ${b.place[2]}`;
           if (grid && String(b.label).length > 2) el.classList.add("pad-text");      // words, not a digit: a smaller type that fits a narrow cell
           holdButton(el, b.action);
@@ -1342,7 +1456,9 @@ const Play = (() => {
     const g = state.games.find((x) => x.id === S.gameId);
     if (g) S.server.favourite = g.favourite;
     mount(clear(S.el.favSlot), favButton(S.server));
+    const pf = document.getElementById("pauseFav");
+    if (pf) mount(pf, favButton(S.server));
   }
-  return { render, leave, pause, resume, isRunning, resize, themeChanged, favouriteChanged, _state: S };
+  return { render, leave, pause, resume, isRunning, inGame, holdLeave, backPressed, resize, themeChanged, favouriteChanged, _state: S };
 })();
 window.Play = Play;

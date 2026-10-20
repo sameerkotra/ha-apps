@@ -123,6 +123,21 @@ def delete_holiday(day: str, background: BackgroundTasks, admin: dict = Depends(
 # Storage
 # ---------------------------------------------------------------------------
 
+@router.get("/admin-storage-stats")
+def admin_storage_stats(admin: dict = Depends(require_admin)):
+    """The line at the top of Admin → Storage: how big the database is and what is in it."""
+    size = 0
+    for suffix in ("", "-wal"):
+        try:
+            size += os.path.getsize(config.DB_PATH + suffix)
+        except OSError:
+            pass
+    with db.get_conn() as conn:
+        one = lambda sql: conn.execute(sql).fetchone()[0]  # noqa: E731
+        return {"dbBytes": size, "scores": one("SELECT COUNT(*) FROM scores"), "people": one("SELECT COUNT(*) FROM users"),
+                "levels": one("SELECT COUNT(*) FROM levels"), "newestScoreAt": one("SELECT MAX(ended_at) FROM scores")}
+
+
 @router.get("/admin-storage-download-db")
 def admin_storage_download_db(admin: dict = Depends(require_admin)):
     """A full, consistent snapshot of the whole database (sqlite's online

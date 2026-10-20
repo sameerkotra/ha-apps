@@ -22,7 +22,8 @@ const Admin = (() => {
     const tabs = h("div", { class: "admin-tabs", role: "tablist", "aria-label": "Admin sections" },
       TABS.map(([key, label]) => h("button", {
         type: "button", role: "tab", class: key === sub ? "active" : "", "aria-selected": key === sub ? "true" : "false",
-        dataset: { adminTab: key }, onclick: () => showTab("admin", { arg: key }),
+        "aria-current": key === sub ? "page" : null,
+        dataset: { adminTab: key }, onclick: () => showTab("admin", { arg: key, replace: true }),
       }, label)));
     const body = h("div", { class: "admin-body" });
     mount(root, pageHead("Admin"), tabs, body);
@@ -52,13 +53,28 @@ const Admin = (() => {
       load: () => api("api/admin/settings"),
       save: (body) => api("api/admin/settings", { method: "PUT", body }),
       fields: {
-        disabled_games: { render: (page) => h("div", { class: "sp-games" }, data.games.map((g) => h("div", { class: "sp-field sp-bool" },
-          h("div", { class: "sp-text" }, h("label", { for: "set-game-" + g.id }, g.name)),
-          spSwitch(!page.value("disabled_games").includes(g.id), (on) => {
-            const off = new Set(page.value("disabled_games"));
-            if (on) off.delete(g.id); else off.add(g.id);
-            page.set("disabled_games", gameIds.filter((id) => off.has(id)));
-          }, g.name, "set-game-" + g.id)))) },
+        // every game's switch in a grid of columns, with how many are on and All on / All off
+        disabled_games: { render: (page) => {
+          const count = h("span", { class: "hint", id: "gamesOnCount", role: "status" });
+          const syncCount = () => { count.textContent = `${gameIds.length - page.value("disabled_games").length} of ${gameIds.length} on`; };
+          const grid = h("div", { class: "sp-games games-grid", id: "gameSwitches" }, data.games.map((g) => h("div", { class: "sp-field sp-bool" },
+            h("div", { class: "sp-text" }, h("label", { for: "set-game-" + g.id }, g.name)),
+            spSwitch(!page.value("disabled_games").includes(g.id), (on) => {
+              const off = new Set(page.value("disabled_games"));
+              if (on) off.delete(g.id); else off.add(g.id);
+              page.set("disabled_games", gameIds.filter((id) => off.has(id)));
+              syncCount();
+            }, g.name, "set-game-" + g.id))));
+          const all = (on) => {
+            page.set("disabled_games", on ? [] : gameIds.slice());
+            grid.querySelectorAll('input[type="checkbox"]').forEach((b) => { b.checked = on; });
+            syncCount();
+          };
+          syncCount();
+          return h("div", null, h("div", { class: "games-grid-head" }, count,
+            h("button", { class: "btn-ghost btn-small", type: "button", id: "gamesAllOn", onclick: () => all(true) }, "All on"),
+            h("button", { class: "btn-ghost btn-small", type: "button", id: "gamesAllOff", onclick: () => all(false) }, "All off")), grid);
+        } },
         school_days: {
           control: (page) => h("div", { class: "weekday-buttons", id: "schoolDays", role: "group", "aria-label": "School days" },
             DAYS.map(([n, letter, name]) => {
@@ -97,11 +113,11 @@ const Admin = (() => {
       },
       groups: {
         children: { top: () => h("div", { class: "hint" }, "Mark a person as a child and set their limits on ",
-          h("button", { class: "link-btn", type: "button", onclick: () => showTab("admin", { arg: "users" }) }, "Users"), ".") },
+          h("button", { class: "link-btn", type: "button", onclick: () => showTab("admin", { arg: "users", replace: true }) }, "Users"), ".") },
         ha: { bottom: () => [data.hasToken ? null : h("div", { class: "hint warn" }, "This app can't reach Home Assistant right now (no Supervisor token), so sensors and notifications can't be sent."),
           h("div", { class: "hint" }, `Days and times use Home Assistant's time zone (${data.timeZone}).`)] },
-        ai: { top: () => h("div", { class: "hint" }, h("button", { class: "link-btn", type: "button", onclick: () => showTab("admin", { arg: "levels" }) }, "See the levels"),
-          " · ", h("button", { class: "link-btn", type: "button", onclick: () => showTab("admin", { arg: "ai" }) }, "AI usage")) },
+        ai: { top: () => h("div", { class: "hint" }, h("button", { class: "link-btn", type: "button", onclick: () => showTab("admin", { arg: "levels", replace: true }) }, "See the levels"),
+          " · ", h("button", { class: "link-btn", type: "button", onclick: () => showTab("admin", { arg: "ai", replace: true }) }, "AI usage")) },
       },
       onChange: (key, value, page) => { if (key === "ai_provider") urlPlaceholder(page); },
       afterDraw: (page) => urlPlaceholder(page),
@@ -153,63 +169,83 @@ const Admin = (() => {
     const ai = data.ai;
     const status = ai.problem
       ? h("div", { class: "card banner-card warn", id: "aiProblem" }, ai.problem, " ",
-        h("button", { class: "link-btn", type: "button", onclick: () => showTab("admin", { arg: "settings" }) }, "Open App settings"))
+        h("button", { class: "link-btn", type: "button", onclick: () => showTab("admin", { arg: "settings", replace: true }) }, "Open App settings"))
       : h("div", { class: "card", id: "aiStatus" }, h("strong", null, `${ai.provider} · ${ai.model}`),
         h("div", { class: "hint" }, `Levels made today: ${ai.madeToday}${ai.dailyLimit ? ` of ${ai.dailyLimit}` : ""}. `,
           ai.auto ? `New levels are built automatically ${ai.ahead} level(s) before the end, ${ai.batch} at a time.` : "Automatic building is off.",
           ai.review ? " New levels wait for an admin's OK." : ""));
     mount(box, h("div", { class: "hint", style: "margin-bottom:10px" },
-      "Every game with levels, the levels it plays in order, and building more. Built-in levels came with the app; AI levels were made by the model and checked by the app."),
-      status, data.lists.map((list) => listCard(list, ai, box)));
+      "Every game with levels: what it plays, what waits for your OK, and building more. Open a game to see its levels."),
+      waitingStrip(data.lists, box), status,
+      h("div", { class: "card level-table", id: "levelTable" },
+        h("div", { class: "lv-row lv-head", "aria-hidden": "true" }, h("span", null, "Game"), h("span", { class: "num" }, "Playable"), h("span", { class: "num" }, "AI"),
+          h("span", { class: "num" }, "Waiting"), h("span", null, "Furthest"), h("span", null, "")),
+        data.lists.map((list) => listCard(list, ai, box))));
     if (data.lists.some((l) => l.building)) pollTimer = setTimeout(() => { if (document.body.contains(box)) renderLevels(box); }, 3000);
   }
 
+  // "Waiting for your OK": every level that waits, from every game, with Approve and Retire.
+  function waitingStrip(lists, box) {
+    const waiting = [];
+    lists.forEach((list) => list.levels.forEach((lv) => { if (lv.status === "waiting") waiting.push({ list, lv }); }));
+    if (!waiting.length) return null;
+    const act = async (lv, what) => {
+      try { await api(`api/admin/levels/${encodeURIComponent(lv.id)}/${what}`, { method: "POST", body: {} }); renderLevels(box); }
+      catch (e) { fail(e); }
+    };
+    return h("div", { class: "card waiting-strip", id: "waitingStrip" }, h("h3", null, `Waiting for your OK (${waiting.length})`),
+      waiting.map(({ list, lv }) => h("div", { class: "waiting-row", dataset: { level: lv.id } },
+        h("div", { class: "waiting-text" }, h("strong", null, `${list.label} · ${lv.number}. ${lv.name}`), h("span", { class: "hint" }, ` difficulty ${lv.difficulty}`)),
+        h("div", { class: "list-actions" },
+          h("button", { class: "btn-primary btn-small", type: "button", dataset: { approve: lv.id }, onclick: () => act(lv, "approve") }, "Approve"),
+          h("button", { class: "btn-ghost btn-small", type: "button", dataset: { retire: lv.id }, onclick: () => act(lv, "retire") }, "Retire")))));
+  }
+
+  // One row a game (playable, AI, waiting, furthest, Build); opening it shows how many to build, the last build and
+  // the level tiles. What is open stays open while the page refreshes during a build.
+  const openLists = new Set();
   function listCard(list, ai, box) {
     const c = list.counts;
     const lb = list.lastBuild;
     const count = h("input", { type: "number", min: "1", max: "20", step: "1", value: String(ai.batch), class: "num-input", "aria-label": `How many ${list.label} levels to build`, dataset: { buildCount: list.id } });
     const err = h("div", { class: "error-text", role: "alert" });
-    const btn = h("button", { class: "btn-primary", type: "button", dataset: { build: list.id }, disabled: !!ai.problem || list.building || ai.leftToday === 0 },
-      list.building ? "Building…" : "Build more levels");
-    btn.addEventListener("click", async () => {
+    const canBuild = !ai.problem && !list.building && ai.leftToday !== 0;
+    const build = async (n, btn) => {
       err.textContent = "";
-      const n = Number(count.value);
       if (!Number.isInteger(n) || n < 1 || n > 20) { err.textContent = "Build 1 to 20 levels at a time."; return; }
       btn.disabled = true;
       try { await api("api/admin/levels/build", { method: "POST", body: { game: list.id, count: n } }); toast(`Building ${n} ${list.label} level(s)`); renderLevels(box); }
       catch (e) { err.textContent = e.message; btn.disabled = false; }
-    });
-    const build = lb ? h("div", { class: "sub-block build-line", dataset: { buildStatus: lb.status } },
+    };
+    const btn = h("button", { class: "btn-primary", type: "button", dataset: { build: list.id }, disabled: !canBuild },
+      list.building ? "Building…" : "Build more levels");
+    btn.addEventListener("click", () => build(Number(count.value), btn));
+    const quick = h("button", { class: "btn-secondary btn-small", type: "button", dataset: { quickBuild: list.id }, disabled: !canBuild,
+      title: `Build ${ai.batch} more`, "aria-label": `Build ${ai.batch} more ${list.label} levels` }, list.building ? "Building…" : "Build");
+    quick.addEventListener("click", (ev) => { ev.preventDefault(); ev.stopPropagation(); build(ai.batch, quick); });
+    const last = lb ? h("div", { class: "sub-block build-line", dataset: { buildStatus: lb.status } },
       h("div", null, h("strong", null, ({ queued: "Waiting to start", running: "Building", done: "Last build", failed: "Last build failed" })[lb.status] || lb.status),
         ` · ${fmtStamp(lb.createdAt)} · asked by ${lb.requestedBy === "auto" ? "the app (automatic)" : lb.requestedBy} · `,
         `${lb.made} of ${lb.count} made${lb.rejected ? `, ${lb.rejected} turned down` : ""}`,
         lb.tokensIn || lb.tokensOut ? ` · ${fmtNum(lb.tokensIn)} tokens in, ${fmtNum(lb.tokensOut)} out` : ""),
       lb.error ? h("div", { class: "hint warn" }, lb.error) : null,
       lb.log.length ? h("details", null, h("summary", null, "Notes"), h("ul", { class: "build-log" }, lb.log.map((l) => h("li", null, l)))) : null) : null;
-    return h("div", { class: "card level-list", id: "levels-" + list.id },
-      h("h3", null, list.label),
-      h("div", { class: "hint" }, `${c.ready} playable · ${c.builtin} built-in · ${c.ai} made by AI`,
-        c.waiting ? ` · ${c.waiting} waiting for an OK` : "", c.retired ? ` · ${c.retired} retired` : "",
-        list.reached ? ` · furthest: level ${list.reached.level} (${list.reached.name})` : " · nobody has played these yet"),
-      h("div", { class: "form-row" }, h("label", { class: "field" }, "How many", count), btn), err, build,
-      levelsBlock(list, box));
-  }
-
-  // The level pictures fold away (closed at first: with many games and levels the page would be very long).
-  // What is open stays open while the page refreshes during a build.
-  const openLists = new Set();
-  function levelsBlock(list, box) {
-    const c = list.counts;
-    const waiting = c.waiting ? ` · ${c.waiting} waiting for an OK` : "";
-    const det = h("details", { class: "level-fold", dataset: { levels: list.id }, open: openLists.has(list.id) || null },
-      h("summary", null, `Levels (${list.levels.length})${waiting}`));
-    det.addEventListener("toggle", () => {
-      if (det.open) {
-        openLists.add(list.id);
-        if (!det.querySelector(".level-grid")) det.appendChild(h("div", { class: "level-grid" }, list.levels.map((lv) => levelTile(list, lv, box))));
-      } else openLists.delete(list.id);
-    });
-    if (det.open) det.appendChild(h("div", { class: "level-grid" }, list.levels.map((lv) => levelTile(list, lv, box))));
+    const det = h("details", { class: "level-list lv-game", id: "levels-" + list.id, dataset: { levels: list.id }, open: openLists.has(list.id) || null },
+      h("summary", { class: "lv-row" },
+        h("span", { class: "lv-name" }, list.label, lb && lb.status === "failed" ? h("span", { class: "chip warn-chip" }, "build failed") : null),
+        h("span", { class: "num", title: "Playable" }, h("span", { class: "lv-k" }, "playable "), c.ready),
+        h("span", { class: "num", title: "Made by AI" }, h("span", { class: "lv-k" }, "AI "), c.ai),
+        h("span", { class: "num" + (c.waiting ? " lv-wait" : ""), title: "Waiting for an OK" }, h("span", { class: "lv-k" }, "waiting "), c.waiting || 0),
+        h("span", { class: "lv-far" }, list.reached ? `level ${list.reached.level} (${list.reached.name})` : "—"),
+        h("span", { class: "lv-build" }, quick)),
+      h("div", { class: "lv-body" },
+        h("div", { class: "hint" }, `${c.ready} playable · ${c.builtin} built-in · ${c.ai} made by AI`,
+          c.waiting ? ` · ${c.waiting} waiting for an OK` : "", c.retired ? ` · ${c.retired} retired` : "",
+          list.reached ? ` · furthest: level ${list.reached.level} (${list.reached.name})` : " · nobody has played these yet"),
+        h("div", { class: "form-row" }, h("label", { class: "field" }, "How many", count), btn), err, last));
+    const tiles = () => { if (!det.querySelector(".level-grid")) det.querySelector(".lv-body").appendChild(h("div", { class: "level-grid" }, list.levels.map((lv) => levelTile(list, lv, box)))); };
+    det.addEventListener("toggle", () => { if (det.open) { openLists.add(list.id); tiles(); } else openLists.delete(list.id); });
+    if (det.open) tiles();
     return det;
   }
 
@@ -354,22 +390,36 @@ const Admin = (() => {
         return h("div", { class: "usage-bar-wrap", title: `${d.date}: ${n(total)} tokens, ${n(d.calls)} request(s), ${n(d.levels)} level(s)` },
           h("div", { class: "usage-bar" + (d.failed && !total ? " failed" : ""), style: `height:${total ? Math.max(3, Math.round(total / top * 100)) : d.calls ? 3 : 0}%` }));
       }));
-    const table = (rows, head, cells, id, text = 1) => (rows.length
+    const table = (rows, head, cells, id, text = 1, rowClass) => (rows.length
       ? h("div", { class: "table-scroll" }, h("table", { class: "usage-table", id },
         h("thead", null, h("tr", null, head.map((x, i) => h("th", { class: i >= text ? "num" : "" }, x)))),
-        h("tbody", null, rows.map((r) => h("tr", null, cells(r).map((x, i) => h("td", { class: i >= text ? "num" : "" }, x)))))))
+        h("tbody", null, rows.map((r) => h("tr", { class: rowClass ? rowClass(r) : null }, cells(r).map((x, i) => h("td", { class: i >= text ? "num" : "" }, x)))))))
       : h("div", { class: "hint" }, "Nothing yet."));
     const costHead = priced ? ["Cost"] : [];
     const costCell = (r) => (priced ? [money(r.cost) || "0.00"] : []);
-    const picker = h("div", { class: "seg", role: "group", "aria-label": "Period" },
+    // the latest requests, with failed ones marked and a "Failed only" switch
+    const failedOnly = h("input", { type: "checkbox", id: "usageFailedOnly" });
+    const recentBox = h("div", { id: "usageRecentBox" });
+    const drawRecent = () => {
+      const rows = failedOnly.checked ? u.recent.filter((r) => !r.ok) : u.recent;
+      mount(recentBox, failedOnly.checked && !rows.length ? h("div", { class: "hint" }, "No failed requests.") :
+        table(rows, ["When", "What", "Result", "Tokens", "Took"],
+          (r) => [whenText(r.at), r.purpose === "test" ? "Connection test" : `Levels · ${r.name || r.game}`,
+            r.ok ? (r.purpose === "build" ? `${r.made} made${r.rejected ? `, ${r.rejected} turned down` : ""}` : "OK") : `Failed: ${r.error || "?"}`,
+            n(r.tokensIn + r.tokensOut), `${(r.ms / 1000).toFixed(1)} s`], "usageRecent", 3, (r) => (r.ok ? null : "failed")));
+    };
+    failedOnly.addEventListener("change", drawRecent);
+    drawRecent();
+    const picker = h("div", { class: "seg", role: "group", "aria-label": "Period", id: "usagePeriod" },
       [7, 30, 90].map((d) => h("button", { type: "button", class: d === days ? "active" : "", "aria-pressed": d === days ? "true" : "false", onclick: () => renderUsage(box, d) }, `${d} days`)));
     mount(box,
+      h("div", { class: "page-head sub-head" }, h("h3", null, "AI usage"), picker),
       h("div", { class: "hint", style: "margin-bottom:10px" }, "Every request this app sent to the AI model: level builds and connection tests. ",
         priced ? "Costs are estimates from the prices on App settings." : "Add your provider's prices on App settings to see an estimated cost.",
         ` Today ${n(u.totals.today.levels)} level(s) were made` + (u.dailyLimit ? ` of the ${n(u.dailyLimit)} allowed a day.` : ".")),
       h("div", { class: "usage-tiles" }, tile("Today", u.totals.today, "usageToday"), tile("Last 7 days", u.totals.week, "usageWeek"),
         tile("Last 30 days", u.totals.month, "usageMonth"), tile("All time", u.totals.all, "usageAll")),
-      h("div", { class: "card" }, h("div", { class: "card-head-row" }, h("h3", null, "Tokens a day"), picker), chart,
+      h("div", { class: "card" }, h("h3", null, `Tokens a day · ${days} days`), chart,
         h("div", { class: "usage-axis" }, h("span", null, u.byDay[0].date), h("span", null, u.byDay[u.byDay.length - 1].date))),
       h("div", { class: "card" }, h("h3", null, `By game · ${days} days`),
         table(u.byGame, ["Game", "Requests", "Levels", "Turned down", "Tokens"].concat(costHead),
@@ -377,11 +427,8 @@ const Admin = (() => {
       h("div", { class: "card" }, h("h3", null, `By model · ${days} days`),
         table(u.byModel, ["Model", "Requests", "Failed", "Tokens in", "Tokens out"].concat(costHead),
           (r) => [`${r.model || "?"} (${r.provider})`, n(r.calls), n(r.failed), n(r.tokensIn), n(r.tokensOut)].concat(costCell(r)), "usageByModel")),
-      h("div", { class: "card" }, h("h3", null, "Latest requests"),
-        table(u.recent, ["When", "What", "Result", "Tokens", "Took"],
-          (r) => [whenText(r.at), r.purpose === "test" ? "Connection test" : `Levels · ${r.name || r.game}`,
-            r.ok ? (r.purpose === "build" ? `${r.made} made${r.rejected ? `, ${r.rejected} turned down` : ""}` : "OK") : `Failed: ${r.error || "?"}`,
-            n(r.tokensIn + r.tokensOut), `${(r.ms / 1000).toFixed(1)} s`], "usageRecent", 3)));
+      h("div", { class: "card" }, h("div", { class: "card-head-row" }, h("h3", null, "Latest requests"),
+        h("label", { class: "mini-toggle" }, failedOnly, "Failed only")), recentBox));
   }
   function whenText(iso) {
     try { return new Date(iso).toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }); }
@@ -435,7 +482,10 @@ const Admin = (() => {
     // ⋯ Data on each card and "Import a person's data…" above the list (common/person-data.js): export, import
     // and delete one person's data; the list is read again after an import or a delete
     const dataCfg = { people: data.users.map((u) => ({ id: u.id, name: u.name })), onDone: again, appName: "Household Arcade" };
-    PeoplePage.render(box, {
+    // "Children today" at the top: what each child has played and has left, quiet hours, +15 minutes
+    const peopleBox = h("div", { id: "peopleList" });
+    mount(box, childrenToday(data.users, again), peopleBox);
+    PeoplePage.render(peopleBox, {
       people: data.users,
       intro: ["Everyone who has opened the app is here. People switched off can't play and don't appear on the leaderboard.",
         h("p", null, PeopleData.importButton(dataCfg))],
@@ -471,9 +521,32 @@ const Admin = (() => {
     });
     if (focusId) {
       const card = document.getElementById("person-" + focusId);
+      const fold = card && card.querySelector("details.limits-fold");
+      if (fold) fold.open = true;
       if (card) { card.classList.add("highlight"); setTimeout(() => card.scrollIntoView({ behavior: "smooth", block: "start" }), 50); }
       else toast("That person isn't known to this app.", true);
     }
+  }
+
+  function childrenToday(users, again) {
+    const kids = users.filter((u) => u.isChild && !u.disabled);
+    if (!kids.length) return null;
+    return h("div", { class: "card", id: "childrenToday" }, h("h3", null, "Children today"),
+      h("div", { class: "table-wrap" }, h("table", { class: "data" },
+        h("thead", null, h("tr", null, h("th", null, "Name"), h("th", { class: "num" }, "Played"), h("th", null, "Left"), h("th", null, "Quiet hours"), h("th", null, h("span", { class: "sr-only" }, "Extra time")))),
+        h("tbody", null, kids.map((u) => {
+          const pt = u.playTime || {};
+          return h("tr", { dataset: { id: u.id } },
+            h("td", null, h("button", { class: "link-btn", type: "button", onclick: () => showTab("admin", { arg: "users", arg2: u.id }) }, u.name)),
+            h("td", { class: "num" }, pt.usedSeconds ? fmtDuration(pt.usedSeconds) : "—"),
+            h("td", null, pt.leftSeconds === null || pt.leftSeconds === undefined ? "No limit" : pt.leftSeconds <= 0 ? "None left" : `${Math.ceil(pt.leftSeconds / 60)} min`),
+            h("td", null, pt.quiet ? `Now, until ${pt.quietUntil}` : "—"),
+            h("td", null, h("button", { class: "btn-secondary btn-small", type: "button", dataset: { extraToday: u.id }, "aria-label": `Add 15 minutes for ${u.name}`, onclick: async (ev) => {
+              ev.target.disabled = true;
+              try { await api(`api/admin/users/${encodeURIComponent(u.id)}/extra-time`, { method: "POST", body: { minutes: 15 } }); toast(`${u.name}: 15 minutes added for today`); again(); }
+              catch (e) { fail(e); ev.target.disabled = false; }
+            } }, "+15")));
+        })))));
   }
 
   function childBlock(u, games, again) {
@@ -519,6 +592,7 @@ const Admin = (() => {
       h("div", { class: "notify-line" }, h("strong", null, today), pt.quiet ? h("span", { class: "chip" }, `quiet hours until ${pt.quietUntil}`) : null),
       h("div", { class: "notify-line", style: "margin-top:6px" }, h("span", { class: "notify-label" }, "Extra time today"), extra,
         h("button", { class: "btn-ghost btn-small", type: "button", dataset: { history: "1" }, onclick: () => historyDialog(u) }, "Play history")),
+      h("details", { class: "limits-fold" }, h("summary", null, "Limits"),
       h("div", { class: "limits-grid" },
         h("label", { class: "field" }, "Minutes a day — school days", mSchool),
         h("label", { class: "field" }, "Minutes a day — weekends and holidays", mWeekend),
@@ -528,7 +602,7 @@ const Admin = (() => {
           gameBoxes.map((b) => h("label", null, b.el, b.name)))),
         h("label", { class: "field" }, "Leaderboard", lb)),
       h("div", { class: "hint" }, "Empty minutes = no limit. Quiet hours like 21:00 – 07:00 run past midnight; the school-night times apply to the night before a school day."),
-      err, h("div", { class: "actions" }, save));
+      err, h("div", { class: "actions" }, save)));
   }
 
   // Level progress (spec §14): what this person has cleared, with Start over.
@@ -579,7 +653,7 @@ const Admin = (() => {
   function renderStorage(box) {
     const file = h("input", { type: "file", accept: ".db,application/vnd.sqlite3,application/octet-stream", "aria-label": "Backup file" });
     const err = h("div", { class: "error-text" });
-    const btn = h("button", { class: "btn-danger", type: "button" }, "Import database (.db)");
+    const btn = h("button", { class: "btn-danger-outline btn-danger", type: "button" }, "Import database (.db)");
     btn.addEventListener("click", async () => {
       err.textContent = "";
       if (!file.files.length) { err.textContent = "Choose a .db backup file first."; return; }
@@ -591,13 +665,22 @@ const Admin = (() => {
       catch (e) { err.textContent = e.message; }
       btn.disabled = false;
     });
+    const stats = h("div", { class: "hint storage-stats", id: "storageStats" }, "…");
     mount(box,
+      stats,
       h("div", { class: "card" }, h("h3", null, "Backup"),
         h("div", { class: "hint", style: "margin-bottom:10px" }, "A complete snapshot: everyone's scores and play history, children's limits, holidays, App settings and notify services. Home Assistant's own backups include it too."),
         h("a", { class: "btn-primary", href: "api/admin-storage-download-db", download: "", id: "downloadDb" }, "Download database (.db)")),
-      h("div", { class: "card" }, h("h3", null, "Restore"),
+      h("div", { class: "card danger-zone" }, h("h3", null, "Restore"),
         h("div", { class: "warn-box" }, "Importing replaces everything in the app with the contents of the file. A backup from an older version is brought up to date automatically. Download a backup first if you are unsure."),
         h("div", { class: "form-row" }, file, btn), err));
+    // what is in the database just now
+    api("api/admin-storage-stats").then((st) => {
+      if (!stats.isConnected) return;
+      const mb = st.dbBytes >= 1048576 ? `${(st.dbBytes / 1048576).toFixed(1)} MB` : `${Math.max(1, Math.round(st.dbBytes / 1024))} KB`;
+      stats.textContent = `Database ${mb} · ${fmtNum(st.scores)} score${st.scores === 1 ? "" : "s"} · ${fmtNum(st.people)} ${st.people === 1 ? "person" : "people"} · ` +
+        `${fmtNum(st.levels)} level${st.levels === 1 ? "" : "s"}` + (st.newestScoreAt ? ` · newest score ${fmtStamp(st.newestScoreAt)}` : " · no scores yet");
+    }, (e) => { if (stats.isConnected) stats.textContent = e.message; });
   }
 
   return { render };

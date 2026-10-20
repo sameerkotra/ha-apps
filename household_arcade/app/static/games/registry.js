@@ -7,7 +7,9 @@
        paddle games' button, default "Launch"), help: "short controls text",
        stateVersion (saved games' format, 0 = can't be saved), options (start-screen choices), typed (keyboard
        typing goes to the game), turns + turnModes (the modes played turn by turn from two
-       phones, SPEC §13.5: the server checks every move; the game's opts.turns carries the match), create(canvas, opts) }
+       phones, SPEC §13.5: the server checks every move; the game's opts.turns carries the match),
+       slots: { hint, undo, restart } (optional: which of its actions are the shell's standard Hint, Undo and Restart
+       buttons; the shell draws those first, in that order, with the same labels in every game), create(canvas, opts) }
    Adding a game later = its files in games/ plus one register() call (and its
    entry in the server's game table), then `node tests/js/manifest-tool.js` to list them in manifest.js.
 
@@ -47,6 +49,11 @@
         buttons.push({ action: b.action, label: b.label, aria: typeof b.aria === "string" ? b.aria : b.label, wide: !!b.wide, place: place });
       });
     }
+    // The shell's standard tool buttons: Hint, Undo, Restart (each one of the game's actions)
+    var slots = {};
+    if (def.slots && typeof def.slots === "object") {
+      ["hint", "undo", "restart"].forEach(function (k) { if (ACTIONS.indexOf(def.slots[k]) >= 0) slots[k] = def.slots[k]; });
+    }
     // Start-screen choices a game offers besides its modes (remembered per person): { id, label, default, choices: [{ id, label }], offInRaces? }
     var options = [];
     if (Array.isArray(def.options)) {
@@ -67,6 +74,7 @@
       defaultMode: modeIds.indexOf(def.defaultMode) >= 0 ? def.defaultMode : modeIds[0],
       controls: CONTROLS.indexOf(def.controls) >= 0 ? def.controls : "dpad",
       buttons: buttons,
+      slots: slots,
       players: def.players === 2 ? 2 : 1,
       tap: ACTIONS.indexOf(def.tap) >= 0 ? def.tap : null,   // dpad games: the action a tap (no swipe) sends     // 2: same-screen two-player game (WASD + Q/E are player 2)
       padLabel: typeof def.padLabel === "string" && def.padLabel ? def.padLabel : "Launch",

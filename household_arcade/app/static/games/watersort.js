@@ -109,6 +109,7 @@
     modes: MODES,
     defaultMode: "classic",
     controls: "touch",
+    slots: { hint: "hint", undo: "undo", restart: "erase" },   // the shell's Hint / Undo / Restart buttons
     buttons: [{ action: "hint", label: "💡 Hint", aria: "Hint: show a pour" }, { action: "undo", label: "↶ Undo", aria: "Undo the last pour" },
       { action: "erase", label: "⟲ Restart", aria: "Start this board again" }],
     options: [{ id: "hints", label: "Hints", default: "off", offInRaces: true,

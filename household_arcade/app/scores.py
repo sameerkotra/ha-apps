@@ -96,6 +96,13 @@ def _row(r) -> dict:
 
 
 def mine(conn, user_id: str) -> dict:
+    # the household records this person holds: the top score of a game and mode (the earliest of equal tops)
+    held = {(r["game"], r["mode"]) for r in conn.execute(
+        "SELECT game, mode, user_id FROM ("
+        "  SELECT s.game, s.mode, s.user_id, ROW_NUMBER() OVER ("
+        "    PARTITION BY s.game, s.mode ORDER BY s.score DESC, s.ended_at ASC, s.id ASC) AS rn "
+        "  FROM scores s JOIN users u ON u.id = s.user_id WHERE u.disabled = 0 AND s.start_level = 1 "
+        "  AND s.mode NOT LIKE 'daily-%') WHERE rn = 1 AND user_id = ?", (user_id,))}
     bests = []
     for r in conn.execute(
             "SELECT game, mode, MAX(CASE WHEN start_level = 1 THEN score END) AS score, COUNT(*) AS games FROM scores "
@@ -105,13 +112,14 @@ def mine(conn, user_id: str) -> dict:
         if not games.exists(r["game"]):
             continue
         bests.append({"game": r["game"], "mode": r["mode"], "modeLabel": games.mode_label(r["game"], r["mode"]),
-                      "score": r["score"], "games": r["games"]})
+                      "score": r["score"], "games": r["games"], "record": (r["game"], r["mode"]) in held})
     recent = [_row(r) for r in conn.execute(
         "SELECT * FROM scores WHERE user_id = ? ORDER BY ended_at DESC, id DESC LIMIT ?", (user_id, RECENT_N))]
     total = conn.execute("SELECT COUNT(*) AS n FROM scores WHERE user_id = ?", (user_id,)).fetchone()["n"]
     week = conn.execute("SELECT COALESCE(SUM(active_seconds), 0) AS s FROM play_sessions "
                         "WHERE user_id = ? AND started_at >= ?", (user_id, _week_start_utc())).fetchone()["s"]
-    return {"bests": bests, "recent": recent, "totals": {"games": total, "secondsThisWeek": round(week or 0)}}
+    return {"bests": bests, "recent": recent, "totals": {"games": total, "secondsThisWeek": round(week or 0),
+                                                    "recordsHeld": sum(1 for b in bests if b["record"])}}
 
 
 def bests_for(conn, user_id: str) -> dict:

@@ -22,8 +22,23 @@ const Together = (() => {
     if (matchesAsk && Date.now() - matchesAt < SHARE_MS) return matchesAsk;
     matchesAt = Date.now();
     matchesAsk = api("api/matches");
-    matchesAsk.catch(() => { matchesAt = 0; });
+    matchesAsk.then(syncTurnBadge, () => { matchesAt = 0; });
     return matchesAsk;
+  }
+  // "Your move": how many turn-by-turn matches wait for me, on the Games button and in the page's title.
+  const BASE_TITLE = (typeof document !== "undefined" && document.title) || "Household Arcade";
+  function syncTurnBadge(data) {
+    if (!data || !Array.isArray(data.playing) || typeof document === "undefined") return;
+    const n = data.playing.filter((m) => m.kind === "turns" && m.turns && m.turns.myTurn).length;
+    try { document.title = n ? `(${n}) ${BASE_TITLE}` : BASE_TITLE; } catch (e) { /* ignore */ }
+    if (typeof document.querySelectorAll !== "function") return;
+    document.querySelectorAll('.side-nav .tab-btn[data-tab="home"]').forEach((btn) => {
+      let b = btn.querySelector(".nav-badge");
+      if (!n) { if (b) b.remove(); btn.removeAttribute("aria-description"); return; }
+      if (!b) { b = h("span", { class: "nav-badge", "aria-hidden": "true" }); btn.appendChild(b); }
+      b.textContent = String(n);
+      btn.setAttribute("aria-description", `${n} game${n === 1 ? "" : "s"} waiting for your move`);
+    });
   }
   /** Run fn every ms while the page is shown (paused while hidden; once at once when it comes back). Returns a stop. */
   function poll(fn, ms) {
@@ -249,9 +264,13 @@ const Together = (() => {
         h("button", { class: "btn-ghost btn-small", type: "button", id: "notNowBtn", onclick: async (ev) => { ev.target.disabled = true; if (await notNow(m)) { if (after) after(); } else ev.target.disabled = false; } }, "Not now")));
   }
 
-  // The cards at the top of the Games page: invites waiting for me ("Waiting for you"), my own invite out, and a
-  // race that has started that I haven't joined. Refreshes itself while it is on the page.
-  function homeCards() {
+  // "Play together" at the top of the Games page: one card with a row for each invite waiting for me, my own invite
+  // out, a race that has started that I haven't joined and the turn-by-turn matches going on. The matches where it is
+  // my move go to opts.onMyTurns (the Games page's Continue row) when given. Refreshes itself while it is on the page.
+  let homeOpts = {};
+  function homeCards(opts) {
+    if (opts) homeOpts = opts;
+    opts = homeOpts;
     const box = h("div", { class: "tg-cards", id: "togetherCards" });
     let stop = null;
     async function load() {
@@ -259,11 +278,9 @@ const Together = (() => {
       try { data = await matches(); } catch (e) { return; }
       if (!box.isConnected) { if (stop) stop(); return; }
       data.waiting.forEach(stamp); data.sent.forEach(stamp); data.playing.forEach(stamp);
-      const cards = [];
-      if (data.waiting.length) {
-        cards.push(h("div", { class: "card tg-card", id: "waitingForYou" }, h("h3", null, "Waiting for you"), data.waiting.map((m) => inviteRow(m, load))));
-      }
-      data.sent.forEach((m) => cards.push(h("div", { class: "card tg-card", id: "sentInvite" },
+      const rows = [];
+      data.waiting.forEach((m) => rows.push(inviteRow(m, load)));
+      data.sent.forEach((m) => rows.push(h("div", { class: "tg-invite tg-sent", id: "sentInvite", dataset: { match: m.id } },
         h("div", { class: "tg-text" }, h("strong", null, `Waiting for ${who(m)} to join…`), h("div", { class: "hint" }, modeLine(m))),
         h("div", { class: "tg-actions" },
           h("button", { class: "btn-ghost btn-small", type: "button", id: "cancelInviteBtn", onclick: async (ev) => {
@@ -271,24 +288,30 @@ const Together = (() => {
             try { await api(`api/matches/${m.id}/cancel`, { method: "POST" }); } catch (e) { fail(e); }
             load();
           } }, "Cancel")))));
-      const games = data.playing.filter((m) => m.kind === "turns");
-      if (games.length) cards.push(yourGames(games));
-      data.playing.filter((m) => { const p = me(m); return m.kind !== "turns" && p && !p.started; }).forEach((m) => cards.push(h("div", { class: "card tg-card", id: "raceStarted" },
+      data.playing.filter((m) => { const p = me(m); return m.kind !== "turns" && p && !p.started; }).forEach((m) => rows.push(h("div", { class: "tg-invite", id: "raceStarted", dataset: { match: m.id } },
         h("div", { class: "tg-text" }, h("strong", null, `Race with ${who(m)} is starting`), h("div", { class: "hint" }, modeLine(m))),
-        h("div", { class: "tg-actions" }, h("button", { class: "btn-primary btn-small", type: "button", onclick: () => { pending = m; showTab("play", { arg: m.game }); } }, "Join the race")))));
-      mount(box, cards);
+        h("div", { class: "tg-actions" }, h("button", { class: "btn-primary btn-small", type: "button", onclick: () => openMatch(m) }, "Join the race")))));
+      const games = data.playing.filter((m) => m.kind === "turns");
+      const mineNow = games.filter((m) => m.turns && m.turns.myTurn);
+      if (opts.onMyTurns) opts.onMyTurns(mineNow);
+      gameRows(opts.onMyTurns ? games.filter((m) => mineNow.indexOf(m) < 0) : games).forEach((r) => rows.push(r));
+      mount(box, rows.length ? h("div", { class: "card tg-card", id: "togetherCard" }, h("h3", null, "Play together"), rows) : null);
     }
     stop = poll(load, INVITE_POLL_MS / 2);
     load();
     return box;
   }
+  // Open a match on its game page (the page picks it up from `pending`).
+  function openMatch(m) { pending = m; showTab("play", { arg: m.game }); }
 
   // "Your games": the turn-by-turn matches going on — my move first, then theirs, each with the last move's time.
   function yourGames(list) {
+    return h("div", { class: "card tg-card", id: "yourGames" }, h("h3", null, "Your games"), gameRows(list));
+  }
+  function gameRows(list) {
     const mine = (m) => !!(m.turns && m.turns.myTurn);
     list = list.slice().sort((a, b) => (mine(b) - mine(a)) || String(b.turns && b.turns.lastMoveAt).localeCompare(String(a.turns && a.turns.lastMoveAt)));
-    return h("div", { class: "card tg-card", id: "yourGames" }, h("h3", null, "Your games"),
-      list.map((m) => {
+    return list.map((m) => {
         const others = (m.players || []).filter((p) => !p.you).map((p) => first(p.name));
         const toMove = (m.players || []).filter((p) => m.turns && m.turns.toMove.indexOf(p.seat) >= 0 && !p.you).map((p) => first(p.name));
         const whose = mine(m) ? "Your move" : toMove.length ? `${toMove.join(" and ")}'s move` : "Waiting";
@@ -298,8 +321,8 @@ const Together = (() => {
               m.turns && m.turns.number ? ` · last move ${ago(m.turns.lastMoveAt)}` : ` · started ${ago(m.turns && m.turns.lastMoveAt)}`,
               m.practice ? " · Practice" : "")),
           h("div", { class: "tg-actions" }, h("button", { class: mine(m) ? "btn-primary btn-small" : "btn-secondary btn-small", type: "button",
-            "aria-label": `Open ${m.gameName} with ${others.join(", ")}`, onclick: () => { pending = m; showTab("play", { arg: m.game }); } }, mine(m) ? "Play" : "Open")));
-      }));
+            "aria-label": `Open ${m.gameName} with ${others.join(", ")}`, onclick: () => openMatch(m) }, mine(m) ? "Play" : "Open")));
+    });
   }
 
   // A hash link (a phone notification's Join / Not now, or a your-move notification): #/home/join/<id>,
@@ -311,7 +334,7 @@ const Together = (() => {
     let m;
     try { m = await api(`api/matches/${encodeURIComponent(id)}`); } catch (e) { fail(e); return; }
     if (arg === "turn") {
-      if (m.status === "playing" && m.kind === "turns") { pending = stamp(m); showTab("play", { arg: m.game }); }
+      if (m.status === "playing" && m.kind === "turns") openMatch(stamp(m));
       else toast(m.status === "done" ? "That match is over." : "That match isn't being played.", true);
       return;
     }
@@ -423,13 +446,18 @@ const Together = (() => {
   // The result card: both results side by side. `mine` = my own final numbers (they may be ahead of the match's).
   function resultTable(m) {
     const turns = m.kind === "turns";       // no levels; the time is the time each spent on the match's page
-    const rows = (m.players || []).map((p) => h("tr", { class: p.you ? "me" : "", dataset: { id: p.id } },
+    // best first: the winner, a draw, then by score (a player still playing goes by the score so far)
+    const order = { won: 0, draw: 1 };
+    const players = (m.players || []).slice().sort((a, b) =>
+      ((a.result in order ? order[a.result] : 2) - (b.result in order ? order[b.result] : 2)) || ((b.score || 0) - (a.score || 0)));
+    const rows = players.map((p, i) => h("tr", { class: p.you ? "me" : "", dataset: { id: p.id } },
+      h("td", { class: "num rank" }, String(i + 1)),
       h("td", null, p.you ? "You" : first(p.name), p.result === "won" ? " 🏆" : "", p.left ? " (left)" : ""),
       h("td", { class: "num" }, p.final ? h("strong", null, fmtNum(p.score)) : (p.over ? "…" : fmtNum(p.score))),
       turns ? null : h("td", { class: "num" }, p.final || p.over ? `L${p.level}` : "playing"),
       h("td", { class: "num" }, p.final ? fmtDuration(p.seconds) : "")));
     return h("table", { class: "data tg-result", id: "raceResult" },
-      h("thead", null, h("tr", null, h("th", null, ""), h("th", { class: "num" }, "Score"), turns ? null : h("th", { class: "num" }, "Level"), h("th", { class: "num" }, "Time"))),
+      h("thead", null, h("tr", null, h("th", { class: "num" }, "#"), h("th", null, "Player"), h("th", { class: "num" }, "Score"), turns ? null : h("th", { class: "num" }, "Level"), h("th", { class: "num" }, "Time"))),
       h("tbody", null, rows));
   }
 
@@ -448,7 +476,7 @@ const Together = (() => {
     return box;
   }
 
-  return { link, invite, join, notNow, take, homeCards, afterHome, watch, againstCard, barContent, headline, resultTable, matches, poll,
+  return { link, invite, join, notNow, take, homeCards, openMatch, syncTurnBadge, afterHome, watch, againstCard, barContent, headline, resultTable, matches, poll,
     inviteLeft, startsIn, stamp, other, me, first, clock, ago, acceptInvite, yourGames, _internal: { get pending() { return pending; }, set pending(v) { pending = v; } } };
 })();
 window.Together = Together;

@@ -166,6 +166,7 @@
     modes: MODES,
     defaultMode: "classic",
     controls: "touch",
+    slots: { hint: "hint", undo: "undo" },   // the shell's Hint / Undo / Restart buttons
     buttons: [{ action: "hint", label: "💡 Hint", aria: "Hint: show the next move" }, { action: "undo", label: "↶ Undo", aria: "Undo the last slide" }],
     options: [{ id: "hints", label: "Hints", default: "off", offInRaces: true,
       choices: [{ id: "off", label: "Off" }, { id: "on", label: "On (each costs 200 points)" }] }],

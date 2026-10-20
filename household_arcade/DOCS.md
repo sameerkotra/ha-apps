@@ -41,12 +41,18 @@ buttons at the top right change how: **☰ List** (a row each, with your best),
 **▦ Small squares** (just the icon and name — the quickest to scan) and **◼ Large
 squares** (everything: your best, the modes, how many levels the game has, a
 saved game, how often you've played and when, and how to play). Your choice is
-remembered on that device. Tap a game's **☆** to make it a favourite: your
+remembered on that device; a phone starts with small squares. Tap a game's **☆** to make it a favourite: your
 **★ Favourites** then come first on the page, in the order you marked them, and
-**All games** below (the star in a game's header does the same). Favourites are
+**All games** below (the star in a game's header, or in the pause menu on a phone, does the same). Favourites are
 your own and follow you to any phone.
 
-The **Search games** box above the games finds them as you type, in every
+Above the games: **Continue** (your saved games and the turn-by-turn matches where it's your move), **Play
+together** (invites, matches going on), **Today's challenges** (one line once you've played all three, with the way
+to today's board) and **Recently played**. A number on the **Games** button (and in the page's title) says how many
+matches wait for your move.
+
+The **Search games** box at the top (it stays there while you scroll on a phone), with a row of chips for each kind
+(**Arcade**, **Puzzle**, **Board** …), finds games as you type or tap, in every
 view: by name (`tic` finds Tic-tac-toe, `sea` Sea Battle), by kind — *arcade*,
 *puzzle*, *word*, *board*, *cards*, *dice*, *levels*, *two players* (or
 *together*), *turn by turn*, *gentle* (or *kids*, *easy*) — or by a mode
@@ -741,23 +747,26 @@ game any connected controller plays.
 
 A game pauses when you press the pause button, P or Esc, when you switch to
 another app or tab or the screen turns off, and on the phone's back gesture.
-After that, Back leaves the game, and Back once more leaves the app. A game
-never keeps running in the background, and paused time is never counted.
+The **‹** in the game's header, Back, or another page doesn't end a game that is being played: it pauses and asks
+(**Save & exit** or **End & exit**). A game never keeps running in the background, and paused time is never counted.
 
 While paused you can:
 
 - **Resume**.
-- **Save for later** — put the game aside and come back to it: it waits on
+- **Save & exit** — put the game aside and come back to it: it waits on
   the game's start screen (**Continue**), with its score, level and time so
   far. You can keep one saved game per game (one Snake, one Brick Breaker, …);
   saving another replaces it, and the one replaced keeps its score as if you
   had ended it there. On the start screen, **End it** keeps a saved game's
   score; **Throw away** drops it.
-- **End game** — the game stops and its score counts, just like a finished
-  game.
+- **End & exit** — the game stops, its score counts, and you're back on the page you were going to. **End game**
+  stops it and shows the result card.
+- **↻ Restart** — this game ends (its score so far counts) and a new one starts with the same choices (not in a
+  race or a daily challenge's ranked try).
+- **? How to play**, and on a phone the **★** and the sound (the header keeps only ‹, the name, the time and pause
+  while you play).
 
-Leaving a game in the middle (Back, another page, closing the app) also ends
-it and keeps its score. Practice games are never saved to the scores either
+Closing the app in the middle of a game ends it and keeps its score. Practice games are never saved to the scores either
 way. A child's limits apply to continuing a saved game too.
 
 ### Playing together (a race)
@@ -823,7 +832,8 @@ suits you. A game can last minutes or days.
    invite notification from you every 5 minutes (the invites still show in the app).
 2. When they join, the game starts; who moves first is chosen at random. The one whose move it is gets a phone
    notification "Your move in Four in a Row against Asha" (tap it to open the game). The **Games** page has
-   **Your games**: every match going on, whose move it is and when the last move was — tap **Play** or **Open**.
+   **Continue** (the matches where it's your move) and **Play together** (the others: whose move it is and when the
+   last move was) — tap **Play** or **Open**.
 3. Make your move; it goes to the app, which checks it (an illegal move, or one from the wrong phone, is refused)
    and tells the other player. If they have the game open too, their board updates within a moment.
 4. Pause offers **Back to games (the match waits)** and **Resign** (the other player wins). If a player doesn't move
@@ -866,11 +876,14 @@ with the 🔇/🔊 button on the game page; your choice is remembered.
 
 - Every finished game is saved with its mode, score, level and how long it
   lasted. **Practice** games and games shorter than 3 seconds aren't saved.
-- **My scores** shows your best per game and mode, your last 20 games and how
-  long you played this week, and **Against others** (your wins, losses and
+- **My scores** starts with a few figures (personal bests, household records you hold, daily-challenge days this
+  month, the game you play most), then your best per game and mode (🏆 marks a household record), level progress,
+  your last 20 games and **Against others** (your wins, losses and
   draws against each person you've raced). You can delete your own scores there.
 - **Leaderboard** shows the top 10 for each game and mode, of **All time** or
-  **This month**; each person's best appears only once. Admins can delete any
+  **This month**; each person's best appears only once, and a line says where you are ("You: #4 of 9 · 320 behind
+  #3"). It opens on the game you played last; a game's **🏆 Leaderboard** button (start screen, result card) opens
+  its own. Admins can delete any
   score from it (a misclick, or a suspiciously high one) and the leaderboard
   updates at once.
 - After a game you see **New personal best** or **New household record** when
@@ -886,19 +899,17 @@ with the 🔇/🔊 button on the game page; your choice is remembered.
 
 ## Settings (everyone)
 
-- **Look**, **Sound**, **On-screen controls** (right- or left-handed),
+- **Appearance** (first): **App theme** (Midnight, Slate, Daylight, or Auto, which follows your device's light or
+  dark setting — on this device; also in the sidebar on a computer) and **Game look** (the games' colours and style).
+- **Sound**, **On-screen controls** (right- or left-handed),
   **Reduce motion** and **Receive notifications** (new household records,
   when an admin has switched them on).
 - **Let the Household Assistant answer for me** (on) — shown while an admin
   lets the Household Assistant ask Arcade.
-- **Your limits** — for a child: today's time left, daily minutes, quiet hours
+- **Your limits** — for a child, at the top: today's time left, daily minutes, quiet hours
   and games, read-only.
-- **How the app sees you** — the user name and id Home Assistant sent, and
-  whether you are an admin in this app.
-- **Theme** (Midnight, Slate, Daylight, or Auto, which follows your device's
-  light or dark setting) — in the sidebar on a computer, on Settings on a phone.
-  If you had picked Ink before, you now get Midnight. The game looks below are
-  separate and unchanged.
+- **How the app sees you** — last, folded: the user name and id Home Assistant sent, and
+  whether you are an admin in this app. If you had picked the Ink theme before, you now get Midnight.
 
 ## The Household Assistant
 
@@ -979,7 +990,8 @@ The settings are in cards (Games, Looks and scores, Children, Home Assistant,
 Household Assistant, AI levels), with a line under each setting saying what it does, its range and
 its default. Changes are kept until you select **Save** at the bottom (it shows
 how many unsaved changes there are); **Discard changes** puts everything back.
-A number out of range is flagged at the field before anything is saved.
+A number out of range is flagged at the field before anything is saved. The game switches sit in columns, with how
+many are on and **All on** / **All off**.
 
 | Setting | Default | What it does |
 |---|---|---|
@@ -1045,16 +1057,16 @@ fails is turned down, and the model is asked again. A level is only ever data
 **Admin → AI usage** shows every request the app has sent to the AI model —
 level builds and connection tests: tokens used and levels made today, in the
 last 7 and 30 days and all time (and an estimated cost when prices are set on
-App settings), a chart of tokens a day (7, 30 or 90 days), totals by game and by
+App settings), a chart of tokens a day (7, 30 or 90 days: picked at the top of the page), totals by game and by
 model, and the latest requests with how long they took and anything that went
-wrong. Only counts are kept, never the prompts or answers; entries older than
+wrong (failed ones are marked; **Failed only** shows just those). Only counts are kept, never the prompts or answers; entries older than
 about a year are removed.
 
 ### Levels
 
-**Admin → Levels** shows each game's levels in order with a small picture
-(folded away at first: open **Levels (n)** under a game to see them),
-who got furthest, and the last build (how many were made and turned down, the
+**Admin → Levels** starts with **Waiting for your OK (n)**: every level waiting, with **Approve** and **Retire**. Then
+one row a game: playable levels, made by AI, waiting, who got furthest and **Build** (builds the usual number now).
+Open a row to see the game's levels in order, each with a small picture, and the last build (how many were made and turned down, the
 model's tokens, and notes on anything turned down). **Build more levels**
 makes up to 20 now. **◀ ▶** and the place number move a level earlier or
 later in the list (games play the levels in this order). **Retire** skips a
@@ -1066,8 +1078,9 @@ game.
 ### Users
 
 Everyone who has opened the app at least once, with their phones from Home
-Assistant. Per person: **Can play** (switch someone off), **Child** and their
-limits, extra notify services (a phone is picked up automatically from
+Assistant. **Children today** at the top lists each child's play today, time left and quiet hours, with **+15**
+minutes. Per person: **Can play** (switch someone off), **Child** and their
+limits (under **Limits** on a child's card), extra notify services (a phone is picked up automatically from
 **Settings → People → (person) → Track device** in Home Assistant; add a
 `notify.…` service here for anything else) and **Send a test**. **Level
 progress** shows the levels the person has cleared, with **Start over** for a
@@ -1106,7 +1119,8 @@ above the list:
 
 ### Storage
 
-**Download database** saves a complete backup (a `.db` file). **Import
+A line at the top says how big the database is and how many scores, people and levels it holds, and when the newest
+score came in. **Download database** saves a complete backup (a `.db` file). **Import
 database** replaces everything in the app with a backup; a backup from an
 older version is brought up to date automatically. Home Assistant's own
 backups include the app's data too. Backups leave out access keys and passwords; after restoring on a new install, enter them again. (Importing keeps the AI

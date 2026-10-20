@@ -8,7 +8,7 @@ import tempfile
 import unittest
 
 from app import config, db, settings
-from base import ASHA, KABIR, ApiBase
+from base import ASHA, KABIR, MEERA, ApiBase
 
 
 class TestStorage(ApiBase):
@@ -52,6 +52,33 @@ class TestStorage(ApiBase):
         self.assertEqual(self.upload(backup).status_code, 200)
         self.assertEqual(settings.get("default_look"), "lcd")            # the backup's settings…
         self.assertEqual(settings.get("ai_api_key"), key)                # …but this install's key
+
+    def test_stats_line(self):
+        empty = self.get("/api/admin-storage-stats", ASHA).json()
+        self.assertEqual(empty["scores"], 0)
+        self.assertIsNone(empty["newestScoreAt"])
+        self.play(120)
+        self.play(80, h=MEERA)
+        r = self.get("/api/admin-storage-stats", ASHA)
+        self.assertEqual(r.status_code, 200)
+        st = r.json()
+        self.assertEqual(st["scores"], 2)
+        self.assertGreaterEqual(st["people"], 3)
+        self.assertGreater(st["dbBytes"], 0)
+        self.assertIsInstance(st["levels"], int)
+        self.assertTrue(st["newestScoreAt"])
+        self.assertEqual(self.get("/api/admin-storage-stats", KABIR).status_code, 403)
+
+    def test_my_scores_count_the_records_held(self):
+        self.play(300)
+        self.play(200, h=MEERA)
+        self.play(50, game="snake", mode="walls-normal", h=MEERA)
+        mine = self.get("/api/scores/mine", KABIR).json()
+        self.assertEqual(mine["totals"]["recordsHeld"], 1)
+        self.assertTrue(all(b["record"] for b in mine["bests"]))
+        theirs = self.get("/api/scores/mine", MEERA).json()
+        self.assertEqual(theirs["totals"]["recordsHeld"], 0)
+        self.assertFalse(any(b["record"] for b in theirs["bests"]))
 
     def test_admin_only(self):
         self.assertEqual(self.get("/api/admin-storage-download-db", KABIR).status_code, 403)

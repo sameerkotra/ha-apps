@@ -194,6 +194,7 @@
     modes: MODES,
     defaultMode: "ten",
     controls: "touch",
+    slots: { hint: "hint", undo: "undo" },   // the shell's Hint / Undo / Restart buttons
     buttons: [{ action: "notes", label: "■ / ✕", aria: "Switch the tap between fill and cross" },
       { action: "hint", label: "💡 Hint", aria: "Hint" }, { action: "undo", label: "↶ Undo", aria: "Undo" }],
     options: [{ id: "mistakes", label: "Mistakes", default: "now",

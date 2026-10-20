@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.14.0
+
+- **A game isn't lost by leaving it**: the game's **‹**, the back gesture or another page now pause a game being played and ask — **Save & exit** or **End & exit** — instead of ending it at once. Pause also has **↻ Restart** and **? How to play** for every game; on a phone the ★ and the sound move into it, so the header keeps just ‹, the name, the time and pause.
+- **A Games page for 48 games**: the search box and new kind chips (Arcade, Puzzle, Board …) sit right under the title and stay there on a phone; **Continue** (saved games and matches where it's your move) and **Recently played** come before your favourites; invites and matches are one **Play together** card; Today's challenges shrink to one line once all are played. Marking a favourite or changing the view no longer reloads the page. Phones start with small squares, which mark a saved game with ▶; the list view shows your next level.
+- **Your move, at a glance**: the Games button and the page's title show how many matches wait for your move.
+- **Start and result cards**: one main button (Continue a saved game, else today's challenge when you came for it, else Play), Practice beside Play, and a **🏆 Leaderboard** button that opens that game's board. On a phone turned sideways, Mode and Play stay and the rest is behind **More…** instead of shrinking. Board games say **You won**, **You lost** or **Draw** first; record badges sit under the score. A race's result lists everyone in order; the waiting card ticks off who has joined.
+- **My scores**: figures at the top (personal bests, records you hold, daily days this month, the game you play most), bests grouped by game with 🏆 on records, and the last 20 games as two lines each on a phone.
+- **Leaderboard**: opens on the game you played last, says where you stand ("You: #4 of 9 · 320 behind #3"), keeps its game and mode in the address, and shows the daily days played in a card of their own.
+- **Settings**: one **Appearance** card first (App theme and Game look); a child's limits come first; How the app sees you is last, folded.
+- **Admin**: game switches in columns with **All on** / **All off**; Levels starts with **Waiting for your OK** and lists one row a game; AI usage has its period at the top and marks failed requests (**Failed only**); Users starts with **Children today** (+15 minutes) and folds each child's limits; Storage shows the database's size and contents and keeps Restore apart.
+- **Phones**: the bottom bar and pages keep clear of the home indicator, with bigger labels; a game that can't load still has its way back.
+
 ## 1.13.2
 
 - **Back goes to the page you came from.** The phone's back gesture (and the browser's Back) now steps back through the pages you opened in the app, instead of jumping straight to the start page; dialogs still close first, and Back on the start page still leaves the app.

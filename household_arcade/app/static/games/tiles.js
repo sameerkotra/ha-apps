@@ -157,6 +157,7 @@
     modes: MODES,
     defaultMode: "classic",
     controls: "touch",
+    slots: { hint: "hint", undo: "undo" },   // the shell's Hint / Undo / Restart buttons
     buttons: [{ action: "hint", label: "💡 Hint", aria: "Hint: show a pair" }, { action: "shuffle", label: "🔀 Shuffle", aria: "Shuffle the tiles left" },
       { action: "undo", label: "↶ Undo", aria: "Undo" }],
     typed: true,
