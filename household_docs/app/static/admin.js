@@ -18,14 +18,16 @@
         h("div", { class: "hint" }, "Admin is for the people listed in the ", h("code", null, "admin_users"), " option on the app's Configuration tab.")));
       return;
     }
+    // Admin opens on People once the documents folder is confirmed (until then, on Documents folder)
+    const df = D.state.me.docsFolder;
+    const start = df && df.confirmed && df.ok !== false && TABS.some((t) => t.id === "people") ? "people" : TABS[0].id;
     let sub = args[0];
-    if (!TABS.some((t) => t.id === sub)) sub = TABS[0].id;
-    const tabs = h("div", { class: "admin-tabs", role: "tablist", "aria-label": "Admin sections" },
-      TABS.map((t) => h("a", { role: "tab", class: t.id === sub ? "active" : "", "aria-selected": t.id === sub ? "true" : "false",
-        href: "#/admin/" + t.id, dataset: { adminTab: t.id } }, t.label)));
+    if (!TABS.some((t) => t.id === sub)) sub = start;
+    const tabs = D.tabStrip(TABS.map((t) => [t.id, t.label, "#/admin/" + t.id]), sub, "Admin sections", "adminTab");
     const body = h("div", { class: "admin-body" }, spinner());
     mount(page, pageHead("Admin"), tabs, body);
-    await TABS.find((t) => t.id === sub).render(body, args.slice(1), current);
+    try { await TABS.find((t) => t.id === sub).render(body, args.slice(1), current); }
+    catch (e) { if (current()) mount(body, D.errorCard(e, () => D.render())); }
   });
 
   // =====================================================================
@@ -518,7 +520,7 @@
         h("p", { class: "hint" }, withFiles ? "A zip with the database and every file in the documents folder (people's folders, Trash and History). It can be large."
           : "A zip with the database: who may see what, the index, favourites, checklist ticks and settings. The documents themselves are files in /share — in Home Assistant's backups when Share is ticked — or turn on “Backup includes the documents themselves” in App settings."),
         h("div", { class: "form-row" }, h("a", { class: "btn-primary", href: "api/admin/backup", download: "", id: "downloadBackup" }, "Download backup (.zip)"), sizeNote)),
-      h("div", { class: "card" }, h("h3", null, "Restore"),
+      h("div", { class: "danger-zone", id: "restoreZone" }, h("h3", null, "Restore"),
         h("div", { class: "warn-box" }, "Restoring replaces everything in the app's database with the backup's. Files in the backup are put back only into an empty documents folder, unless you tick Replace files."),
         h("div", { class: "form-row" }, file), h("label", { class: "mini-toggle" }, replace, "Replace files in the documents folder with the backup's"),
         err, h("div", { class: "actions" }, btn)));

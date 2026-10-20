@@ -5,7 +5,7 @@ checked against the caller's role (sharing.py); anything they can't see is a 404
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 from pydantic import Field
 
-from .. import db, docops, files, kids, notify, people_data, share_folders, sharing, tags
+from .. import db, docops, files, kids, notify, people_data, settings, share_folders, sharing, tags
 from ..auth import require_user
 from ..store import fileio, index, moving, nodes, roots, trash
 from .common import Strict
@@ -257,7 +257,7 @@ def space(space: str, hidden: bool = Query(default=False), user: dict = Depends(
                           "deletedByName": t["deleted_by_name"]} for t in trash.listing_root(conn, f["rootId"])]
                 if items:
                     folders_out.append({"rootId": f["rootId"], "label": f["label"], "items": items})
-            return {"items": out, "folders": folders_out}
+            return {"items": out, "folders": folders_out, "days": int(settings.get("trash_days", conn))}
         acc_sql, acc_params = sharing.access_cte(user["id"])
         if space == "favourites":
             rows = conn.execute(acc_sql + f"SELECT n.*, acc.rank AS acc_rank FROM user_state us JOIN nodes n ON n.id = us.node_id "
@@ -378,20 +378,36 @@ def delete(node_id: str, user: dict = Depends(require_user)):
     return {"ok": True, "trashId": tid}
 
 
+def _my_trash_item(conn, user: dict, trash_id: str):
+    """A Trash row this person may restore or delete: their own, or an admin shared folder's they can change."""
+    t = conn.execute("SELECT * FROM trash WHERE id = ?", (trash_id[:64],)).fetchone()
+    if t is not None and t["owner_id"] != user["id"]:
+        root = roots.root_row(conn, t["root_id"])        # an admin shared folder's Trash: read and write
+        if t["owner_id"] is not None or root is None or root["kind"] != "shared" \
+                or not sharing.at_least(sharing.root_role(conn, user, root), "editor"):
+            t = None
+    if t is None:
+        raise HTTPException(404, "That isn't in your Trash.")
+    return t
+
+
 @router.post("/trash/{trash_id}/restore")
 def restore(trash_id: str, user: dict = Depends(require_user)):
     with db.get_conn() as conn:
-        t = conn.execute("SELECT * FROM trash WHERE id = ?", (trash_id[:64],)).fetchone()
-        if t is not None and t["owner_id"] != user["id"]:
-            root = roots.root_row(conn, t["root_id"])        # an admin shared folder's Trash: read and write
-            if t["owner_id"] is not None or root is None or root["kind"] != "shared" \
-                    or not sharing.at_least(sharing.root_role(conn, user, root), "editor"):
-                t = None
-        if t is None:
-            raise HTTPException(404, "That isn't in your Trash.")
+        t = _my_trash_item(conn, user, trash_id)
         fileio.ensure_writable()
         nid = trash.restore(conn, user["id"], t)
         return node_info_json(conn, user, nid)
+
+
+@router.delete("/trash/{trash_id}")
+def delete_for_good(trash_id: str, user: dict = Depends(require_user)):
+    """Delete now: one Trash item goes for good (the same people who may restore it)."""
+    with db.get_conn() as conn:
+        t = _my_trash_item(conn, user, trash_id)
+        roots.docs_real()
+        trash.purge_one(conn, t)
+    return {"ok": True}
 
 
 @router.post("/trash/empty")

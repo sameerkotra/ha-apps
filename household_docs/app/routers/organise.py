@@ -19,7 +19,7 @@ router = APIRouter(prefix="/api", tags=["organise"])
 @router.get("/tags")
 def all_tags(user: dict = Depends(require_user)):
     with db.get_conn() as conn:
-        return {"tags": tagmod.listing(conn, user), "colours": list(tagmod.COLOURS)}
+        return {"tags": tagmod.listing(conn, user), "colours": list(tagmod.COLOURS), "colourCounts": tagmod.colour_counts(conn, user)}
 
 
 @router.get("/nodes/{node_id}/tags")

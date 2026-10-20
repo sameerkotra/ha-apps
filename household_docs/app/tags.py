@@ -121,6 +121,16 @@ def listing(conn, user: dict) -> list[dict]:
     return [{"tag": r["tag"], "count": r["n"]} for r in rows]
 
 
+def colour_counts(conn, user: dict) -> dict:
+    """{colour: how many items the person can open carry it} (live), for the Tags page's colour chips."""
+    acc_sql, acc_params = sharing.access_cte(user["id"])
+    rows = conn.execute(acc_sql + "SELECT n.color AS c, COUNT(DISTINCT n.id) AS n FROM nodes n JOIN acc ON acc.node_id = n.id "
+                        "JOIN roots r ON r.id = n.root_id "
+                        f"WHERE {nodes.LIVE} AND n.color IS NOT NULL AND (r.kind = 'person' OR r.missing = 0) "
+                        "GROUP BY n.color", acc_params).fetchall()
+    return {r["c"]: r["n"] for r in rows if r["c"] in COLOURS}
+
+
 def tag_sql(value: str) -> tuple[str, list]:
     """The search condition for one tag (an item carrying it)."""
     return "n.id IN (SELECT node_id FROM node_tags WHERE tag_folded = ?)", [fold(" ".join(value.strip().lstrip("#").split()))]

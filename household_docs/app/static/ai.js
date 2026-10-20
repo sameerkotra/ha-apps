@@ -254,8 +254,8 @@
   Object.assign(D, { aiSummarise: summarise, aiAskFolder: askFolder, aiChecklistFrom: checklistFrom, aiSheetFrom: sheetFrom, aiFolderSwitch: folderSwitch });
 
   // ---------- Settings → You ----------
-  D.settingsRows.push((me, save, row) => (aiState().on ? row("Show AI buttons", `AI is set up by an admin (${aiState().provider}). Off: the ✨ buttons are hidden for you.`,
-    D.toggleSwitch(me.prefs.showAi !== false, (v) => save({ showAi: v }), "Show AI buttons")) : null));
+  D.settingsRows.push(Object.assign((me, save, row) => (aiState().on ? row("Show AI buttons", `AI is set up by an admin (${aiState().provider}). Off: the ✨ buttons are hidden for you.`,
+    D.toggleSwitch(me.prefs.showAi !== false, (v) => save({ showAi: v }), "Show AI buttons")) : null), { group: "display" }));
 
   // =====================================================================
   // Admin: App settings → AI (Test connection, the address placeholder) and AI usage

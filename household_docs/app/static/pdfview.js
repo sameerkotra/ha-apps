@@ -8,7 +8,7 @@
   const D = window.Docs;
   const { h, toast, openModal, spinner } = D;
   const { mount } = UI;
-  const V = "?v=1.7.1";                       // the app's version (cache busting, checked by the packaging tests)
+  const V = "?v=1.8.0";                       // the app's version (cache busting, checked by the packaging tests)
   const BASE = "vendor/pdfjs/";
   const MAX_BYTES = 50 * 1024 * 1024;         // bigger ones download instead
   const CSS_PER_PT = 96 / 72;                 // PDF points → CSS pixels at 100 %
@@ -46,12 +46,32 @@
       return null;
     }
     const pages = h("div", { class: "pdf-pages", id: "pdfPages", tabindex: "0", "aria-label": `Pages of ${it.name}` }, spinner());
-    const pageNo = h("span", { class: "pdf-page-no", id: "pdfPageNo", "aria-live": "polite" });
+    // ‹ [page] / n › — type a page number to jump to it
+    const pageIn = h("input", { type: "number", class: "pdf-page-input", id: "pdfPageInput", min: "1", value: "1", inputmode: "numeric", "aria-label": "Page", disabled: true });
+    const pageCount = h("span", { class: "pdf-page-count", id: "pdfPageCount" });
+    const prevBtn = h("button", { class: "btn-ghost btn-small", type: "button", id: "pdfPrev", title: "Previous page", "aria-label": "Previous page", disabled: true }, "‹");
+    const nextBtn = h("button", { class: "btn-ghost btn-small", type: "button", id: "pdfNext", title: "Next page", "aria-label": "Next page", disabled: true }, "›");
+    const pageNo = h("span", { class: "pdf-page-no", id: "pdfPageNo" }, prevBtn, pageIn, pageCount, nextBtn);
+    let curPage = 1;
+    function jump(n) {
+      if (!doc) return;
+      const p = Math.min(doc.numPages, Math.max(1, Math.round(Number(n) || 1)));
+      curPage = p; pageIn.value = String(p);
+      const s = slots[p - 1];
+      if (s) s.el.scrollIntoView({ block: "start" });
+    }
+    function showPage(n) { curPage = n; if (document.activeElement !== pageIn) pageIn.value = String(n); prevBtn.disabled = n <= 1; nextBtn.disabled = !doc || n >= doc.numPages; }
+    pageIn.addEventListener("change", () => jump(pageIn.value));
+    pageIn.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); jump(pageIn.value); } });
+    prevBtn.addEventListener("click", () => jump(curPage - 1));
+    nextBtn.addEventListener("click", () => jump(curPage + 1));
+    const details = h("button", { class: "btn-ghost btn-small", type: "button", id: "pdfDetails", title: "Size, where it is, Replace, More …",
+      onclick: () => { if (D.filePanel) D.filePanel(it, { fromViewer: true }); } }, "ℹ Details");
     const zoomOut = h("button", { class: "btn-ghost btn-small", type: "button", id: "pdfZoomOut", title: "Smaller", "aria-label": "Zoom out", disabled: true }, "−");
     const zoomIn = h("button", { class: "btn-ghost btn-small", type: "button", id: "pdfZoomIn", title: "Bigger", "aria-label": "Zoom in", disabled: true }, "+");
     const fit = h("button", { class: "btn-ghost btn-small pdf-zoom-label", type: "button", id: "pdfFit", title: "Fit to the width", disabled: true }, "Fit");
     const dl = h("a", { class: "btn-ghost btn-small", id: "pdfDownload", href: `api/nodes/${encodeURIComponent(it.id)}/file`, download: it.name }, "⬇ Download");
-    const bar = h("div", { class: "pdf-bar" }, pageNo, h("span", { class: "pdf-zoom" }, zoomOut, fit, zoomIn), dl);
+    const bar = h("div", { class: "pdf-bar" }, pageNo, h("span", { class: "pdf-zoom" }, zoomOut, fit, zoomIn), dl, details);
 
     let task = null, doc = null, closed = false, near = null, seen = null;
     let zoom = 1, fitMode = true, base = null;                  // base: page 1's size at 100 % (CSS px)
@@ -210,8 +230,10 @@
         slots.push({ n, el, canvas: null, w: n === 1 ? base.w : 0, hgt: n === 1 ? base.h : 0, drawn: false, drawing: false, job: null, gen: 0, near: false });
       }
       mount(pages, slots.map((s) => s.el));
-      for (const b of [zoomIn, zoomOut, fit]) b.disabled = false;
-      pageNo.textContent = `1 / ${doc.numPages}`;
+      for (const b of [zoomIn, zoomOut, fit, pageIn]) b.disabled = false;
+      pageIn.max = String(doc.numPages);
+      pageCount.textContent = `/ ${doc.numPages}`;
+      showPage(1);
       setZoom(fitZoom(), true);
       // draw pages within a screen or two of what's shown; let go of ones far away
       near = new IntersectionObserver((entries) => {
@@ -223,7 +245,7 @@
       }, { root: pages, rootMargin: "150% 0px" });
       // the page number: the page covering the middle of the view
       seen = new IntersectionObserver((entries) => {
-        for (const en of entries) if (en.isIntersecting) pageNo.textContent = `${en.target.dataset.n} / ${doc.numPages}`;
+        for (const en of entries) if (en.isIntersecting) showPage(Number(en.target.dataset.n));
       }, { root: pages, rootMargin: "-50% 0px -50% 0px" });
       for (const s of slots) { near.observe(s.el); seen.observe(s.el); }
       pages.focus({ preventScroll: true });
@@ -233,5 +255,8 @@
 
   D.viewPdf = viewPdf;
   D.isPdf = isPdf;
+  // tapping a PDF opens it here straight away (ℹ Details in the viewer's bar has the file panel); a big one gets the panel
+  const openFile = D.kinds.file.open;
+  D.kind("file", { open: (it) => (isPdf(it) && (it.size || 0) <= MAX_BYTES ? viewPdf(it) : openFile(it)) });
   D.addAction({ id: "view-pdf", label: "View", icon: "👁", order: 1, show: (it) => isPdf(it) && !it.inTrash, run: (it) => viewPdf(it) });
 })();

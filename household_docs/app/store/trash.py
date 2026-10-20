@@ -118,6 +118,13 @@ def _purge_item(conn, t) -> None:
     conn.execute("DELETE FROM trash WHERE id = ?", (t["id"],))
 
 
+def purge_one(conn, t) -> None:
+    """Delete one Trash item for good now (its files, earlier copies and rows) — "Delete now" on the Trash page."""
+    from . import fileio
+    fileio.ensure_writable()
+    _purge_item(conn, t)
+
+
 def listing(conn, owner_id: str) -> list:
     return conn.execute("SELECT t.*, n.name, n.kind, n.size, u.name AS deleted_by_name FROM trash t "
                         "LEFT JOIN nodes n ON n.id = t.node_id LEFT JOIN users u ON u.id = t.deleted_by "

@@ -15,7 +15,7 @@
   // =====================================================================
   // 🕑 Activity
   // =====================================================================
-  D.addSpace({ id: "activity", icon: "🕑", label: "Activity", order: 55, hash: "#/activity" });
+  D.addSpace({ id: "activity", icon: "🕑", label: "Recent & activity", order: 55, hash: "#/activity" });
 
   const VERB = { created: "added", edited: "edited", renamed: "renamed", moved: "moved", deleted: "deleted", restored: "restored", shared: "shared" };
   function quote(s) { return `“${s}”`; }
@@ -48,6 +48,7 @@
     if (d.toDateString() === y.toDateString()) return "Yesterday";
     return d.toLocaleDateString([], { weekday: "long", day: "numeric", month: "long", year: d.getFullYear() === now.getFullYear() ? undefined : "numeric" });
   }
+  D.dayLabel = dayLabel;
   function openable(it) { return !it.inTrash && !it.gone; }
   function itemLink(it, label) {
     const text = label || it.name;
@@ -97,7 +98,10 @@
       sel("actType", "Type", [["", "Everything"], ["note", "Notes"], ["checklist", "Checklists"], ["sheet", "Sheets"], ["folder", "Folders"], ["file", "Files"]], "type"));
     const list = h("div", { class: "act-list", id: "activityList" });
     const moreBtn = h("button", { class: "btn-secondary", type: "button", id: "actMore", hidden: true }, "Load more");
-    const following = h("div", { class: "card", id: "followingCard" });
+    // what you follow: a folded chip at the top ("🔔 Following 4"), the list inside
+    const followSummary = h("summary", { class: "chip", id: "followingChip" }, "🔔 Following");
+    const followBody = h("div", { class: "following-body" });
+    const following = h("details", { class: "following", id: "followingCard" }, followSummary, followBody);
     let next = null, lastDay = null;
     async function load(append) {
       if (!append) { mount(list, spinner()); lastDay = null; next = null; }
@@ -119,25 +123,28 @@
       moreBtn.hidden = !data.more;
     }
     moreBtn.addEventListener("click", () => load(true));
-    mount(page, pageHead("Activity"),
-      h("p", { class: "hint" }, `What changed in your documents, what's shared with you and your shared folders — only things you can open. Follow a document or folder (⋯ → Follow) to get a phone notification.`),
-      h("div", { class: "card" }, filters, list, h("div", { class: "actions" }, moreBtn)), following);
+    mount(page, pageHead("Activity"), following,
+      h("p", { class: "hint" }, "What changed in what you can open."),
+      h("details", { class: "about" }, h("summary", null, "More"),
+        h("p", null, "Your documents, what's shared with you and your shared folders — only things you can open. Follow a document or folder (⋯ → Organise → Follow) to get a phone notification when it changes.")),
+      h("div", { class: "card" }, filters, list, h("div", { class: "actions" }, moreBtn)));
     load();
-    drawFollowing(following);
+    drawFollowing(followBody, followSummary);
   });
 
-  async function drawFollowing(box) {
+  async function drawFollowing(box, summary) {
     let data;
-    try { data = await api("api/follows"); } catch (e) { mount(box, h("div", { class: "error-text" }, e.message)); return; }
+    try { data = await api("api/follows"); } catch (e) { mount(box, UI.errorBox(e, () => drawFollowing(box, summary))); return; }
+    if (summary) summary.textContent = `🔔 Following ${data.follows.length}`;
     const rows = data.follows.map((f) => h("div", { class: "item-row", dataset: { follow: f.target } },
       h("a", { class: "row-main", href: f.kind === "folder" ? D.folderHash(f.target) : "#/doc/" + encodeURIComponent(f.target) },
         h("span", { class: "row-icon", "aria-hidden": "true" }, f.kind === "folder" ? "📁" : D.kindOf(f).icon),
         h("span", { class: "row-text" }, h("span", { class: "row-name" }, f.name), h("span", { class: "row-meta" }, `since ${fmtWhen(f.since)}`))),
       h("button", { class: "btn-ghost btn-small", type: "button", onclick: async () => {
-        try { await unfollow(f.target); drawFollowing(box); } catch (e) { fail(e); }
+        try { await unfollow(f.target); drawFollowing(box, summary); } catch (e) { fail(e); }
       } }, "Unfollow")));
-    mount(box, h("h3", null, "You follow"),
-      rows.length ? h("div", { class: "item-list" }, rows) : h("div", { class: "hint" }, "Nothing yet. ⋯ → Follow on a document or folder sends you a phone notification when it changes."),
+    mount(box,
+      rows.length ? h("div", { class: "item-list" }, rows) : h("div", { class: "hint" }, "Nothing yet. ⋯ → Organise → Follow on a document or folder sends you a phone notification when it changes."),
       D.state.me.notifyLinked ? null : h("p", { class: "hint warn" }, "No phone is linked to you in Home Assistant yet (Settings → People → you → Track device), so follow notifications can't reach you."));
   }
 
@@ -166,19 +173,19 @@
   D.rootActions.push({ id: "follow", icon: "🔔", label: (f) => (isFollowing(f.id) ? "Unfollow" : "Follow"), run: (f) => toggleFollow(f.id, f.name) });
 
   // ---------- Settings → You ----------
-  D.settingsRows.push((me, save, row) => {
+  D.settingsRows.push(Object.assign((me, save, row) => {
     const from = h("input", { type: "time", id: "quietFrom", value: me.prefs.quietFrom || "22:00", "aria-label": "Quiet from" });
     const to = h("input", { type: "time", id: "quietTo", value: me.prefs.quietTo || "07:00", "aria-label": "Quiet until" });
     const saveQuiet = () => { if (from.value && to.value) save({ quietFrom: from.value, quietTo: to.value }); };
     from.addEventListener("change", saveQuiet);
     to.addEventListener("change", saveQuiet);
     return [
-      row("Notify me about what I follow", "⋯ → Follow on a document or folder: at most one notification per item every 15 minutes, never for your own changes.",
+      row("Notify me about what I follow", "⋯ → Organise → Follow on a document or folder: at most one notification per item every 15 minutes, never for your own changes.",
         D.toggleSwitch(me.prefs.notifyFollows !== false, (v) => save({ notifyFollows: v }), "Notify me about what I follow")),
       row("Quiet hours", `No follow notifications between these times (${(me.app && me.app.timeZone) || "Home Assistant's"} time); what happened is told afterwards. The same two times: no quiet hours.`,
         h("span", { class: "time-pair" }, from, h("span", { class: "hint" }, "–"), to)),
     ];
-  });
+  }, { group: "notify" }));
 
   // =====================================================================
   // Show in Home Assistant (§17.9)
@@ -283,11 +290,11 @@
     if (!current()) return;
     const pick = h("select", { id: "storagePlace", "aria-label": "Folder" }, r.places.map((p) => h("option", { value: p.ref }, p.label)));
     pick.value = place;
-    pick.addEventListener("change", () => go(`#/storage/${encodeURIComponent(pick.value)}`));
+    pick.addEventListener("change", () => D.replace(`#/storage/${encodeURIComponent(pick.value)}`));
     const ctx = { showLocation: true };            // the location already names the space
     const yearSel = h("select", { id: "oldYears", "aria-label": "Not changed in" }, [1, 2, 3, 5, 10].map((y) => h("option", { value: String(y) }, `${y} year${y === 1 ? "" : "s"}`)));
     yearSel.value = String(years);
-    yearSel.addEventListener("change", () => go(`#/storage/${encodeURIComponent(place)}/${yearSel.value}`));
+    yearSel.addEventListener("change", () => D.replace(`#/storage/${encodeURIComponent(place)}/${yearSel.value}`));
     const dups = r.duplicateGroups.map((g) => h("div", { class: "dup-group card-inner", dataset: { sha: g.sha256.slice(0, 12) } },
       h("div", { class: "dup-head" }, h("strong", null, `${g.copies.length} copies of ${fmtSize(g.size)}`), h("span", { class: "hint" }, ` · ${fmtSize(g.extraBytes)} could be freed`)),
       h("div", { class: "item-list" }, g.copies.map((c) => D.itemRow(c, Object.assign({}, ctx, { rowExtra: () => h("button", { class: "btn-secondary btn-small keep-one", type: "button",
@@ -295,16 +302,30 @@
           if (!(await confirmDialog("Keep one", `Keep “${c.name}” (${c.location}) and move the other copies you may delete to Trash?`, "Keep this one"))) return;
           try { const out = await api("api/reports/duplicates/keep", { method: "POST", body: { keepId: c.id } }); toast(`${out.removed} moved to Trash${out.skipped ? `, ${out.skipped} you can't delete left` : ""}`); D.render(); } catch (e) { fail(e); }
         } }, "Keep this one") }))))));
+    // what could go: the duplicates' extra copies and what's in Trash
+    const dupBytes = r.duplicateGroups.reduce((n, g) => n + (g.extraBytes || 0), 0);
+    const freeable = dupBytes + ((r.trash && r.trash.bytes) || 0);
+    const freeTile = h("div", { class: "usage-tile free-tile", id: "freeTile" }, h("div", { class: "usage-label" }, "Can be freed"),
+      h("div", { class: "usage-big" }, "≈ " + fmtSize(freeable)),
+      h("div", { class: "hint" }, [dupBytes ? `${fmtSize(dupBytes)} in duplicates` : null, r.trash && r.trash.bytes ? h("a", { href: "#/trash" }, `${fmtSize(r.trash.bytes)} in Trash`) : null]
+        .filter(Boolean).reduce((acc, x, i) => (i ? acc.concat([" · ", x]) : [x]), []).concat(freeable ? [] : ["Nothing to tidy"])));
+    const usage = tiles(r);
+    usage.appendChild(freeTile);
+    const LARGEST = 10;
+    const largest = h("div", { class: "largest-box" }, D.itemList(r.largest.slice(0, LARGEST), ctx, "No files yet."));
+    const moreLargest = r.largest.length > LARGEST ? h("button", { class: "btn-ghost btn-small", type: "button", id: "largestMore", onclick: () => {
+      mount(largest, D.itemList(r.largest, ctx, "No files yet.")); moreLargest.remove();
+    } }, `Show all ${r.largest.length}`) : null;
     mount(page, pageHead("Storage", pick),
-      tiles(r),
-      h("div", { class: "card" }, h("h3", null, "By type"), typeChart(r.byType)),
-      h("div", { class: "card" }, h("h3", null, "Growth over 12 months"), growthChart(r.growth)),
+      usage,
       h("div", { class: "card", id: "dupCard" }, h("h3", null, "Duplicates"), h("p", { class: "hint" }, "Files with exactly the same content (every copy you can open, wherever it is). Keep one moves the others to Trash."),
         dups.length ? dups : h("div", { class: "hint" }, "No duplicates.")),
-      h("div", { class: "card" }, h("h3", null, "Largest files"), D.itemList(r.largest, ctx, "No files yet.")),
+      h("div", { class: "card" }, h("h3", null, "Largest files"), largest, moreLargest ? h("div", { class: "actions" }, moreLargest) : null),
       h("div", { class: "card" }, h("div", { class: "card-head" }, h("h3", null, `Not changed in ${years} year${years === 1 ? "" : "s"}`), yearSel),
         h("p", { class: "hint" }, `${r.old.files} file${r.old.files === 1 ? "" : "s"}, ${fmtSize(r.old.bytes)}.`), D.itemList(r.old.items, ctx, "None.")),
       h("div", { class: "card" }, h("h3", null, "Empty folders"), D.itemList(r.emptyFolders, ctx, "None.")),
+      h("div", { class: "card" }, h("h3", null, "By type"), typeChart(r.byType)),
+      h("div", { class: "card" }, h("h3", null, "Growth over 12 months"), growthChart(r.growth)),
       h("p", { class: "hint" }, "History and Trash: earlier copies of documents and deleted items, kept by the app (Trash is emptied after an admin-set number of days). ", h("a", { href: "#/trash" }, "Open Trash")));
   });
 
@@ -340,20 +361,20 @@
           h("tbody", null, rows)))),
       h("div", { class: "card" }, h("h3", null, "By type"), typeChart(Object.values(typeAll).sort((a, b) => b.bytes - a.bytes))),
       h("div", { class: "card" }, h("h3", null, "Growth over 12 months"), growthChart(growthAll)),
-      h("div", { class: "card" }, h("h3", null, "Trash"), h("p", { class: "hint" }, `${r.trashItems} deleted item${r.trashItems === 1 ? "" : "s"} across everyone's Trash and the shared folders' Trash.`), h("div", { class: "actions" }, empty)));
+      h("div", { class: "danger-zone" }, h("h3", null, "Trash"), h("p", { class: "hint" }, `${r.trashItems} deleted item${r.trashItems === 1 ? "" : "s"} across everyone's Trash and the shared folders' Trash.`), h("div", { class: "actions" }, empty)));
   } });
 
-  // ---------- one page, four tabs: Recent, Activity, Trash, Storage ----------
-  // The routes keep their addresses (#/recent, #/activity, #/trash, #/storage/…); the sidebar shows one entry,
-  // 🕑 Activity, and each page draws the tab strip above what it drew before.
-  const TABS = [["recent", "🕘 Recent"], ["activity", "🕑 Activity"], ["trash", "🗑 Trash"], ["storage", "💾 Storage"]];
+  // ---------- one page, three tabs: Recent, Activity, Storage ----------
+  // The routes keep their addresses (#/recent, #/activity, #/storage/…); the sidebar shows one entry, 🕑 Recent &
+  // activity, and each page draws the tab strip (D.tabStrip, as Admin's) above what it drew before. 🗑 Trash is a
+  // space of its own.
+  const TABS = [["recent", "🕘 Recent", "#/recent"], ["activity", "🕑 Activity", "#/activity"], ["storage", "💾 Storage", "#/storage"]];
   for (const [name] of TABS) {
     const orig = D.routes[name];
     if (!orig) continue;
     D.routes[name] = (page, args, current) => {
       const inner = h("div", { class: "tab-page" });
-      mount(page, h("div", { class: "page-tabs", role: "tablist" }, TABS.map(([id, label]) =>
-        h("a", { class: "tab-btn" + (id === name ? " active" : ""), role: "tab", href: "#/" + id, "aria-selected": id === name ? "true" : "false", dataset: { tab: id } }, label))), inner);
+      mount(page, D.tabStrip(TABS, name, "Recent and activity"), inner);
       return orig(inner, args, current);
     };
   }

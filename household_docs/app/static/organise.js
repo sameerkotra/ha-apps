@@ -100,20 +100,31 @@
   // 🏷 Tags: the sidebar (with counts) and #/tags
   D.addSpace({ id: "tags", icon: "🏷", label: "Tags", order: 62, hash: "#/tags",
     show: () => !!(D.state.me && D.state.me.tags && D.state.me.tags.length),
-    children: () => ((D.state.me && D.state.me.tags) || []).slice().sort((a, b) => b.count - a.count).slice(0, 8)
+    children: () => ((D.state.me && D.state.me.tags) || []).slice().sort((a, b) => b.count - a.count)
       .map((t) => ({ id: "tag-" + t.tag, label: `#${t.tag} (${t.count})`, hash: D.searchHash({ tag: [t.tag] }) })) });
   D.route("tags", async (page, _a, current) => {
     mount(page, pageHead("Tags"), spinner());
     const d = await api("api/tags");
     if (!current()) return;
     const max = Math.max(1, ...d.tags.map((t) => t.count));
-    mount(page, pageHead("Tags"),
-      h("p", { class: "hint" }, "Tags on everything you can open. Tap one to see what carries it. Add tags with ⋯ → Tags and colour, or tick several items and use 🏷 Tag."),
-      h("div", { class: "card" }, d.tags.length ? h("div", { class: "tag-cloud", id: "tagCloud" }, d.tags.map((t) => h("a", { class: "tag-chip big", href: D.searchHash({ tag: [t.tag] }),
-        style: `font-size:${(0.85 + 0.5 * t.count / max).toFixed(2)}rem` }, "#" + t.tag, h("span", { class: "tag-count" }, String(t.count)))))
-        : h("div", { class: "empty" }, "No tags yet.")),
-      h("div", { class: "card" }, h("h3", null, "Colours"), h("div", { class: "chip-links" }, COLOURS.map((c) => h("a", { class: "folder-chip", href: D.searchHash({ color: c }) },
-        h("span", { class: "color-dot inline dot-" + c }), " " + c)))));
+    // A–Z or most used first (this device remembers)
+    let order = UI.lsGet("docs.tagOrder") === "count" ? "count" : "name";
+    const cloud = h("div", { class: "tag-cloud", id: "tagCloud" });
+    const seg = h("div", { class: "seg", role: "group", "aria-label": "Order" });
+    function draw() {
+      const list = d.tags.slice().sort(order === "count" ? (a, b) => b.count - a.count || a.tag.localeCompare(b.tag) : (a, b) => a.tag.localeCompare(b.tag, undefined, { sensitivity: "base" }));
+      mount(cloud, list.map((t) => h("a", { class: "tag-chip big", href: D.searchHash({ tag: [t.tag] }),
+        style: `font-size:${(0.85 + 0.5 * t.count / max).toFixed(2)}rem` }, "#" + t.tag, h("span", { class: "tag-count" }, String(t.count)))));
+      mount(seg, [["name", "A–Z"], ["count", "Most used"]].map(([v, l]) => h("button", { type: "button", class: v === order ? "active" : "", "aria-pressed": String(v === order),
+        id: "tagOrder-" + v, onclick: () => { order = v; UI.lsSet("docs.tagOrder", v); draw(); } }, l)));
+    }
+    draw();
+    const counts = d.colourCounts || {};
+    mount(page, pageHead("Tags", d.tags.length > 1 ? seg : null),
+      h("p", { class: "hint" }, "Tap a tag to see what carries it. Add tags with ⋯ → Organise → Tags and colour, or tick several items and use 🏷 Tag."),
+      h("div", { class: "card" }, d.tags.length ? cloud : UI.empty("No tags yet", "⋯ → Organise → Tags and colour on any document or folder.")),
+      h("div", { class: "card" }, h("h3", null, "Colours"), h("div", { class: "chip-links", id: "colourChips" }, COLOURS.map((c) => h("a", { class: "folder-chip", href: D.searchHash({ color: c }), dataset: { colour: c } },
+        h("span", { class: "color-dot inline dot-" + c }), " " + c, h("span", { class: "tag-count" }, String(counts[c] || 0)))))));
   });
 
   // =====================================================================

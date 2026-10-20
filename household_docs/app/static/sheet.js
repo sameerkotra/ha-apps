@@ -344,20 +344,19 @@
     const notices = h("div", { class: "sheet-notices" });
     const chartPane = h("div", { class: "sheet-chart-tab", id: "sheetChartTab", hidden: true });
     // the secret hint (SPEC §3.3): a light check of the cells' text in the browser; nothing is sent
-    const secretWarn = h("div", { class: "secret-warn", role: "status", hidden: true });
-    const secretEl = me.app && me.app.secretHint ? h("div", { class: "secret-hint" }, h("span", { class: "hint" }, "Docs are plain files — keep passwords and card numbers in Household Vault."), secretWarn) : null;
+    const secretWarn = h("div", { class: "secret-warn", role: "status" });
+    const secretEl = me.app && me.app.secretHint ? h("div", { class: "secret-hint", hidden: true }, secretWarn) : null;   // only when it fires
     const checkSecret = debounce(() => {
       if (!secretEl || !D.looksSecret) return;
       const parts = [];
       for (const t of st.sheet.tabs) if (t.kind === "grid") for (const cell of Object.values(t.cells)) { if (typeof cell.v === "string" && !isFormulaCell(cell)) parts.push(cell.v); if (parts.length > 5000) break; }
       const what = D.looksSecret(parts.join("\n"));
-      secretWarn.hidden = !what;
-      secretWarn.textContent = what ? `⚠ This looks like it holds ${what}. Anyone with access to /share can read docs — Household Vault keeps it encrypted.` : "";
+      secretEl.hidden = !what;
+      secretWarn.textContent = what ? `⚠ This looks like it holds ${what}. Docs are plain files: anyone with access to /share can read them — keep passwords and card numbers in Household Vault, which keeps them encrypted.` : "";
     }, 800);
     mount(page, head ? head.el : null, notices,
       h("div", { class: "sheet-editor" + (canEdit ? "" : " read-only") },
-        barRow,
-        tools, grid, chartPane, statusBar, tabsBar), below, secretEl);
+        tools, barRow, grid, chartPane, statusBar, tabsBar), below, secretEl);
     page.classList.add("sheet-page");
 
     // notices: read-only foreign file, .csv, viewers
@@ -394,36 +393,41 @@
     const tb = (id, label, title, fn, cls) => h("button", { class: "icon-btn sheet-tool" + (cls ? " " + cls : ""), type: "button", id, title, "aria-label": title, onclick: fn }, label);
     const boldBtn = tb("sheetBold", "B", "Bold (Ctrl+B)", () => toggle("b"), "bold");
     const redBtn = tb("sheetRed", "−1", "Negative numbers in red", () => toggle("red"), "red-neg");
+    // The toolbar sits above the formula bar: Undo / Redo first, then formatting, then Sort, Filter, Chart … and Find.
+    // Download / CSV / Print are in the document's ⋯ → Export (exportEntries, below).
     function drawTools() {
       const chartTab = cur() && cur().kind === "chart";
       barRow.hidden = chartTab;
+      const undoRedo = [tb("sheetUndo", "↶", "Undo (Ctrl+Z)", undo), tb("sheetRedo", "↷", "Redo (Ctrl+Y)", redo), h("span", { class: "tool-sep" })];
+      const findBtn = tb("sheetFind", "🔍", "Find (Ctrl+F)", findDialog);
       if (canEdit && csv) {
-        mount(tools, tb("sheetSort", "⇅", "Sort", (e) => sortMenu(e.currentTarget)), tb("sheetFilter", "⏷", "Filter a column", () => filterDialog(rangeOf(st.sel).c1)),
-          h("span", { class: "tool-sep" }), tb("sheetUndo", "↶", "Undo (Ctrl+Z)", undo), tb("sheetRedo", "↷", "Redo (Ctrl+Y)", redo),
-          tb("sheetExport", "⬇", "Export", (e) => exportMenu(e.currentTarget)), tb("sheetPrint", "🖨", "Print", printSheet), tb("sheetFind", "🔍", "Find (Ctrl+F)", findDialog),
-          h("button", { class: "btn-ghost btn-small", type: "button", id: "sheetConvertTool", onclick: convert }, "Convert to .xlsx"));
+        mount(tools, undoRedo, tb("sheetSort", "⇅", "Sort", (e) => sortMenu(e.currentTarget)), tb("sheetFilter", "⏷", "Filter a column", () => filterDialog(rangeOf(st.sel).c1)),
+          findBtn, h("button", { class: "btn-ghost btn-small", type: "button", id: "sheetConvertTool", onclick: convert }, "Convert to .xlsx"));
         return;
       }
-      if (chartTab) {
-        mount(tools, tb("sheetExport", "⬇", "Export", (e) => exportMenu(e.currentTarget)), tb("sheetPrint", "🖨", "Print", printSheet), tb("sheetFind", "🔍", "Find (Ctrl+F)", findDialog));
-        return;
-      }
-      if (!canEdit) {
-        mount(tools, h("span", { class: "chip" }, doc.readOnly ? "Read only" : "View only"),
-          tb("sheetExport", "⬇", "Export", (e) => exportMenu(e.currentTarget)), tb("sheetPrint", "🖨", "Print", printSheet), tb("sheetFind", "🔍", "Find (Ctrl+F)", findDialog));
-        return;
-      }
-      mount(tools, fmtSel,
+      if (chartTab) { mount(tools, findBtn); return; }
+      if (!canEdit) { mount(tools, h("span", { class: "chip" }, doc.readOnly ? "Read only" : "View only"), findBtn); return; }
+      mount(tools, undoRedo, fmtSel,
         tb("sheetDecLess", ".0←", "Fewer decimals", () => decimals(-1)), tb("sheetDecMore", "→.00", "More decimals", () => decimals(1)),
         boldBtn, tb("sheetLeft", "⇤", "Align left", () => align("left")), tb("sheetCenter", "↔", "Align centre", () => align("center")), tb("sheetRight", "⇥", "Align right", () => align("right")),
         redBtn, h("span", { class: "tool-sep" }),
-        tb("sheetTotals", "Σ", "Totals row", toggleTotals), tb("sheetFreeze", "❄", "Freeze rows / columns", (e) => freezeMenu(e.currentTarget)),
         tb("sheetSort", "⇅", "Sort", (e) => sortMenu(e.currentTarget)), tb("sheetFilter", "⏷", "Filter a column", () => filterDialog(rangeOf(st.sel).c1)),
         tb("sheetChart", "📈", "Chart", () => chartDialog()), tb("sheetCond", "🎨", "Conditional colours", condDialog),
-        h("span", { class: "tool-sep" }),
-        tb("sheetUndo", "↶", "Undo (Ctrl+Z)", undo), tb("sheetRedo", "↷", "Redo (Ctrl+Y)", redo),
-        tb("sheetExport", "⬇", "Export", (e) => exportMenu(e.currentTarget)), tb("sheetPrint", "🖨", "Print", printSheet), tb("sheetFind", "🔍", "Find (Ctrl+F)", findDialog));
+        tb("sheetTotals", "Σ", "Totals row", toggleTotals), tb("sheetFreeze", "❄", "Freeze rows / columns", (e) => freezeMenu(e.currentTarget)),
+        h("span", { class: "tool-sep" }), findBtn);
     }
+    // the document's ⋯ → Export: this sheet's downloads and Print (instead of toolbar buttons)
+    const xlsxUrl = () => `api/docs/${encodeURIComponent(doc.id)}/export?format=xlsx`;
+    const csvUrl = (mode) => `api/docs/${encodeURIComponent(doc.id)}/export?format=csv&mode=${mode}&tab=${encodeURIComponent(cur().name)}`;
+    const isGrid = () => !!cur() && cur().kind === "grid";
+    D.state.editorExtras = [
+      { id: "sheet-file", order: 70, group: "export", icon: "⬇", label: csv ? "Download .csv" : "Download .xlsx",
+        run: async () => { await flush(); if (csv) D.download(doc); else D.saveUrl(xlsxUrl()); } },
+      { id: "sheet-xlsx", order: 70.1, group: "export", icon: "📊", label: "Download as .xlsx", show: () => csv, run: async () => { await flush(); D.saveUrl(xlsxUrl()); } },
+      { id: "sheet-csv", order: 70.2, group: "export", icon: "⬇", label: () => `CSV of “${cur().name}” — values`, show: isGrid, run: async () => { await flush(); D.saveUrl(csvUrl("values")); } },
+      { id: "sheet-csv-f", order: 70.3, group: "export", icon: "⬇", label: () => `CSV of “${cur().name}” — formulas`, show: isGrid, run: async () => { await flush(); D.saveUrl(csvUrl("formulas")); } },
+      { id: "sheet-print", order: 73, group: "export", icon: "🖨", label: "Print or save as PDF", run: () => printSheet() }];
+    D.state.editorHide = ["download", "export-xlsx"];       // the sheet's own (saved first) instead
     drawTools();
 
     // ------------------------------------------------------------ changing cells
@@ -1893,18 +1897,6 @@
     }
 
     // ------------------------------------------------------------ export and print
-    function exportMenu(anchor) {
-      const t = cur();
-      const tabQ = t.kind === "grid" ? `&tab=${encodeURIComponent(t.name)}` : "";
-      D.menu(anchor, [
-        csv ? { id: "export-file", label: "Download .csv", run: () => D.download(doc) } : { id: "export-xlsx", label: "Download .xlsx", run: async () => { await flush(); D.saveUrl(`api/docs/${encodeURIComponent(doc.id)}/export?format=xlsx`); } },
-        csv ? { id: "export-xlsx", label: "Download as .xlsx", run: async () => { await flush(); D.saveUrl(`api/docs/${encodeURIComponent(doc.id)}/export?format=xlsx`); } } : null,
-        t.kind === "grid" ? { id: "export-csv", label: `CSV of “${t.name}” — values`, run: async () => { await flush(); D.saveUrl(`api/docs/${encodeURIComponent(doc.id)}/export?format=csv&mode=values${tabQ}`); } } : null,
-        t.kind === "grid" ? { id: "export-csv-f", label: `CSV of “${t.name}” — formulas`, run: async () => { await flush(); D.saveUrl(`api/docs/${encodeURIComponent(doc.id)}/export?format=csv&mode=formulas${tabQ}`); } } : null,
-        "-",
-        { id: "export-print", label: "Print or save as PDF", run: printSheet },
-      ]);
-    }
     function printSheet() {
       const t = cur();
       const old = $("#printArea");

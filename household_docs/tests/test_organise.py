@@ -71,6 +71,20 @@ class Tags(ApiBase):
         self.assertEqual(self.ok(self.get("/api/tags", MEERA))["tags"], [{"tag": "private", "count": 1}, {"tag": "taxes", "count": 1}])
         self.assertEqual(self.ok(self.get("/api/tags", ASHA))["tags"], [])
 
+    def test_colour_counts_respect_access(self):
+        f = self.create("folder", "Car")
+        n = self.note("Insurance", f["id"], text="policy")
+        mine = self.note("Private", text="secret")
+        self.ok(self.tag(n["id"], [], "red"))
+        self.ok(self.tag(mine["id"], [], "red"))
+        self.ok(self.tag(f["id"], [], "blue"))
+        self.ok(self.share(f["id"], MEERA, "viewer"))
+        self.assertEqual(self.ok(self.get("/api/tags"))["colourCounts"], {"red": 2, "blue": 1})
+        self.assertEqual(self.ok(self.get("/api/tags", MEERA))["colourCounts"], {"red": 1, "blue": 1})
+        self.assertEqual(self.ok(self.get("/api/tags", ASHA))["colourCounts"], {})
+        self.ok(self.delete(f"/api/nodes/{mine['id']}"))
+        self.assertEqual(self.ok(self.get("/api/tags"))["colourCounts"], {"red": 1, "blue": 1})
+
     def test_search_by_tag_and_colour(self):
         a = self.note("Alpha", text="x")
         b = self.note("Beta", text="x")

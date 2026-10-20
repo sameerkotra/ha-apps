@@ -105,6 +105,26 @@ class Trash(ApiBase):
         self.assertEqual(os.listdir(person_dir("Kabir Rao")), [])
         self.assertEqual(len(self.trash_items()), 2)
 
+    def test_delete_now_one_item(self):
+        """Delete now (the Trash page's ⋯): one item goes for good; only someone who may restore it can; the listing
+        says how many days things stay."""
+        a = self.note("Keep", text="k")
+        b = self.note("Gone", text="g")
+        self.save(b["id"], "gg")
+        self.ok(self.delete(f"/api/nodes/{a['id']}"))
+        self.ok(self.delete(f"/api/nodes/{b['id']}"))
+        space = self.ok(self.get("/api/space/trash"))
+        self.assertEqual(space["days"], 30)
+        tb = [t for t in space["items"] if t["name"] == "Gone.txt"][0]
+        self.assertEqual(self.c.delete(f"/api/trash/{tb['id']}", headers=MEERA).status_code, 404)     # not hers
+        self.assertEqual(self.delete("/api/trash/nope").status_code, 404)
+        self.ok(self.delete(f"/api/trash/{tb['id']}"))
+        self.assertEqual([t["name"] for t in self.trash_items()], ["Keep.txt"])
+        self.assertIsNone(self.row(b["id"]))
+        self.assertFalse(os.path.exists(os.path.join(DOCS, ".trash", "Kabir Rao", tb["id"])))
+        self.assertFalse(os.path.exists(os.path.join(DOCS, ".versions", b["id"])))
+        self.assertEqual(self.delete(f"/api/trash/{tb['id']}").status_code, 404)                   # once
+
     def test_trash_rows_stay_out_of_the_way(self):
         n = self.note("Same")
         self.ok(self.delete(f"/api/nodes/{n['id']}"))

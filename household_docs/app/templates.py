@@ -149,6 +149,21 @@ def _read_kind(path: str, ext: str) -> str:
     return k
 
 
+PREVIEW_BYTES = 4096
+
+
+def _preview(path: str) -> list[str]:
+    """The first three lines with something on them (each cut at 80 characters), for the template picker."""
+    try:
+        with fileio.open_read(path) as f:
+            head = f.read(PREVIEW_BYTES)
+    except OSError:
+        return []
+    text = head.decode("utf-8", errors="ignore")
+    lines = [ln.strip() for ln in text.replace("\r", "").split("\n")]
+    return [ln[:80] for ln in lines if ln][:3]
+
+
 def _listing(folder: str, prefix: str) -> list[dict]:
     out = []
     try:
@@ -162,8 +177,11 @@ def _listing(folder: str, prefix: str) -> list[dict]:
         if ext.lower() not in EXTS:
             continue
         st = e.stat(follow_symlinks=False)
-        out.append({"ref": f"{prefix}:{e.name}", "name": stem, "kind": _kind_of(e.path, ext.lower(), st),
-                    "ext": ext.lower(), "size": st.st_size})
+        item = {"ref": f"{prefix}:{e.name}", "name": stem, "kind": _kind_of(e.path, ext.lower(), st),
+                "ext": ext.lower(), "size": st.st_size}
+        if ext.lower() in ("md", "txt"):
+            item["preview"] = _preview(e.path)
+        out.append(item)
     return out[:MAX_TEMPLATES]
 
 

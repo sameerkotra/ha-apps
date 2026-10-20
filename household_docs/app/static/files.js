@@ -167,7 +167,7 @@
   // =====================================================================
   // the file panel (preview, details, download, replace)
   // =====================================================================
-  async function filePanel(it) {
+  async function filePanel(it, opts = {}) {
     const body = h("div", { class: "file-panel" }, spinner());
     const m = openModal(it.name, body, { wide: true, focus: false });
     let info;
@@ -177,7 +177,7 @@
     const preview = image ? h("div", { class: "preview-box" }, h("img", { class: "preview-img", id: "previewImg", alt: info.name,
       src: `api/nodes/${encodeURIComponent(info.id)}/preview`, onerror: (e) => e.target.replaceWith(h("div", { class: "empty" }, "No preview — it isn't a picture the app can show. Download it instead.")) }))
       : D.isPdf && D.isPdf(info) ? h("div", { class: "preview-box none" }, h("span", { class: "tile-icon", "aria-hidden": "true" }, D.iconOf(info)),
-        h("button", { class: "btn-primary", type: "button", id: "viewPdf", onclick: () => D.viewPdf(info) }, "👁 View"),
+        opts.fromViewer ? null : h("button", { class: "btn-primary", type: "button", id: "viewPdf", onclick: () => { m.close(); D.viewPdf(info); } }, "👁 View"),
         h("p", { class: "hint" }, "Shown here, page by page. Links and forms in the PDF don't work in this view — download it for those."))
       : h("div", { class: "preview-box none" }, h("span", { class: "tile-icon", "aria-hidden": "true" }, D.iconOf(info)),
         h("p", { class: "hint" }, D.IMAGE_EXTS.includes(info.ext) ? "No preview — this isn't a picture the app can show (its content doesn't match its name). Download it instead." : "This kind of file downloads to open."));

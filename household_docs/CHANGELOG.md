@@ -1,5 +1,22 @@
 # Changelog
 
+## 1.8.0
+
+- **Back and ← go where you came from.** The ← in a note, checklist or sheet goes back to the page you opened it from (a search, Recent, a chat link), or to its folder when there's nothing to go back to; a link straight to a folder goes back to the folder above it. Switching tabs, sorting or searching again no longer adds steps to Back.
+- **Trash has its own place** in the sidebar and in More, and says when each item goes for good. Each item's ⋯ has **Delete now**, and a long Trash has a box to find things by name. The old Activity page is now **Recent & activity** (Recent, Activity, Storage).
+- **A shorter ⋯ menu.** The everyday actions stay at the top; the rest are in **Organise** (favourite, pin, follow, tags), **Export** (download, PDF, print), **AI** and **Advanced** (rules, Home Assistant, where it's stored, templates). ➕ New is grouped into **Create**, **From…** and **Bring in**.
+- **Phones: one search, a tidier head.** Search is the Search tab (the box at the top is for computers, where Enter searches). A folder's sort, list/grid and "mark all as seen" are in its ⋯. The More tab now lights up on every page it lists, and the bottom bar's buttons are bigger.
+- **Home** shows Pinned, Recent, what's newly shared with you, Favourites, Shared folders and the documents you changed last.
+- **Folders** show "12 items · 3 folders · 40 MB", have ↑/↓ to reverse the order, and an empty folder offers New note, Upload and Scan.
+- **Checklists**: the add box is at the top, ticked items fold into **Done (n)**, progress is a thin bar, and deleting an item can be undone. On a phone each item has one ⋯ instead of four small buttons.
+- **Notes**: Wrap lines and Monospace are in a small **View** menu, a **Linked from (n)** chip jumps to the notes that link here, and the password reminder only shows when the text looks like it holds one.
+- **Sheets**: the toolbar sits above the formula bar with Undo and Redo first; Download, CSV and Print are in the sheet's ⋯ → Export.
+- **PDFs open straight in the viewer**, with **ℹ Details** in its bar and a page box with ‹ › to jump to a page.
+- **Search** shows your saved and recent searches first, folds the filters to one line once results show, and on a phone each result says where it is and when it changed.
+- **Shared with me and Everyone** are grouped by who shared them, newest first, with a dot on what you haven't opened; **Recent** is grouped by Today, Yesterday and Earlier.
+- **Tags** can be listed A–Z or most used first, and colours show how many items carry them. **Templates** list yours and the household's first, with their first lines. **Activity** keeps what you follow in a "Following" chip at the top. **Storage** starts with what can be freed, then duplicates, the largest files and the charts last.
+- **Settings** is split into Notifications, New documents and Display; How the app sees you is folded at the end. **Admin** opens on People once the documents folder is set.
+
 ## 1.7.2
 
 - **Back goes to the page you came from.** The phone's back gesture (and the browser's Back) now steps back through the pages you opened in the app, instead of jumping straight to the start page; dialogs still close first, and Back on the start page still leaves the app.

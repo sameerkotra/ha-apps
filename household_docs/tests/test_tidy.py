@@ -89,6 +89,7 @@ class TemplateTests(TidyBase):
         self.assertTrue(os.path.isfile(os.path.join(person_dir("Kabir Rao"), ".templates", "Leaving.md")))
         d = self.ok(self.get("/api/templates"))
         self.assertEqual([(x["name"], x["kind"]) for x in d["mine"]], [("Leaving", "checklist")])
+        self.assertEqual(d["mine"][0]["preview"][:2], ["- [ ] Windows shut", "- [ ] Iron off"])     # the picker's first lines
         self.assertEqual(self.ok(self.get("/api/templates", MEERA))["mine"], [])          # yours are yours
         new = self.ok(self.post("/api/templates/use", {"ref": "mine:Leaving.md", "name": "Trip"}), 201)
         self.assertEqual(new["kind"], "checklist")

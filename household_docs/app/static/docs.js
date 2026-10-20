@@ -276,6 +276,7 @@
     }
     if (!current()) return;
     D.state.currentSpace = doc.rootKind === "shared" ? "folders" : (doc.ownerId === D.state.me.id ? "mine" : "shared");
+    D.state.docParent = backHashOf(doc);         // Back from a link straight to the document: its folder
     const ed = D.editors[doc.kind] || D.editors.note;
     const atLine = args[1] === "at" ? parseInt(args[2], 10) || null : null;
     const atCell = args[1] === "cell" ? { tab: args[2], ref: args[3] } : null;
@@ -324,11 +325,14 @@
   });
   document.addEventListener("fullscreenchange", () => { if (!document.fullscreenElement && D.isFull()) setFull(false); });
 
+  function backHashOf(doc) { return doc.parentRef ? D.folderHash(doc.parentRef) : (doc.ownerId === D.state.me.id ? "#/mine" : "#/shared"); }
   function editorHead(doc, ctx) {
     const status = h("span", { class: "save-state", id: "saveState", role: "status", "aria-live": "polite" });
     const editing = h("span", { class: "chip warn editing-chip", id: "editingChip", hidden: !doc.editing }, doc.editing ? `${doc.editing} is editing` : "");
-    const backHash = doc.parentRef ? D.folderHash(doc.parentRef) : (doc.ownerId === D.state.me.id ? "#/mine" : "#/shared");
-    const back = h("a", { class: "icon-btn back-link", href: backHash, "aria-label": "Back to the folder", title: "Back to the folder" }, "←");
+    const backHash = backHashOf(doc);
+    // ← goes back where you came from (a search, Recent, a chat link …); with nothing to go back to, to the folder
+    const back = h("a", { class: "icon-btn back-link tap44", href: backHash, "aria-label": "Back", title: "Back",
+      onclick: (e) => { if (window.BackNav && !e.metaKey && !e.ctrlKey) { e.preventDefault(); BackNav.back(); } } }, "←");
     // One line: ← | the name (takes what's left, "…" when long; the full name is its tooltip) | Share | ⋯ — so the editor
     // gets the height (SPEC §13). Everything else in the ⋯ menu as before; Rename is also there when the name is cut.
     const name = titleOf(doc);
@@ -377,12 +381,13 @@
   D.looksSecret = looksSecret;
   function secretHint() {
     if (!D.state.me.app.secretHint) return { el: null, check: () => {} };
-    const warn = h("div", { class: "secret-warn", role: "status", hidden: true });
-    const el = h("div", { class: "secret-hint" }, h("span", { class: "hint" }, "Docs are plain files — keep passwords and card numbers in Household Vault."), warn);
+    // shown only when the text looks like it holds a secret (Home has the general reminder)
+    const warn = h("div", { class: "secret-warn", role: "status" });
+    const el = h("div", { class: "secret-hint", hidden: true }, warn);
     const check = debounce((text) => {
       const what = looksSecret(text);
-      warn.hidden = !what;
-      warn.textContent = what ? `⚠ This looks like it holds ${what}. Anyone with access to /share can read docs — Household Vault keeps it encrypted.` : "";
+      el.hidden = !what;
+      warn.textContent = what ? `⚠ This looks like it holds ${what}. Docs are plain files: anyone with access to /share can read them — keep passwords and card numbers in Household Vault, which keeps them encrypted.` : "";
     }, 600);
     return { el, check };
   }
@@ -541,7 +546,6 @@
     const isMd = doc.kind === "markdown";
     const ta = h("textarea", { class: "note-text", id: "noteText", spellcheck: "true", readonly: !doc.canEdit, "aria-label": doc.name });
     ta.value = doc.text;
-    const wrapOn = lsGet("docs.wrap") !== "0", monoOn = lsGet("docs.mono") === "1";
     const applyLook = () => { ta.classList.toggle("nowrap", lsGet("docs.wrap") === "0"); ta.classList.toggle("mono", lsGet("docs.mono") === "1"); };
     const hints = {};                                        // [[text]] → the id the picker chose (sent with saves)
     let linkInfo = { links: {}, backlinks: [] };
@@ -648,6 +652,11 @@
 
     // ---- links to other documents and Linked from
     const linksBox = h("div", { class: "links-box", id: "linksBox" });
+    // "↩ Linked from (n)" in the tools row: jumps to the list under the note
+    const linkedChip = h("button", { class: "chip linked-chip", type: "button", id: "linkedFrom", hidden: true, onclick: () => {
+      const b = document.getElementById("backlinks");
+      if (b) { b.scrollIntoView({ block: "center", behavior: "smooth" }); b.classList.add("flash"); setTimeout(() => b.classList.remove("flash"), 2400); }
+    } });
     function drawLinks() {
       const web = webLinks(ta.value);
       const docLinks = window.DocsMd ? DocsMd.docLinks(ta.value) : [];
@@ -663,6 +672,8 @@
             return h("span", { class: "doc-link " + (info ? info.state : "pending") }, t, why ? h("span", { class: "doc-link-why" }, " " + why) : null);
           })));
       }
+      linkedChip.hidden = !linkInfo.backlinks.length;
+      linkedChip.textContent = `↩ Linked from (${linkInfo.backlinks.length})`;
       if (linkInfo.backlinks.length) {
         parts.push(h("div", { class: "links-row", id: "backlinks" }, h("span", { class: "links-label" }, "Linked from"),
           linkInfo.backlinks.map((b) => h("a", { class: "doc-link back", href: (b.kind === "folder" ? "#/folder/" : "#/doc/") + encodeURIComponent(b.id) }, "↩ " + b.title))));
@@ -678,13 +689,15 @@
     // ---- tools row
     const find = findBar(ta, doc.canEdit, () => changed());
     const pickBtn = doc.canEdit ? h("button", { class: "btn-ghost btn-small", type: "button", id: "linkDoc", title: "Link to a document ([[)", onclick: () => insertLink(false) }, "[[ ]] Link") : null;
+    // Wrap lines and Monospace: this device's choice, in a small View menu
+    const viewBtn = h("button", { class: "btn-ghost btn-small", type: "button", id: "noteView", "aria-haspopup": "menu", title: "How the text looks",
+      onclick: (e) => D.menu(e.currentTarget, [
+        { id: "view-wrap", icon: lsGet("docs.wrap") !== "0" ? "✓" : " ", label: "Wrap lines", run: () => { lsSet("docs.wrap", lsGet("docs.wrap") === "0" ? "1" : "0"); applyLook(); } },
+        { id: "view-mono", icon: lsGet("docs.mono") === "1" ? "✓" : " ", label: "Monospace", run: () => { lsSet("docs.mono", lsGet("docs.mono") === "1" ? "0" : "1"); applyLook(); } }]) }, "Aa View ▾");
     const tools = h("div", { class: "doc-tools" },
-      isMd ? h("span", { class: "chip-set md-modes", role: "group", "aria-label": "View" }, modeBtns) : null,
-      h("label", { class: "mini-toggle" }, h("input", { type: "checkbox", checked: wrapOn, onchange: (e) => { lsSet("docs.wrap", e.target.checked ? "1" : "0"); applyLook(); } }), "Wrap lines"),
-      h("label", { class: "mini-toggle" }, h("input", { type: "checkbox", checked: monoOn, onchange: (e) => { lsSet("docs.mono", e.target.checked ? "1" : "0"); applyLook(); } }), "Monospace"),
+      isMd ? h("span", { class: "chip-set md-modes", role: "group", "aria-label": "Edit or preview" }, modeBtns) : null,
       h("button", { class: "btn-ghost btn-small", type: "button", id: "findBtn", title: "Find" + (doc.canEdit ? " and replace" : "") + " (Ctrl+F)", onclick: () => { if (isMd && mode === "preview") setMode(doc.canEdit ? "split" : "edit"); find.open(); } }, doc.canEdit ? "🔍 Find & replace" : "🔍 Find"),
-      pickBtn,
-      isMd ? h("span", { class: "chip" }, "Markdown") : null,
+      pickBtn, viewBtn, linkedChip,
       !doc.canEdit ? h("span", { class: "chip" }, doc.readOnlyMode ? "Read only while documents are moved" : "Read only") : null);
     applyLook();
     const secret = secretHint();
@@ -867,22 +880,30 @@
     let items = doc.items;
     let etag = doc.etag;
     const changedKeys = new Set((doc.changedSince && doc.changedSince.items) || []);   // §17.21, for this visit
-    const hideKey = "docs.hideTicked";
+    const doneKey = "docs.doneOpen";
     const listEl = h("div", { class: "checklist", id: "checklist", role: "list" });
+    // ticked items collapse into "Done (n)" under the open ones
+    const doneEl = h("div", { class: "checklist done-list", id: "doneList", role: "list" });
+    const doneSummary = h("summary", { id: "doneSummary" });
+    const doneBox = h("details", { class: "done-box", id: "doneBox", open: lsGet(doneKey) === "1", hidden: true }, doneSummary, doneEl);
+    doneBox.addEventListener("toggle", () => lsSet(doneKey, doneBox.open ? "1" : "0"));
+    // "x of y done" as a thin bar
     const count = h("span", { class: "hint", id: "checkCount" });
-    const hideBox = h("input", { type: "checkbox", checked: lsGet(hideKey) === "1", onchange: (e) => { lsSet(hideKey, e.target.checked ? "1" : "0"); draw(); } });
+    const fill = h("span", { class: "check-progress-fill" });
+    const progress = h("div", { class: "check-progress", id: "checkProgress", role: "progressbar", "aria-label": "Ticked", "aria-valuemin": "0" },
+      h("span", { class: "check-progress-track" }, fill), count);
     // Find (§1): shows only the items holding the text (Ctrl+F or 🔍)
     const findBox = h("input", { type: "search", id: "checkFind", placeholder: "Find in this list", "aria-label": "Find in this list", maxlength: "200", hidden: true });
     findBox.addEventListener("input", () => draw());
     findBox.addEventListener("keydown", (e) => { if (e.key === "Escape") { e.stopPropagation(); findBox.value = ""; findBox.hidden = true; draw(); } });
     const openFind = () => { findBox.hidden = false; findBox.focus(); };
     page.onkeydown = (e) => { if ((e.ctrlKey || e.metaKey) && (e.key === "f" || e.key === "F") && D.state.route === "doc" && document.body.contains(listEl)) { e.preventDefault(); openFind(); } };
-    const tools = h("div", { class: "doc-tools" }, count,
-      h("label", { class: "mini-toggle" }, hideBox, "Hide ticked"),
+    const tools = h("div", { class: "doc-tools" }, progress,
       h("button", { class: "btn-ghost btn-small", type: "button", id: "checkFindBtn", title: "Find (Ctrl+F)", onclick: openFind }, "🔍 Find"), findBox,
       doc.canTick ? h("button", { class: "btn-ghost btn-small", type: "button", id: "untickAll", onclick: () => send([{ op: "untickAll" }]) }, "Untick all") : null,
       !doc.canEdit ? h("span", { class: "chip" }, doc.canTick ? "You can tick items" : "Read only") : null);
     const addInput = h("input", { type: "text", id: "addItem", placeholder: "Add an item", maxlength: "2000", "aria-label": "Add an item" });
+    // the add box sits at the top of the list (it stays in view while the list grows)
     const addForm = doc.canEdit ? h("form", { class: "check-add", onsubmit: (e) => {
       e.preventDefault();
       const t = addInput.value.trim();
@@ -891,7 +912,7 @@
       send([{ op: "add", text: t }]).then(() => addInput.focus());
     } }, addInput, h("button", { class: "btn-primary", type: "submit" }, "Add")) : null;
     const secret = secretHint();
-    mount(page, head.el, tools, h("div", { class: "editor-card" }, listEl, addForm), secret.el);
+    mount(page, head.el, tools, h("div", { class: "editor-card checklist-card" }, addForm, listEl, doneBox), secret.el);
     head.status.textContent = "";
     let busy = Promise.resolve();
 
@@ -908,6 +929,26 @@
         draw();
       });
       return busy;
+    }
+    // Delete without asking — the toast's Undo puts the item back where it was (ticked again if it was)
+    function removeItem(it) {
+      const idx = items.indexOf(it);
+      const prev = idx > 0 ? items[idx - 1].key : null;
+      send([{ op: "delete", key: it.key }]).then(() => {
+        const undo = h("button", { class: "link-btn toast-undo", type: "button", id: "undoDelete", onclick: (e) => {
+          e.stopPropagation();
+          const t = e.currentTarget.closest(".toast");
+          if (t) t.remove();
+          const op = { op: "add", text: it.text, indent: it.level ? 1 : 0 };
+          if (prev && items.some((x) => x.key === prev)) op.after = prev; else op.first = true;
+          send([op]).then(() => {
+            if (!it.done) return;
+            const back = items.find((x, i) => x.text === it.text && !x.done && (op.first ? i === 0 : i > 0 && items[i - 1].key === prev));
+            if (back) send([{ op: "tick", key: back.key }]);
+          });
+        } }, "Undo");
+        toast(`Deleted “${it.text.length > 40 ? it.text.slice(0, 40) + "…" : it.text}”`, false, { ms: 7000, extra: undo });
+      });
     }
     function editText(it, span) {
       const input = h("input", { type: "text", value: it.text, class: "check-edit", maxlength: "2000", "aria-label": "Edit item" });
@@ -951,36 +992,61 @@
       });
       row.addEventListener("pointercancel", reset);
     }
+    // one row; `group` is the list it shows in (open or done): ↑ ↓ move among those
+    function rowOf(it, group) {
+      const gi = group.indexOf(it);
+      const up = gi > 0 ? group[gi - 1] : null;
+      const down = gi < group.length - 1 ? group[gi + 1] : null;
+      const moveUp = () => send([{ op: "move", key: it.key, before: up.key }]);
+      const moveDown = () => { const i = items.indexOf(down); send([{ op: "move", key: it.key, before: i + 1 < items.length ? items[i + 1].key : null }]); };
+      const indent = () => send([{ op: "indent", key: it.key, level: it.level ? 0 : 1 }]);
+      const box = h("input", { type: "checkbox", checked: it.done, disabled: !doc.canTick, "aria-label": it.text,
+        onchange: () => send([{ op: it.done ? "untick" : "tick", key: it.key }]) });
+      const text = h("span", { class: "check-text", title: it.done && it.doneByName ? `Ticked by ${it.doneByName} ${fmtFull(it.doneAt)}` : null }, it.text);
+      if (doc.canEdit) { text.classList.add("editable"); text.addEventListener("click", () => editText(it, text)); }
+      const who = it.done && it.doneByName ? h("span", { class: "check-who" }, `${it.doneByName} · ${fmtWhen(it.doneAt)}`) : null;
+      // a mouse: four small buttons; a finger (pointer: coarse, CSS): one ⋯ per row with the same four, 44 px
+      const tools2 = doc.canEdit ? [h("span", { class: "check-tools" },
+        h("button", { class: "icon-btn", type: "button", title: "Move up", "aria-label": "Move up", disabled: !up, onclick: moveUp }, "↑"),
+        h("button", { class: "icon-btn", type: "button", title: "Move down", "aria-label": "Move down", disabled: !down, onclick: moveDown }, "↓"),
+        h("button", { class: "icon-btn", type: "button", title: it.level ? "Outdent" : "Indent", "aria-label": it.level ? "Outdent" : "Indent", onclick: indent }, it.level ? "⇤" : "⇥"),
+        h("button", { class: "icon-btn danger", type: "button", title: "Delete", "aria-label": "Delete item", onclick: () => removeItem(it) }, "✕")),
+      h("button", { class: "icon-btn check-more tap44", type: "button", "aria-label": `More for ${it.text}`, "aria-haspopup": "menu", onclick: (e) => D.menu(e.currentTarget, [
+        up ? { id: "item-up", icon: "↑", label: "Move up", run: moveUp } : null,
+        down ? { id: "item-down", icon: "↓", label: "Move down", run: moveDown } : null,
+        { id: "item-indent", icon: it.level ? "⇤" : "⇥", label: it.level ? "Outdent" : "Indent", run: indent }, "-",
+        { id: "item-delete", icon: "🗑", label: "Delete", danger: true, run: () => removeItem(it) }]) }, "⋯")] : null;
+      const row = h("div", { class: "check-row" + (it.done ? " done" : "") + (it.level ? " indent" : "") + (changedKeys.has(it.key) ? " changed" : ""),
+        role: "listitem", dataset: { key: it.key }, title: changedKeys.has(it.key) ? "Changed since you last looked" : null },
+        h("label", { class: "check-box" }, box), h("div", { class: "check-main" }, text, who), tools2);
+      swipeToTick(row, it);
+      return row;
+    }
     function draw() {
-      const hide = hideBox.checked;
       const done = items.filter((i) => i.done).length;
       count.textContent = items.length ? `${done} of ${items.length} done` : "";
+      progress.hidden = !items.length;
+      fill.style.width = items.length ? `${Math.round(100 * done / items.length)}%` : "0%";
+      progress.setAttribute("aria-valuemax", String(items.length));
+      progress.setAttribute("aria-valuenow", String(done));
       const q = findBox.value.trim().toLowerCase();
-      const shown = items.filter((i) => !(hide && i.done) && (!q || i.text.toLowerCase().includes(q)));
-      mount(listEl, shown.length ? shown.map((it) => {
-        const idx = items.indexOf(it);
-        const box = h("input", { type: "checkbox", checked: it.done, disabled: !doc.canTick, "aria-label": it.text,
-          onchange: () => send([{ op: it.done ? "untick" : "tick", key: it.key }]) });
-        const text = h("span", { class: "check-text", title: it.done && it.doneByName ? `Ticked by ${it.doneByName} ${fmtFull(it.doneAt)}` : null }, it.text);
-        if (doc.canEdit) { text.classList.add("editable"); text.addEventListener("click", () => editText(it, text)); }
-        const who = it.done && it.doneByName ? h("span", { class: "check-who" }, `${it.doneByName} · ${fmtWhen(it.doneAt)}`) : null;
-        const tools2 = doc.canEdit ? h("span", { class: "check-tools" },
-          h("button", { class: "icon-btn", type: "button", title: "Move up", "aria-label": "Move up", disabled: idx === 0, onclick: () => send([{ op: "move", key: it.key, before: items[idx - 1].key }]) }, "↑"),
-          h("button", { class: "icon-btn", type: "button", title: "Move down", "aria-label": "Move down", disabled: idx === items.length - 1,
-            onclick: () => send([{ op: "move", key: it.key, before: idx + 2 < items.length ? items[idx + 2].key : null }]) }, "↓"),
-          h("button", { class: "icon-btn", type: "button", title: it.level ? "Outdent" : "Indent", "aria-label": it.level ? "Outdent" : "Indent", onclick: () => send([{ op: "indent", key: it.key, level: it.level ? 0 : 1 }]) }, it.level ? "⇤" : "⇥"),
-          h("button", { class: "icon-btn danger", type: "button", title: "Delete", "aria-label": "Delete item", onclick: () => send([{ op: "delete", key: it.key }]) }, "✕")) : null;
-        const row = h("div", { class: "check-row" + (it.done ? " done" : "") + (it.level ? " indent" : "") + (changedKeys.has(it.key) ? " changed" : ""),
-          role: "listitem", dataset: { key: it.key }, title: changedKeys.has(it.key) ? "Changed since you last looked" : null },
-          h("label", { class: "check-box" }, box), h("div", { class: "check-main" }, text, who), tools2);
-        swipeToTick(row, it);
-        return row;
-      }) : h("div", { class: "empty" }, q ? "No item holds that text." : items.length ? "Everything is ticked." : (doc.canEdit ? "No items yet — add the first one below." : "No items yet.")));
+      const match = (i) => !q || i.text.toLowerCase().includes(q);
+      const open = items.filter((i) => !i.done && match(i));
+      const ticked = items.filter((i) => i.done && match(i));
+      mount(listEl, open.length ? open.map((it) => rowOf(it, open))
+        : h("div", { class: "empty" }, q ? (ticked.length ? "Only ticked items hold that text." : "No item holds that text.")
+          : items.length ? "Everything is ticked." : (doc.canEdit ? "No items yet — add the first one above." : "No items yet.")));
+      doneBox.hidden = !ticked.length;
+      doneSummary.textContent = `Done (${ticked.length})`;
+      if (q && ticked.length) doneBox.open = true;
+      mount(doneEl, ticked.map((it) => rowOf(it, ticked)));
       secret.check(items.map((i) => i.text).join("\n"));
     }
     draw();
     if (ctx.atLine) {
-      const row = listEl.querySelectorAll(".check-row")[ctx.atLine - 1];
+      const target = items[ctx.atLine - 1];
+      if (target && target.done) doneBox.open = true;
+      const row = target ? page.querySelector(`.check-row[data-key="${CSS.escape(String(target.key))}"]`) : null;
       if (row) { row.classList.add("flash"); setTimeout(() => row.scrollIntoView({ block: "center" }), 60); setTimeout(() => row.classList.remove("flash"), 2400); }
     }
     D.state.leaving = async () => { stopPoll(); await busy; };

@@ -78,8 +78,14 @@
     const form = h("form", { class: "search-page-form", role: "search", onsubmit: (e) => { e.preventDefault(); commit(true); } },
       box, h("button", { class: "btn-primary", type: "submit", id: "searchGo" }, "Search"),
       h("button", { class: "icon-btn", type: "button", title: "Search tips", "aria-label": "Search tips", id: "searchHelp", onclick: helpDialog }, "?"));
-    const panel = h("details", { class: "card search-panel", id: "searchPanel", open: matchMedia("(min-width: 761px)").matches },
-      h("summary", null, "Where to look, how to match, filters"), h("div", { class: "sf-body" }));
+    const panelSummary = h("summary", { id: "searchPanelSummary" }, "Where to look, how to match, filters");
+    const panel = h("details", { class: "card search-panel", id: "searchPanel", open: matchMedia("(min-width: 761px)").matches && !st.q && !Object.keys(filtersOf(st)).length },
+      panelSummary, h("div", { class: "sf-body" }));
+    // once results show, the panel folds to one line that says what's set
+    function summarise() {
+      const n = Object.keys(filtersOf(st)).length;
+      panelSummary.textContent = n ? `Filters: ${n} in use — change` : "Where to look, how to match, filters";
+    }
 
     function setOpt(k, v, now = true) {
       if (v === "" || v === null || v === undefined || (Array.isArray(v) && !v.length)) delete st[k]; else st[k] = v;
@@ -96,7 +102,7 @@
       const hash = "#/search/" + encodeURIComponent(arg);
       if (push) {
         if (st.q || Object.keys(filtersOf(st)).length) api("api/searches/recent", { method: "POST", body: { q: st.q, filters: filtersOf(st) } }).catch(() => {});
-        if (location.hash !== hash) { go(hash); return; }
+        if (location.hash !== hash) { D.replace(hash); return; }     // a new search replaces this one (Back leaves Search)
       } else history.replaceState(history.state, "", hash);
       run();
     }
@@ -187,6 +193,8 @@
       catch (e) { if (my === seq) { errBox.textContent = e.message; mount(resultsBox); } return; }
       if (my !== seq || !current()) return;
       mount(sideBox);
+      summarise();
+      if (panel.open && !panel.contains(document.activeElement)) panel.open = false;
       drawChips(d);
       drawResults(d);
     }
@@ -216,7 +224,7 @@
       const dirBtn = st.sort === "relevance" ? null : h("button", { class: "icon-btn", type: "button", id: "sfDir", title: "Ascending or descending", "aria-label": "Ascending or descending",
         onclick: () => { st.dir = (d.options.dir === "asc") ? "desc" : "asc"; commit(false); } }, d.options.dir === "asc" ? "↑" : "↓");
       const groupSel = select("sfGroup", "Group", GROUPS, st.group, (v) => { st.group = v; commit(false); });
-      const count = d.searched ? `${d.total}${d.more ? "+" : ""} result${d.total === 1 ? "" : "s"} · ${d.ms} ms` : "";
+      const count = d.searched ? `${d.total}${d.more ? "+" : ""} result${d.total === 1 ? "" : "s"}` : "";
       const exportA = h("a", { class: "btn-ghost btn-small", id: "exportCsv", href: "api/search/export" + T.searchArg(Object.assign({}, st, { page: undefined, sub: st.sub === false ? "0" : undefined })), download: "" }, "⬇ CSV");
       const save = h("button", { class: "btn-ghost btn-small", type: "button", id: "saveSearch", onclick: () => saveDialog() }, "☆ Save search");
       const tools = h("div", { class: "results-tools" }, h("span", { class: "hint", id: "resultCount" }, count),
@@ -239,11 +247,12 @@
             (it.tags || []).slice(0, 3).map((t) => h("span", { class: "tag-chip" }, "#" + t))),
             it.snippet ? h("span", { class: "row-snippet" }, D.highlight(it.snippet)) : null));
         const loc = h("span", { class: "res-loc", title: it.location }, it.location);
+        const phoneMeta = h("span", { class: "res-meta" }, [it.location, fmtWhen(it.modified)].filter(Boolean).join(" · "));     // phones: one line under the name
         const more = h("button", { class: "icon-btn row-more", type: "button", "aria-label": `More for ${it.name}`, onclick: (e) => D.itemMenu(e.currentTarget, it, { inSearch: true, showLocation: true }) }, "⋯");
         return h("div", { class: "res-row" + (sel.ids.has(it.id) ? " selected" : ""), role: "listitem", dataset: { id: it.id, kind: it.kind } }, tick, name, loc,
           h("span", { class: "res-mod", title: fmtFull(it.modified) }, fmtWhen(it.modified)),
           h("span", { class: "res-by" }, it.updatedByName || (it.updatedBy ? "" : "outside the app")),
-          h("span", { class: "res-size" }, it.kind === "folder" ? "" : fmtSize(it.size)), h("span", { class: "res-type" }, it.typeLabel), more);
+          h("span", { class: "res-size" }, it.kind === "folder" ? "" : fmtSize(it.size)), h("span", { class: "res-type" }, it.typeLabel), more, phoneMeta);
       }
       function draw() {
         const kids = [];
@@ -304,7 +313,9 @@
     }, 250));
     if (!D.state.people) { try { await D.people(); } catch (e) { /* the pickers just lack names */ } }
     if (!current()) return;
-    mount(page, pageHead("Search"), form, errBox, panel, chipsBox, resultsBox, sideBox);
+    // no search yet: saved and recent searches come first, the filters under them
+    mount(page, pageHead("Search"), form, errBox, sideBox, panel, chipsBox, resultsBox);
+    summarise();
     drawPanel();
     run();
     if (!st.q && matchMedia("(pointer: fine)").matches) setTimeout(() => box.focus(), 30);

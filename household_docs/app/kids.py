@@ -51,7 +51,7 @@ ALLOWED = {
     ("GET", "/api/nodes/{node_id}"), ("POST", "/api/nodes/{node_id}/rename"), ("POST", "/api/nodes/{node_id}/move"),
     ("POST", "/api/nodes/{node_id}/leave"), ("POST", "/api/nodes/{node_id}/hide"),
     ("POST", "/api/nodes/{node_id}/favourite"), ("DELETE", "/api/nodes/{node_id}"),
-    ("POST", "/api/trash/{trash_id}/restore"), ("POST", "/api/trash/empty"),
+    ("POST", "/api/trash/{trash_id}/restore"), ("POST", "/api/trash/empty"), ("DELETE", "/api/trash/{trash_id}"),
     ("GET", "/api/docs/{node_id}/etag"), ("POST", "/api/docs/{node_id}/checklist"),
     ("GET", "/api/docs/{node_id}/versions"), ("GET", "/api/docs/{node_id}/versions/{n}"),
     ("POST", "/api/nodes/{ref}/upload"), ("GET", "/api/nodes/{node_id}/preview"),

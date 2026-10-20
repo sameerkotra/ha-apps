@@ -22,7 +22,7 @@
 const Docs = (window.Docs = {
   state: { me: null, route: null, args: [], people: null },
   routes: {}, newItems: [], kinds: {}, actions: [], spaces: [], bulk: [],
-  settingsRows: [],     // fn(me, save, row) → nodes for Settings → You (later steps: follows, quiet hours, AI, scans)
+  settingsRows: [],     // fn(me, save, row) → nodes for a Settings card; fn.group: "notify", "new" or "display" (the default)
   rootActions: [],      // {id, icon, label, show?(f), run(f)} on an admin shared folder's top (⋯ in its head)
   route(name, render) { this.routes[name] = render; },
   addNew(item) { this.newItems.push(item); this.newItems.sort((a, b) => (a.order || 0) - (b.order || 0)); },
@@ -65,11 +65,8 @@ function confirmDialog(title, text, okLabel = "OK", danger = false) {
   return UI.confirmDialog(title, text, { okLabel, okClass: danger ? "btn-danger" : "btn-primary", cancelClass: "btn-ghost",
     focusOk: true, modal: { modalClass: "sheet", escape: "stack", focus: false } });
 }
-function spinner() { return h("div", { class: "spinner" }, "Loading…"); }
-function errorCard(e, retry) {
-  return h("div", { class: "card fatal" }, h("div", null, e.message || String(e)),
-    retry ? h("button", { class: "btn-secondary", type: "button", onclick: retry }, "Try again") : null);
-}
+function spinner(text) { return UI.loading(null, text); }
+function errorCard(e, retry) { return UI.errorBox(e, retry); }
 function pageHead(title, ...right) {
   return h("div", { class: "page-head" }, typeof title === "string" ? h("h2", null, title) : title,
     right.length ? h("div", { class: "head-actions" }, right) : null);
@@ -104,6 +101,16 @@ Docs.drafts = {
   drop(id) { try { localStorage.removeItem("docs.draft." + id); } catch (e) { /* ignore */ } },
 };
 function go(hash) { if (window.BackNav) BackNav.go(hash); else location.hash = hash; }
+// a filter, sort, search or in-page tab change: the address changes, Back doesn't step through it
+function replaceHash(hash) { if (window.BackNav) BackNav.replace(hash); else location.hash = hash; }
+// one tab strip for every page with sub-pages (Recent & activity, Admin): an underline strip, aria-current on the
+// tab that's showing, and switching tabs replaces the address (Back leaves the page instead of retracing tabs)
+function tabStrip(items, active, label, dataKey = "tab") {
+  return h("nav", { class: "ui-tabs", "aria-label": label || "Sections" }, items.map(([id, text, hash]) => h("a", {
+    class: "ui-tab" + (id === active ? " active" : ""), href: hash, "aria-current": id === active ? "page" : null, dataset: { [dataKey]: id },
+    onclick: (e) => { if (e.button || e.metaKey || e.ctrlKey || e.shiftKey) return; e.preventDefault(); replaceHash(hash); } }, text)));
+}
+const isPhone = () => matchMedia("(max-width: 760px)").matches;
 function folderHash(ref) { return ref ? "#/folder/" + encodeURIComponent(ref) : "#/mine"; }
 function searchHash(params) { return "#/search/" + encodeURIComponent(DocsText.searchArg(params)); }
 function copyText(text) {
@@ -111,7 +118,7 @@ function copyText(text) {
 }
 const isChild = () => !!(Docs.state.me && Docs.state.me.isChild);      // Kids' space (§17.20): a simpler app
 Object.assign(Docs, { toast, fail, openModal, confirmDialog, spinner, errorCard, pageHead, fmtSize, fmtWhen, fmtFull, titleOf, go,
-  folderHash, searchHash, isChild });
+  replace: replaceHash, tabStrip, isPhone, folderHash, searchHash, isChild });
 
 // ---------- me ----------
 async function refreshMe() {
@@ -191,9 +198,20 @@ function menu(anchor, entries) {
   closeMenu();
   const list = entries.filter(Boolean);
   if (!list.length) return null;
-  const m = h("div", { class: "menu", role: "menu" }, list.map((e) => e === "-" ? h("hr") :
-    h("button", { type: "button", role: "menuitem", class: e.danger ? "danger" : "", dataset: { action: e.id || "" },
-      onclick: () => { closeMenu(true); e.run(); } }, e.icon ? h("span", { class: "menu-icon", "aria-hidden": "true" }, e.icon) : null, e.label)));
+  // entries: {id, icon, label, run, danger}, "-" (a line), {heading} (a small group title) or {id, icon, label, sub: [entries]}
+  // (a submenu: it replaces this menu at the same place, with ‹ Back to return)
+  const m = h("div", { class: "menu", role: "menu" }, list.map((e) => {
+    if (e === "-") return h("hr");
+    if (e.heading) return h("div", { class: "menu-head", role: "presentation" }, e.heading);
+    const sub = Array.isArray(e.sub);
+    return h("button", { type: "button", role: "menuitem", class: (e.danger ? "danger" : "") + (sub ? " has-sub" : ""), dataset: { action: e.id || "" },
+      "aria-haspopup": sub ? "menu" : null,
+      onclick: () => {
+        if (sub) { menu(anchor, [{ id: "menu-back", icon: "‹", label: e.label, run: () => menu(anchor, entries) }, "-"].concat(e.sub)); return; }
+        closeMenu(true); e.run();
+      } }, e.icon ? h("span", { class: "menu-icon", "aria-hidden": "true" }, e.icon) : null, h("span", { class: "menu-label" }, e.label),
+      sub ? h("span", { class: "menu-go", "aria-hidden": "true" }, "›") : null);
+  }));
   // a menu as menus go: ↑ ↓ Home End move between its items (review 2026-10 DFI7)
   m.addEventListener("keydown", (ev) => {
     const items = Array.from(m.querySelectorAll('[role="menuitem"]'));
@@ -223,13 +241,43 @@ Docs.menu = menu;
 Docs.closeMenu = closeMenu;
 Docs.openMenu = () => openMenuEl;
 
+// The item ⋯ menu keeps the everyday actions at the top level; the rest sit in four submenus (an action can name its
+// own with `group`). A group with a single entry shows that entry directly.
+const ACTION_GROUPS = [
+  { id: "organise", icon: "🏷", label: "Organise", ids: ["favourite", "pin", "follow", "tags"] },
+  { id: "export", icon: "⬇", label: "Export", ids: ["download", "export-xlsx", "print", "pdf", "pdf-here"] },
+  { id: "ai", icon: "✨", label: "AI", prefix: "ai-" },
+  { id: "advanced", icon: "⚙️", label: "Advanced", ids: ["rules", "ha-sensor", "where", "save-template", "convert-note", "transfer"] },
+];
+function groupOf(a) {
+  if (a.group) return ACTION_GROUPS.find((g) => g.id === a.group) || null;
+  return ACTION_GROUPS.find((g) => (g.ids && g.ids.includes(a.id)) || (g.prefix && String(a.id).startsWith(g.prefix))) || null;
+}
+Docs.actionGroups = ACTION_GROUPS;
 function itemMenu(anchor, item, ctx = {}) {
-  const entries = Docs.actions.filter((a) => !a.show || a.show(item, ctx)).map((a) => (a.sep ? "-" : {
-    id: a.id, label: typeof a.label === "function" ? a.label(item, ctx) : a.label, icon: a.icon, danger: a.danger,
-    run: () => a.run(item, ctx),
-  }));
-  while (entries.length && entries[entries.length - 1] === "-") entries.pop();
-  return menu(anchor, entries);
+  const c = Object.assign({}, ctx, { anchor });
+  const extra = ctx.inEditor ? (Docs.state.editorExtras || []) : [];
+  const hide = ctx.inEditor ? (Docs.state.editorHide || []) : [];
+  const actions = Docs.actions.concat(extra).filter((a) => !hide.includes(a.id)).sort((x, y) => (x.order || 0) - (y.order || 0));
+  const entries = [];
+  const groups = new Map();
+  for (const a of actions) {
+    if (a.show && !a.show(item, c)) continue;
+    if (a.sep) { entries.push("-"); continue; }
+    const e = { id: a.id, label: typeof a.label === "function" ? a.label(item, c) : a.label, icon: a.icon, danger: a.danger, run: () => a.run(item, c) };
+    const g = groupOf(a);
+    if (!g) { entries.push(e); continue; }
+    if (!groups.has(g.id)) { const holder = { id: "group-" + g.id, icon: g.icon, label: g.label, sub: [] }; groups.set(g.id, holder); entries.push(holder); }
+    groups.get(g.id).sub.push(e);
+  }
+  const flat = [];
+  for (const e of entries) {
+    if (e !== "-" && e.sub && e.sub.length === 1) flat.push(e.sub[0]);
+    else if (e === "-" && (!flat.length || flat[flat.length - 1] === "-")) continue;
+    else flat.push(e);
+  }
+  while (flat.length && flat[flat.length - 1] === "-") flat.pop();
+  return menu(anchor, (ctx.prepend || []).concat(ctx.prepend && ctx.prepend.length && flat.length ? ["-"] : [], flat));
 }
 Docs.itemMenu = itemMenu;
 
@@ -241,12 +289,30 @@ function newContext() {
   return { folderId: null, canEdit: true, label: "My docs", names: null };
 }
 Docs.newContext = newContext;
+// ➕ New in three groups: Create, From…, Bring in (an entry can name its own `group`)
+const NEW_GROUPS = [
+  { id: "create", heading: "Create", ids: ["note", "note-other", "checklist", "sheet", "folder"] },
+  { id: "from", heading: "From…", ids: ["template", "ai-checklist", "ai-sheet"] },
+  { id: "bring", heading: "Bring in", ids: ["upload", "scan", "import-keep", "import-zip", "import-sheet"] },
+];
 function openNewMenu(anchor) {
   const ctx = newContext();
   if (!ctx.canEdit) { toast("You can only view this folder — new items go into My docs.", false); ctx.folderId = null; ctx.label = "My docs"; ctx.names = null; }
-  menu(anchor, Docs.newItems.filter((n) => !n.show || n.show(ctx)).map((n) => ({ id: "new-" + n.id, icon: n.icon,
-    label: typeof n.label === "function" ? n.label(ctx) : n.label, run: () => n.run(ctx) })));
+  const shown = Docs.newItems.filter((n) => !n.show || n.show(ctx));
+  const groupIdx = (n) => { const i = NEW_GROUPS.findIndex((g) => g.id === n.group || g.ids.includes(n.id)); return i < 0 ? NEW_GROUPS.length : i; };
+  const entries = [];
+  let last = null;
+  shown.map((n, i) => [groupIdx(n), i, n]).sort((a, b) => a[0] - b[0] || a[1] - b[1]).forEach(([g, _i, n]) => {
+    if (g !== last) {
+      if (entries.length) entries.push("-");
+      if (NEW_GROUPS[g]) entries.push({ heading: NEW_GROUPS[g].heading });
+      last = g;
+    }
+    entries.push({ id: "new-" + n.id, icon: n.icon, label: typeof n.label === "function" ? n.label(ctx) : n.label, run: () => n.run(ctx) });
+  });
+  menu(anchor, entries);
 }
+Docs.openNewMenu = openNewMenu;
 async function askName(title, label, initial = "", okLabel = "Create") {
   return new Promise((resolve) => {
     let done = false;
@@ -306,6 +372,7 @@ Docs.addSpace({ id: "favourites", icon: "⭐", label: "Favourites", order: 50, h
 Docs.addSpace({ id: "searches", icon: "🔎", label: "Saved searches", order: 65, hash: "#/searches",
   children: () => ((Docs.state.me && Docs.state.me.pinnedSearches) || []).map((s) => ({ id: "saved-" + s.id, label: s.name,
     hash: searchHash(Object.assign({ q: s.q }, s.filters)) })) });
+Docs.addSpace({ id: "trash", icon: "🗑", label: "Trash", order: 58, hash: "#/trash" });
 Docs.addSpace({ id: "settings", icon: "⚙️", label: "Settings", order: 90, hash: "#/settings", sep: true });
 Docs.addSpace({ id: "admin", icon: "🛡️", label: "Admin", order: 95, hash: "#/admin", show: () => Docs.state.me && Docs.state.me.isAdmin });
 
@@ -313,22 +380,30 @@ function activeSpace() {
   const r = Docs.state.route;
   if (r === "folder") return Docs.state.currentSpace || "mine";
   if (r === "doc") return Docs.state.currentSpace || null;
-  if (["recent", "trash", "storage"].includes(r)) return "activity";     // tabs of the Activity page
+  if (["recent", "storage"].includes(r)) return "activity";     // tabs of the Recent & activity page
   return r === "" ? "home" : r;
 }
+const NAV_CHILDREN = 5;           // sub-links under a sidebar entry (tags, saved searches); the rest behind "More…"
 function drawNav() {
   const nav = $("#sideNav");
   const act = activeSpace();
-  mount(nav, Docs.spaces.filter((s) => !s.show || s.show()).map((s) => [s.sep ? h("div", { class: "nav-sep" }) : null,
-    h("a", { class: "tab-btn" + (act === s.id ? " active" : ""), href: s.hash, title: s.label, dataset: { space: s.id },
-      "aria-current": act === s.id ? "page" : null },
-    h("span", { class: "nav-icon", "aria-hidden": "true" }, s.icon), h("span", { class: "nav-label" }, s.label)),
-    s.children ? s.children().map((c) => h("a", { class: "tab-btn sub-link", href: c.hash, title: c.label, dataset: { space: c.id } },
-      h("span", { class: "nav-icon", "aria-hidden": "true" }, "·"), h("span", { class: "nav-label" }, c.label))) : null]));
+  const sub = (c) => h("a", { class: "tab-btn sub-link" + (c.more ? " more-link" : ""), href: c.hash, title: c.label, dataset: { space: c.id } },
+    h("span", { class: "nav-icon", "aria-hidden": "true" }, c.more ? "…" : "·"), h("span", { class: "nav-label" }, c.label));
+  mount(nav, Docs.spaces.filter((s) => !s.show || s.show()).map((s) => {
+    const kids = s.children ? s.children() : [];
+    return [s.sep ? h("div", { class: "nav-sep" }) : null,
+      h("a", { class: "tab-btn" + (act === s.id ? " active" : ""), href: s.hash, title: s.label, dataset: { space: s.id },
+        "aria-current": act === s.id ? "page" : null },
+      h("span", { class: "nav-icon", "aria-hidden": "true" }, s.icon), h("span", { class: "nav-label" }, s.label)),
+      kids.slice(0, NAV_CHILDREN).map(sub),
+      kids.length > NAV_CHILDREN ? sub({ id: s.id + "-more", label: `More… (${kids.length - NAV_CHILDREN})`, hash: s.hash, more: true }) : null];
+  }));
   const bar = $("#bottomBar");
-  const btn = (id, icon, label, onclick, active) => h("button", { type: "button", class: "bb-btn" + (active ? " active" : ""), dataset: { bb: id }, onclick, "aria-label": label },
+  const btn = (id, icon, label, onclick, active) => h("button", { type: "button", class: "bb-btn" + (active ? " active" : ""), dataset: { bb: id }, onclick, "aria-label": label,
+    "aria-current": active ? "page" : null },
     h("span", { class: "bb-icon", "aria-hidden": "true" }, icon), h("span", { class: "bb-label" }, label));
-  const moreIds = ["everyone", "folders", "favourites", "recent", "searches", "trash", "settings", "admin", "more"];
+  // everything the More page lists (the spaces other than Home, My docs and Shared with me) lights up More
+  const moreIds = Docs.spaces.filter((s) => !["home", "mine", "shared"].includes(s.id)).map((s) => s.id).concat(["more"]);
   mount(bar,
     btn("docs", "📄", "Docs", () => go("#/"), act === "home" || act === "mine"),
     btn("search", "🔎", "Search", () => go("#/search"), act === "search"),
@@ -338,8 +413,8 @@ function drawNav() {
 }
 
 // ---------- router ----------
-function parseHash() {
-  const raw = String(location.hash || "").replace(/^#\/?/, "");
+function parseHash(hash) {
+  const raw = String(hash === undefined ? location.hash || "" : hash).replace(/^#\/?/, "");
   const parts = raw.split("/").map((p) => { try { return decodeURIComponent(p); } catch (e) { return p; } });
   return { name: parts[0] || "", args: parts.slice(1).filter((x) => x !== "") };
 }
@@ -368,6 +443,10 @@ async function render() {
   Docs.state.args = args;
   if (!["folder", "doc"].includes(Docs.state.route)) Docs.state.currentSpace = null;
   if (Docs.state.route !== "folder" && Docs.state.route !== "mine") Docs.state.currentFolder = null;
+  Docs.state.docParent = null;          // where ← and Back go from a deep link (set by the page)
+  Docs.state.folderParent = null;
+  Docs.state.editorExtras = null;       // an editor's own entries in its ⋯ menu (a sheet's exports)
+  Docs.state.editorHide = null;
   document.body.dataset.route = Docs.state.route || "home";
   if (Docs.state.route !== "doc" && Docs.isFull && Docs.isFull()) Docs.setFull(false);    // full screen is for a document
   closeMenu();
@@ -410,7 +489,8 @@ function nameNode(it, ctx) {
 function badges(it, ctx = {}) {
   const roleChip = it.role && it.role !== "owner" && it.role !== ctx.folderRole;      // the folder's own role is in its head
   const tags = it.tags || [];
-  return [it.changed ? h("span", { class: "new-dot", title: "Changed since you last looked", "aria-label": "Changed since you last looked" }) : null,
+  return [it.changed ? h("span", { class: "new-dot", title: "Changed since you last looked", "aria-label": "Changed since you last looked" })
+    : it.newShare ? h("span", { class: "new-dot", title: "New: you haven't opened it yet", "aria-label": "New" }) : null,
     it.pinned ? h("span", { class: "row-badge", title: "Pinned to your home page" }, "📌") : null,
     it.favourite ? h("span", { class: "row-badge", title: "Favourite" }, "⭐") : null,
     it.shared ? h("span", { class: "row-badge", title: "Shared" }, "👥") : null,
@@ -465,28 +545,43 @@ function roleLabel(r, rootKind) {
   return { viewer: "Can view", editor: "Can edit", manager: "Manager", owner: "Owner" }[r] || r;
 }
 function itemList(items, ctx = {}, empty = "Nothing here yet.") {
-  if (!items.length) return h("div", { class: "empty" }, empty);
+  if (!items.length) return typeof empty === "string" ? UI.empty(null, empty) : empty;
   return h("div", { class: ctx.grid ? "item-grid" : "item-list" }, items.map((it) => itemRow(it, ctx)));
 }
 Object.assign(Docs, { itemRow, itemList, roleLabel, itemMeta });
 
 // ---------- Home ----------
+// Home: 📌 Pinned, Recent (5), new shares, Favourites (6), Shared folders, My docs (the 8 changed last)
+const NEW_SHARE_DAYS = 30;
+const tsOf = (iso) => { const t = iso ? new Date(iso).getTime() : 0; return isNaN(t) ? 0 : t; };
+// shared with me and not opened yet (a "new" dot), from the last 30 days
+function isNewShare(it) { return !!it.sharedAt && !it.openedAt && !it.hidden && Date.now() - tsOf(it.sharedAt) < NEW_SHARE_DAYS * 86400000; }
+Docs.isNewShare = isNewShare;
 Docs.route("", async (page, _args, current) => {
   mount(page, pageHead("Home"), spinner());
-  const [me, favs, mine] = await Promise.all([refreshMe(), api("api/space/favourites"),
-    api("api/space/mine").catch(() => ({ items: [] }))]);
+  const none = () => ({ items: [] });
+  const [me, favs, mine, recent, shared] = await Promise.all([refreshMe(), api("api/space/favourites").catch(none),
+    api("api/space/mine").catch(none), api("api/space/recent").catch(none), api("api/space/shared").catch(none)]);
   if (!current()) return;
   const parts = [pageHead(`Hello, ${me.name}`, newButton())];
   if (me.disabled) { mount(page, pageHead("Household Docs"), h("div", { class: "card banner-card danger" }, me.disabledMessage)); return; }
+  const card = (id, title, link, linkLabel, body) => h("section", { class: "card home-card", id },
+    h("div", { class: "card-head" }, typeof title === "string" ? h("h3", null, title) : title, link ? h("a", { class: "link-btn", href: link }, linkLabel) : null), body);
   if (me.isAdmin && me.docsFolder && !me.docsFolder.confirmed) parts.push(Docs.firstRunCard ? Docs.firstRunCard() : null);
   if (Docs.pinsSection) parts.push(Docs.pinsSection());
-  if (favs.items.length) parts.push(h("section", { class: "card" }, h("h3", null, "Favourites"), itemList(favs.items, { showOwner: true })));
+  if (recent.items.length) parts.push(card("homeRecent", "Recent", "#/recent", "All", itemList(recent.items.slice(0, 5), { showOwner: true })));
+  const fresh = shared.items.filter(isNewShare).sort((a, b) => tsOf(b.sharedAt) - tsOf(a.sharedAt));
+  if (fresh.length) parts.push(card("homeShared", h("h3", null, "Shared with me ", h("span", { class: "chip on" }, `${fresh.length} new`)), "#/shared", "All",
+    itemList(fresh.slice(0, 5).map((it) => Object.assign({}, it, { newShare: true })), { showOwner: true, space: "shared", extraMeta: (it) => [it.sharedByName ? `from ${it.sharedByName}` : null].filter(Boolean) })));
+  if (favs.items.length) parts.push(card("homeFavourites", "Favourites", "#/favourites", favs.items.length > 6 ? `All ${favs.items.length}` : "All",
+    itemList(favs.items.slice(0, 6), { showOwner: true })));
   const sf = (me.sharedFolders || []).filter((x) => x.exists);
-  if (sf.length) parts.push(h("section", { class: "card", id: "homeFolders" }, h("div", { class: "card-head" }, h("h3", null, "Shared folders"), h("a", { class: "link-btn", href: "#/folders" }, "All")),
+  if (sf.length) parts.push(card("homeFolders", "Shared folders", "#/folders", "All",
     h("div", { class: "chip-links" }, sf.map((x) => h("a", { class: "folder-chip", href: folderHash("root:" + x.rootId) }, x.mode === "rw" ? "📂 " : "🗂️ ", x.label,
       h("span", { class: "hint" }, x.mode === "rw" ? " · read and write" : " · read only"))))));
-  parts.push(h("section", { class: "card" }, h("div", { class: "card-head" }, h("h3", null, "My docs"), h("a", { class: "link-btn", href: "#/mine" }, "Open")),
-    itemList(sortItems(mine.items), {}, "Nothing here yet — use ➕ New to make a note or a checklist.")));
+  const latest = mine.items.slice().sort((a, b) => tsOf(b.modified) - tsOf(a.modified)).slice(0, 8);
+  parts.push(card("homeMine", "My docs", "#/mine", "Open", itemList(latest, {},
+    UI.empty("Nothing here yet", "Make a note, a checklist or a sheet — or bring files in.", { label: "➕ New", onclick: (e) => openNewMenu(e.currentTarget) }))));
   parts.push(h("p", { class: "hint footnote" }, "Docs are plain files in Home Assistant's /share folder — keep passwords and card numbers in Household Vault."));
   mount(page, parts);
 });
@@ -495,16 +590,19 @@ function newButton() {
 }
 Docs.newButton = newButton;
 
-function sortItems(items, sort) {
+// rev: the other way round (Z–A, oldest first, smallest first) — this device's choice (↑/↓ in a folder's head)
+function sortItems(items, sort, rev) {
   const by = sort || (Docs.state.me && Docs.state.me.prefs.sort) || "name";
+  const k = rev ? -1 : 1;
   const ts = (x) => (x.modified ? new Date(x.modified).getTime() : 0);
   return items.slice().sort((a, b) => {
     if ((a.kind === "folder") !== (b.kind === "folder")) return a.kind === "folder" ? -1 : 1;
-    if (by === "modified") return ts(b) - ts(a);
-    if (by === "size") return (b.size || 0) - (a.size || 0);
-    return a.name.localeCompare(b.name, undefined, { sensitivity: "base", numeric: true });
+    if (by === "modified") return k * (ts(b) - ts(a));
+    if (by === "size") return k * ((b.size || 0) - (a.size || 0));
+    return k * a.name.localeCompare(b.name, undefined, { sensitivity: "base", numeric: true });
   });
 }
+const sortReversed = () => lsGet("docs.sortRev") === "1";
 Docs.sortItems = sortItems;
 
 // ---------- folders (My docs, any folder, an admin shared folder's top) ----------
@@ -523,45 +621,85 @@ async function renderFolder(page, ref, current, selectId) {
   const label = f ? f.name : "My docs";
   Docs.state.currentFolder = { id: data.ref, name: label, canEdit: data.canEdit, names: data.items.map((i) => i.name), rootKind: data.rootKind };
   Docs.state.currentSpace = data.rootKind === "shared" ? "folders" : (data.crumbs[0] && ["shared", "kids"].includes(data.crumbs[0].space) ? data.crumbs[0].space : "mine");
+  // Back from a deep link: the folder above (the crumb before the last), or the space a top folder is in
+  const up = data.crumbs.length > 1 ? data.crumbs[data.crumbs.length - 2] : null;
+  Docs.state.folderParent = up ? (up.id ? folderHash(up.id) : "#/" + (up.space || "mine"))
+    : (data.rootKind === "shared" ? "#/folders" : (ref ? "#/" + (Docs.state.currentSpace === "kids" ? "kids" : "mine") : null));
   const crumbs = h("nav", { class: "crumbs", "aria-label": "Folder path" }, data.crumbs.map((c, i) => {
     if (i === data.crumbs.length - 1) return [i ? h("span", { class: "crumb-sep" }, "›") : null, h("span", { class: "crumb current" }, c.name)];
     const a = h("a", { class: "crumb", href: c.id ? folderHash(c.id) : "#/" + (c.space || "mine") }, c.name);
     if (data.canEdit && Docs.dropTarget && (c.id || (c.space === "mine" && data.role === "owner"))) Docs.dropTarget(a, { id: c.id || null, name: c.name, names: null });
     return [i ? h("span", { class: "crumb-sep" }, "›") : null, a];
   }));
-  const sortSel = h("select", { "aria-label": "Sort by", id: "sortSel", value: sort },
+  const setSort = async (v) => {
+    try { const r = await api("api/me/settings", { method: "PUT", body: { sort: v } }); Docs.state.me.prefs = r.prefs; render(); } catch (e) { fail(e); }
+  };
+  const sortSel = h("select", { "aria-label": "Sort by", id: "sortSel", value: sort, class: "desk-only" },
     h("option", { value: "name" }, "Name"), h("option", { value: "modified" }, "Modified"), h("option", { value: "size" }, "Size"));
-  sortSel.addEventListener("change", async () => {
-    try { const r = await api("api/me/settings", { method: "PUT", body: { sort: sortSel.value } }); Docs.state.me.prefs = r.prefs; render(); } catch (e) { fail(e); }
-  });
+  sortSel.addEventListener("change", () => setSort(sortSel.value));
+  const rev = sortReversed();
+  const flipSort = () => { lsSet("docs.sortRev", rev ? "0" : "1"); render(); };
+  const dirLabel = { name: rev ? "Z to A — tap for A to Z" : "A to Z — tap for Z to A", modified: rev ? "Oldest first — tap for newest first" : "Newest first — tap for oldest first",
+    size: rev ? "Smallest first — tap for largest first" : "Largest first — tap for smallest first" }[sort] || "Reverse the order";
+  const dirBtn = h("button", { class: "icon-btn sort-dir desk-only", type: "button", id: "sortDir", title: dirLabel, "aria-label": dirLabel, "aria-pressed": rev ? "true" : "false",
+    onclick: flipSort }, rev ? "↑" : "↓");
   const grid = viewMode() === "grid";
-  const viewBtn = h("button", { class: "icon-btn view-toggle", type: "button", id: "viewToggle", title: grid ? "Show as a list" : "Show as a grid",
-    "aria-label": grid ? "Show as a list" : "Show as a grid", onclick: () => { lsSet("docs.view", grid ? "list" : "grid"); render(); } }, grid ? "☰" : "▦");
+  const flipView = () => { lsSet("docs.view", grid ? "list" : "grid"); render(); };
+  const viewBtn = h("button", { class: "icon-btn view-toggle desk-only", type: "button", id: "viewToggle", title: grid ? "Show as a list" : "Show as a grid",
+    "aria-label": grid ? "Show as a list" : "Show as a grid", onclick: flipView }, grid ? "☰" : "▦");
+  const changed = data.items.some((x) => x.changed);           // §17.21: changed since you last looked
+  const markSeen = async () => {
+    try { const r = await api(`api/nodes/${encodeURIComponent(data.ref || "mine")}/seen`, { method: "POST" }); toast(`Marked ${r.items} item${r.items === 1 ? "" : "s"} as seen`); render(); } catch (e) { fail(e); }
+  };
+  // on a phone, sort, view and "mark all as seen" move into the folder's ⋯ (the head stays one line)
+  const viewEntries = () => (isPhone() ? [{ heading: "Sort by" },
+    ...[["name", "Name"], ["modified", "Modified"], ["size", "Size"]].map(([v, l]) => ({ id: "sort-" + v, icon: v === sort ? "✓" : " ", label: l, run: () => setSort(v) })),
+    { id: "sort-rev", icon: rev ? "↑" : "↓", label: rev ? "Back to the usual order" : "Reverse the order", run: flipSort },
+    "-", { id: "view-mode", icon: grid ? "☰" : "▦", label: grid ? "Show as a list" : "Show as a grid", run: flipView },
+    changed ? { id: "mark-seen", icon: "✓", label: "Mark all as seen", run: markSeen } : null].filter(Boolean) : []);
   const right = [];
   if (data.canEdit) {
     right.push(h("button", { class: "btn-secondary upload-btn", type: "button", id: "uploadBtn", onclick: () => Docs.pickUpload && Docs.pickUpload(Docs.state.currentFolder) }, "⬆ Upload"));
     right.push(newButton());
   }
-  if (data.items.some((x) => x.changed)) {         // §17.21: changed since you last looked
-    right.push(h("button", { class: "btn-ghost btn-small", type: "button", id: "markSeen", title: "Clear the dots: you've seen everything here", onclick: async () => {
-      try { const r = await api(`api/nodes/${encodeURIComponent(data.ref || "mine")}/seen`, { method: "POST" }); toast(`Marked ${r.items} item${r.items === 1 ? "" : "s"} as seen`); render(); } catch (e) { fail(e); }
-    } }, "✓ Mark all as seen"));
+  if (changed) {
+    right.push(h("button", { class: "btn-ghost btn-small desk-only", type: "button", id: "markSeen", title: "Clear the dots: you've seen everything here", onclick: markSeen }, "✓ Mark all as seen"));
   }
   if (f && f.canShare) right.push(h("button", { class: "btn-secondary", type: "button", onclick: () => Docs.shareDialog(f) }, "Share"));
-  if (f && f.isRoot) right.push(h("button", { class: "icon-btn head-more", type: "button", "aria-label": "More for this folder", onclick: (e) => menu(e.currentTarget, [
-    { id: "zip", icon: "⬇", label: "Download (.zip)", run: () => download({ id: f.id, kind: "folder", name: f.name }) },
-    { id: "search-here", icon: "🔎", label: "Search in this folder", run: () => go(searchHash({ scope: [f.id] })) }]
-    .concat((f.kidsRoot ? [] : Docs.rootActions).filter((a) => !a.show || a.show(f)).map((a) => ({ id: a.id, icon: a.icon, label: typeof a.label === "function" ? a.label(f) : a.label, run: () => a.run(f) })))) }, "⋯"));
-  else if (f) right.push(h("button", { class: "icon-btn head-more", type: "button", "aria-label": "More for this folder", onclick: (e) => itemMenu(e.currentTarget, f, { inFolderHead: true }) }, "⋯"));
+  if (f && f.isRoot) right.push(h("button", { class: "icon-btn head-more", type: "button", "aria-label": "More for this folder", "aria-haspopup": "menu", onclick: (e) => {
+    const v = viewEntries();
+    menu(e.currentTarget, v.concat(v.length ? ["-"] : [], [
+      { id: "zip", icon: "⬇", label: "Download (.zip)", run: () => download({ id: f.id, kind: "folder", name: f.name }) },
+      { id: "search-here", icon: "🔎", label: "Search in this folder", run: () => go(searchHash({ scope: [f.id] })) }]
+      .concat((f.kidsRoot ? [] : Docs.rootActions).filter((a) => !a.show || a.show(f)).map((a) => ({ id: a.id, icon: a.icon, label: typeof a.label === "function" ? a.label(f) : a.label, run: () => a.run(f) })))));
+  } }, "⋯"));
+  else if (f) right.push(h("button", { class: "icon-btn head-more", type: "button", "aria-label": "More for this folder", "aria-haspopup": "menu",
+    onclick: (e) => itemMenu(e.currentTarget, f, { inFolderHead: true, prepend: viewEntries() }) }, "⋯"));
+  else right.push(h("button", { class: "icon-btn head-more phone-only", type: "button", "aria-label": "Sort and view", "aria-haspopup": "menu", id: "mineMore",
+    onclick: (e) => menu(e.currentTarget, viewEntries()) }, "⋯"));
   const role = data.mode ? h("span", { class: "chip mode-chip role-" + data.role }, data.mode === "rw" ? "✏️ Read and write" : "🔒 Read only")
     : (data.role !== "owner" ? h("span", { class: "chip role-" + data.role }, roleLabel(data.role)) : null);
-  const items = sortItems(data.items, sort);
+  const items = sortItems(data.items, sort, rev);
+  const nFolders = items.filter((x) => x.kind === "folder").length;
+  const bytes = items.reduce((t, x) => t + (x.kind === "folder" ? 0 : (x.size || 0)), 0);
+  const plural = (n, w) => `${n} ${w}${n === 1 ? "" : "s"}`;
+  const summary = items.length ? h("p", { class: "folder-summary hint", id: "folderSummary" },
+    [plural(items.length, "item"), nFolders ? plural(nFolders, "folder") : null, bytes ? fmtSize(bytes) : null].filter(Boolean).join(" · ")) : null;
   const sel = Docs.makeSelection ? Docs.makeSelection(items, () => drawList()) : null;
   const listBox = h("div", { class: "list-box" });
   const bar = h("div", { class: "select-bar-slot" });
   const ctx = { inFolder: true, grid, select: sel, folderRole: data.role, dnd: { canDrag: data.canEdit, canDrop: data.canEdit } };
+  const emptyState = () => {
+    if (!data.canEdit) return UI.empty("This folder is empty", null);
+    const nc = () => newContext();
+    return UI.empty("This folder is empty", "Make something, or drop files here (they can also come in over Samba or the File editor).",
+      h("div", { class: "empty-actions" },
+        h("button", { class: "btn-primary", type: "button", id: "emptyNote", onclick: () => createDoc(defaultNote(), "", nc()) }, "📝 New note"),
+        h("button", { class: "btn-secondary", type: "button", id: "emptyUpload", onclick: () => Docs.pickUpload && Docs.pickUpload(Docs.state.currentFolder) }, "⬆ Upload"),
+        Docs.scanDialog ? h("button", { class: "btn-secondary", type: "button", id: "emptyScan", onclick: () => Docs.scanDialog(nc()) }, "📷 Scan") : null));
+  };
   function drawList() {
-    mount(listBox, itemList(items, ctx, data.canEdit ? "This folder is empty — use ➕ New or ⬆ Upload, drop files here, or add them over Samba or the File editor." : "This folder is empty."));
+    mount(listBox, itemList(items, ctx, emptyState()));
     if (sel && Docs.selectionBar) mount(bar, Docs.selectionBar(sel, { folderRef: data.ref, rootKind: data.rootKind }));
   }
   drawList();
@@ -573,7 +711,7 @@ async function renderFolder(page, ref, current, selectId) {
     ? `You're in Kids' space. ${ks.parents.join(", ")} can view what you make here from ${fmtFull(ks.since)} on (not what you had before).`
     : "You're in Kids' space. Nobody else can view your My docs.") : null;
   mount(page, h("div", { class: "page-head folder-head" }, h("div", { class: "folder-title" }, crumbs, role),
-    h("div", { class: "head-actions" }, sortSel, viewBtn, right)), kidsNote, f ? (Docs.headExtras || []).map((fn) => fn(f, { folder: true })) : null, card);
+    h("div", { class: "head-actions" }, sortSel, dirBtn, viewBtn, right)), summary, kidsNote, f ? (Docs.headExtras || []).map((fn) => fn(f, { folder: true })) : null, card);
   if (selectId) {
     const el = page.querySelector(`[data-id="${CSS.escape(selectId)}"]`);
     if (el) { el.classList.add("flash"); el.scrollIntoView({ block: "center" }); setTimeout(() => el.classList.remove("flash"), 2400); }
@@ -592,14 +730,35 @@ async function renderSpace(page, space, title, empty, current, opts = {}) {
   if (opts.hideable) {
     right.push(h("label", { class: "mini-toggle" }, h("input", { type: "checkbox", checked: showHidden, onchange: (e) => renderSpace(page, space, title, empty, current, { ...opts, showHidden: e.target.checked }) }), "Show hidden"));
   }
-  const ctx = { showOwner: true, space, extraMeta: (it) => [it.hidden ? "hidden" : null, it.sharedByName && it.sharedByName !== it.ownerName ? `shared by ${it.sharedByName}` : null].filter(Boolean) };
-  const items = opts.sort === false ? data.items : sortItems(data.items);
-  mount(page, pageHead(title, right), h("div", { class: "card list-card" }, itemList(items, ctx, empty)));
+  const ctx = { showOwner: !opts.bySharer, space, extraMeta: (it) => [it.hidden ? "hidden" : null,
+    !opts.bySharer && it.sharedByName && it.sharedByName !== it.ownerName ? `shared by ${it.sharedByName}` : null,
+    opts.bySharer && it.sharedAt ? `shared ${fmtWhen(it.sharedAt)}` : null].filter(Boolean) };
+  let body;
+  if (!data.items.length) body = itemList([], ctx, empty);
+  else if (opts.bySharer) {
+    // grouped by who shared it ("From Priya"), the newest shares first; a dot on what you haven't opened yet
+    const groups = new Map();
+    data.items.slice().sort((a, b) => tsOf(b.sharedAt) - tsOf(a.sharedAt)).forEach((it) => {
+      const who = it.sharedByName || it.ownerName || "Someone";
+      if (!groups.has(who)) groups.set(who, []);
+      groups.get(who).push(it);
+    });
+    body = Array.from(groups, ([who, list]) => [h("h3", { class: "ui-group-head" }, `From ${who}`,
+      h("span", { class: "ui-group-total" }, list.filter(isNewShare).length ? `${list.filter(isNewShare).length} new` : `${list.length}`)),
+      itemList(list.map((it) => (isNewShare(it) ? Object.assign({}, it, { newShare: true }) : it)), ctx)]);
+  } else if (opts.byDay) {
+    // Today / Yesterday / Earlier, by when you opened it
+    const label = (it) => { const d = Docs.dayLabel ? Docs.dayLabel(it.openedAt || it.modified) : ""; return d === "Today" || d === "Yesterday" ? d : "Earlier"; };
+    const groups = new Map();
+    data.items.forEach((it) => { const l = label(it); if (!groups.has(l)) groups.set(l, []); groups.get(l).push(it); });
+    body = Array.from(groups, ([l, list]) => [h("h3", { class: "ui-group-head" }, l), itemList(list, ctx)]);
+  } else body = itemList(opts.sort === false ? data.items : sortItems(data.items), ctx, empty);
+  mount(page, pageHead(title, right), h("div", { class: "card list-card" + (opts.bySharer || opts.byDay ? " grouped" : "") }, body));
 }
-Docs.route("shared", (page, _a, cur) => renderSpace(page, "shared", "Shared with me", "Nothing is shared with you yet.", cur, { hideable: true }));
-Docs.route("everyone", (page, _a, cur) => renderSpace(page, "everyone", "Everyone", "Nothing is shared with Everyone yet.", cur, { hideable: true }));
-Docs.route("favourites", (page, _a, cur) => renderSpace(page, "favourites", "Favourites", "Tap ⋯ → Favourite on anything to keep it here.", cur));
-Docs.route("recent", (page, _a, cur) => renderSpace(page, "recent", "Recent", "What you open shows up here.", cur, { sort: false }));
+Docs.route("shared", (page, _a, cur) => renderSpace(page, "shared", "Shared with me", "Nothing is shared with you yet.", cur, { hideable: true, bySharer: true }));
+Docs.route("everyone", (page, _a, cur) => renderSpace(page, "everyone", "Everyone", "Nothing is shared with Everyone yet.", cur, { hideable: true, bySharer: true }));
+Docs.route("favourites", (page, _a, cur) => renderSpace(page, "favourites", "Favourites", "Tap ⋯ → Organise → Favourite on anything to keep it here.", cur));
+Docs.route("recent", (page, _a, cur) => renderSpace(page, "recent", "Recent", "What you open shows up here.", cur, { sort: false, byDay: true }));
 
 Docs.route("kids", (page) => {
   const list = (Docs.state.me && Docs.state.me.kidsView) || [];
@@ -618,7 +777,7 @@ Docs.route("file", async (page, args, current) => {
   const where = it.parentRef ? "#/folder/" + encodeURIComponent(it.parentRef) : (it.ownerId === Docs.state.me.id ? "#/folder/mine" : null);
   history.replaceState(history.state, "", where ? where + "/sel/" + encodeURIComponent(it.id) : "#/shared");
   await render();
-  if (Docs.filePanel) Docs.filePanel(it);
+  openItem(it);             // a PDF opens in the viewer, anything else in the file panel
 });
 
 // A view link (§6.6): Can view for whoever opens it, then the item itself
@@ -637,28 +796,54 @@ Docs.route("view", async (page, args, current) => {
   await render();
 });
 
+// 🗑 Trash: its own space. Each row: Restore, and ⋯ → Restore / Delete now; "goes in N days"; a filter box when long.
 Docs.route("trash", async (page, _a, current) => {
   mount(page, pageHead("Trash"), spinner());
-  const data = await api("api/space/trash");
+  let data;
+  try { data = await api("api/space/trash"); }
+  catch (e) { if (current()) mount(page, pageHead("Trash"), errorCard(e, render)); return; }
   if (!current()) return;
-  const empty = h("button", { class: "btn-danger", type: "button", disabled: !data.items.length, onclick: async () => {
+  const total = data.items.length + (data.folders || []).reduce((n, f) => n + f.items.length, 0);
+  const empty = h("button", { class: "btn-danger", type: "button", id: "emptyTrash", disabled: !data.items.length, onclick: async () => {
     if (!(await confirmDialog("Empty Trash", `Delete ${data.items.length} item${data.items.length === 1 ? "" : "s"} for good? This can't be undone.`, "Empty Trash", true))) return;
     try { await api("api/trash/empty", { method: "POST" }); toast("Trash emptied"); render(); } catch (e) { fail(e); }
   } }, "Empty Trash");
-  const trashRow = (t, top) => h("div", { class: "item-row", dataset: { trash: t.id } },
+  const days = data.days;
+  const goesIn = (t) => {
+    if (!days) return null;
+    const left = Math.ceil(days - (Date.now() - tsOf(t.deletedAt)) / 86400000);
+    return left <= 1 ? "goes for good within a day" : `goes for good in ${left} days`;
+  };
+  const restore = async (t) => { try { await api(`api/trash/${encodeURIComponent(t.id)}/restore`, { method: "POST" }); toast(`${t.name} restored`); render(); } catch (e) { fail(e); } };
+  const purge = async (t) => {
+    if (!(await confirmDialog("Delete now", `Delete “${t.name}” for good? This can't be undone.`, "Delete now", true))) return;
+    try { await api(`api/trash/${encodeURIComponent(t.id)}`, { method: "DELETE" }); toast(`${t.name} deleted for good`); render(); } catch (e) { fail(e); }
+  };
+  const trashRow = (t, top) => h("div", { class: "item-row", dataset: { trash: t.id, name: t.name.toLowerCase() } },
     h("div", { class: "row-main static" }, h("span", { class: "row-icon", "aria-hidden": "true" }, kindOf(t).icon),
       h("span", { class: "row-text" }, h("span", { class: "row-name" }, t.name),
         h("span", { class: "row-meta" }, [`was in ${t.originalPath.includes("/") ? t.originalPath.slice(0, t.originalPath.lastIndexOf("/")) : top}`,
-          `deleted ${fmtWhen(t.deletedAt)}`, t.deletedByName ? `by ${t.deletedByName}` : null].filter(Boolean).join(" · ")))),
-    h("button", { class: "btn-secondary btn-small", type: "button", onclick: async () => {
-      try { await api(`api/trash/${encodeURIComponent(t.id)}/restore`, { method: "POST" }); toast(`${t.name} restored`); render(); } catch (e) { fail(e); }
-    } }, "Restore"));
+          `deleted ${fmtWhen(t.deletedAt)}`, t.deletedByName ? `by ${t.deletedByName}` : null, goesIn(t)].filter(Boolean).join(" · ")))),
+    h("button", { class: "btn-secondary btn-small", type: "button", onclick: () => restore(t) }, "Restore"),
+    h("button", { class: "icon-btn row-more", type: "button", "aria-label": `More for ${t.name}`, "aria-haspopup": "menu", onclick: (e) => menu(e.currentTarget, [
+      { id: "trash-restore", icon: "♻️", label: "Restore", run: () => restore(t) }, "-",
+      { id: "trash-delete", icon: "🗑", label: "Delete now", danger: true, run: () => purge(t) }]) }, "⋯"));
   const rows = data.items.map((t) => trashRow(t, "My docs"));
   const folders = (data.folders || []).map((f) => h("section", { class: "card list-card", dataset: { trashFolder: f.rootId } },
     h("h3", { class: "list-card-title" }, `🗂️ ${f.label}`), h("div", { class: "item-list" }, f.items.map((t) => trashRow(t, f.label)))));
-  mount(page, pageHead("Trash", empty), h("p", { class: "hint" }, "Things deleted from your folder — by you or by people you share with — stay here until the Trash is emptied (automatically after an admin-set number of days)."),
-    h("div", { class: "card list-card" }, rows.length ? h("div", { class: "item-list" }, rows) : h("div", { class: "empty" }, "Trash is empty.")),
-    folders.length ? h("p", { class: "hint" }, "Deleted from shared folders you can change (kept in each folder's own hidden .trash):") : null, folders);
+  const filter = total > 20 ? h("input", { type: "search", id: "trashFilter", placeholder: "Find in Trash", "aria-label": "Find in Trash", maxlength: "100" }) : null;
+  if (filter) filter.addEventListener("input", () => {
+    const q = filter.value.trim().toLowerCase();
+    page.querySelectorAll("[data-trash]").forEach((r) => { r.hidden = !!q && !r.dataset.name.includes(q); });
+  });
+  mount(page, pageHead("Trash", empty),
+    h("p", { class: "hint" }, `Deleted things stay here${days ? ` for ${days} days` : ""}, then go for good.`),
+    h("details", { class: "about" }, h("summary", null, "More about Trash"),
+      h("p", null, "Things deleted from your folder — by you or by people you share with — stay here until the Trash is emptied (automatically after the number of days an admin set). What's deleted from a shared folder you can change is kept in that folder's own hidden .trash.")),
+    filter ? h("div", { class: "filter-row" }, filter) : null,
+    rows.length ? h("div", { class: "card list-card" }, h("div", { class: "item-list" }, rows))
+      : UI.empty("Trash is empty", folders.length ? null : "Deleted things land here, and can be restored."),
+    folders.length ? h("p", { class: "hint" }, "Deleted from shared folders you can change:") : null, folders);
 });
 
 // ---------- search ----------
@@ -670,7 +855,13 @@ Docs.highlight = highlight;
 // ---------- More (phones) ----------
 Docs.route("more", (page) => {
   const items = Docs.spaces.filter((s) => !["home", "mine", "shared"].includes(s.id) && (!s.show || s.show()));
+  const me = Docs.state.me || {};
   mount(page, pageHead("More"),
+    // you: who the app thinks you are (Settings → How the app sees you)
+    h("a", { class: "card me-card item-row more-row", href: "#/settings/whoami", id: "moreMe" },
+      h("span", { class: "row-main static" }, h("span", { class: "row-icon", "aria-hidden": "true" }, "👤"),
+        h("span", { class: "row-text" }, h("span", { class: "row-name" }, me.name || "You", me.isAdmin ? h("span", { class: "chip" }, "admin") : null),
+          h("span", { class: "row-meta" }, "How the app sees you")))),
     h("div", { class: "card list-card" }, h("div", { class: "item-list" }, items.map((s) => h("a", { class: "item-row more-row", href: s.hash, dataset: { space: s.id } },
       h("span", { class: "row-main static" }, h("span", { class: "row-icon", "aria-hidden": "true" }, s.icon), h("span", { class: "row-text" }, h("span", { class: "row-name" }, s.label))))))),
     h("div", { class: "card" }, h("h3", null, "Appearance"), h("label", { class: "field" }, "Theme", HouseholdTheme.bindSelect(h("select", { "aria-label": "Theme" })))));
@@ -704,28 +895,57 @@ Docs.route("settings", async (page, args, current) => {
   const defaultNote = h("select", { "aria-label": "New notes are", id: "prefDefaultNote", value: me.prefs.defaultNote || "note" },
     h("option", { value: "note" }, "Plain text (.txt)"), h("option", { value: "markdown" }, "Markdown (.md)"));
   defaultNote.addEventListener("change", () => save({ defaultNote: defaultNote.value }));
-  const cards = [
-    me.disabled ? null : h("div", { class: "card", id: "prefsCard" }, h("h3", null, "You"),
+  // rows other parts of the app add (Docs.settingsRows): fn.group = "notify" | "new" | "display" (default "display")
+  const extra = (group) => Docs.settingsRows.filter((fn) => (fn.group || "display") === group).map((fn) => fn(me, save, row));
+  const card = (id, title, ...rows) => h("div", { class: "card", id }, h("h3", null, title), rows);
+  const cards = me.disabled ? [] : [
+    card("prefsCard", "Notifications",
       row("Tell me when something is shared with me", me.notifyLinked ? "A notification on your phone (from Home Assistant)." :
         "No phone is linked to you in Home Assistant yet (Settings → People → you → Track device).",
       toggleSwitch(me.prefs.notifyShares, (v) => save({ notifyShares: v }), "Tell me when something is shared with me")),
-      row("Sort folders by", "Folders always come first.", sort),
+      extra("notify")),
+    card("prefsNewCard", "New documents",
+      row("New notes are", "➕ New → Note makes this kind; the other is in the menu too. Markdown adds headings, lists and tick boxes with a preview.", defaultNote),
       row("New sheets as", "An .xlsx keeps formats, tabs and charts; a .csv holds values and formulas only (any app opens it).", newSheets),
       row("Number style for sheets", "How numbers look in sheets, and how the numbers you type are read (1.234,56 reads a decimal comma). Formulas keep commas between values.", numberStyle),
-      row("New notes are", "➕ New → Note makes this kind; the other is in the menu too. Markdown adds headings, lists and tick boxes with a preview.", defaultNote),
-      Docs.settingsRows.map((fn) => fn(me, save, row)),
-      me.app.assistant ? row("Let the Household Assistant answer for me", "When you ask the Household Assistant app, it can find and read the documents you can open here, and make a note in your Inbox when you tap to confirm.",
-        toggleSwitch(me.prefs.assistantOk !== false, (v) => save({ assistantOk: v }), "Let the Household Assistant answer for me")) : null,
-      row("Theme", "The same choice in every household app on this device.", HouseholdTheme.bindSelect(h("select", { "aria-label": "Theme" })))),
-    h("div", { class: "card", id: "whoamiCard" }, h("h3", null, "How the app sees you"),
-      HouseholdWhoami.panel(who, { appName: "Household Docs", adviceTag: "div", adviceStyle: "margin-top:8px", onCopy: (t) => copyText(t) })),
-    h("div", { class: "card" }, h("h3", null, "Where your documents are"),
-      h("p", { class: "hint" }, "Every document is an ordinary file in Home Assistant's /share folder, in a folder of your own. Anyone who can reach /share — over Samba, the File editor, another app, or a Home Assistant backup that includes Share — can read and change them there; the sharing you set here only applies inside the app."),
-      me.folder ? h("p", null, "Your folder: ", h("strong", null, me.folder)) : null),
+      extra("new")),
+    card("prefsDisplayCard", "Display",
+      row("Sort folders by", "Folders always come first.", sort),
+      row("Theme", "The same choice in every household app on this device.", HouseholdTheme.bindSelect(h("select", { "aria-label": "Theme" }))),
+      extra("display")),
+    me.app.assistant ? card("prefsAssistantCard", "Household Assistant",
+      row("Let the Household Assistant answer for me", "When you ask the Household Assistant app, it can find and read the documents you can open here, and make a note in your Inbox when you tap to confirm.",
+        toggleSwitch(me.prefs.assistantOk !== false, (v) => save({ assistantOk: v }), "Let the Household Assistant answer for me"))) : null,
   ];
+  cards.push(
+    h("div", { class: "card" }, h("h3", null, "Where your documents are"),
+      h("p", { class: "hint" }, "Every document is an ordinary file in Home Assistant's /share folder, in a folder of your own."),
+      h("details", { class: "about" }, h("summary", null, "Who else can reach them"),
+        h("p", null, "Anyone who can reach /share — over Samba, the File editor, another app, or a Home Assistant backup that includes Share — can read and change them there; the sharing you set here only applies inside the app.")),
+      me.folder ? h("p", null, "Your folder: ", h("strong", null, me.folder)) : null),
+    // the diagnostic card goes last, folded
+    h("details", { class: "card whoami-card", id: "whoamiCard", open: args[0] === "whoami" }, h("summary", null, h("h3", null, "How the app sees you")),
+      HouseholdWhoami.panel(who, { appName: "Household Docs", adviceTag: "div", adviceStyle: "margin-top:8px", onCopy: (t) => copyText(t) })));
   mount(page, pageHead("Settings"), cards);
   if (args[0] === "whoami") setTimeout(() => { const c = $("#whoamiCard"); if (c) c.scrollIntoView({ block: "start" }); }, 50);
 });
+
+// ---------- Back ----------
+// top-level pages (a sidebar or bottom-bar entry): going to one starts a new back trail
+const TAB_ROUTES = new Set(["", "mine", "shared", "everyone", "kids", "folders", "favourites", "recent", "activity", "storage", "trash", "tags",
+  "searches", "search", "settings", "admin", "more"]);
+// where Back goes from an address when there's no trail (a link from a chat, a reload): a document → its folder, a
+// folder → the folder above, Admin's and Settings' sub-pages → their page
+function parentOf(hash) {
+  const { name, args } = parseHash(hash);
+  if (name === "doc") return Docs.state.docParent || null;
+  if (name === "folder") return Docs.state.folderParent || null;
+  if (name === "admin" && args.length) return "#/admin";
+  if (name === "settings" && args.length) return "#/settings";
+  if (name === "storage" && args.length) return "#/storage";
+  return null;
+}
+Docs.parentOf = parentOf;
 
 // ---------- the chrome ----------
 function wireChrome() {
@@ -743,7 +963,11 @@ function wireChrome() {
   $("#quickNoteBtn").addEventListener("click", () => { if (Docs.quickNote) Docs.quickNote(); });
   const input = $("#searchInput");
   $("#searchForm").addEventListener("submit", (e) => { e.preventDefault(); if (Docs.searchFromHeader) Docs.searchFromHeader(input.value.trim(), true); });
-  input.addEventListener("input", debounce(() => { if (input.value.trim().length >= 2 && Docs.searchFromHeader) Docs.searchFromHeader(input.value.trim(), false); }, 250));
+  // the header's box (computers; phones use the Search tab): Enter opens the Search page. Typing only searches as you
+  // go while the Search page is already showing (it fills the page's own box).
+  input.addEventListener("input", debounce(() => {
+    if (Docs.state.route === "search" && Docs.searchFromHeader && (input.value.trim().length >= 2 || !input.value.trim())) Docs.searchFromHeader(input.value.trim(), false);
+  }, 250));
   document.addEventListener("keydown", (e) => {
     const typing = e.target.closest && e.target.closest("input, textarea, select, [contenteditable]");
     if (typing || UI.dialogs().length) return;
@@ -815,6 +1039,8 @@ async function start() {
     BackNav.init({
       atHome: () => Docs.isHome(),
       goHome: () => go("#/"),
+      isTab: (hash) => { const p = parseHash(hash); return TAB_ROUTES.has(p.name) && !p.args.length; },
+      parentOf,
       openLayers: () => UI.dialogs().concat(openMenuEl ? ["menu"] : []),
       closeLayer: (layer) => { if (layer === "menu") closeMenu(); else layer.close(); },
     });

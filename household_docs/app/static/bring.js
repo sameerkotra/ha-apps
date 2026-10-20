@@ -205,7 +205,7 @@
     setTimeout(() => input.click(), 50);           // straight to the camera on phones
   }
   D.scanDialog = scanDialog;
-  D.settingsRows.push((me, save, row) => {
+  D.settingsRows.push(Object.assign((me, save, row) => {
     const input = h("input", { type: "text", id: "prefScanName", maxlength: "120", value: me.prefs.scanName || "Scan {date} {time}", "aria-label": "Scan file names" });
     const example = h("div", { class: "sub hint", id: "scanNameExample" });
     const show = () => { example.textContent = "e.g. " + S.autoName(input.value, new Date(), "Taxes", 1); };
@@ -213,7 +213,7 @@
     input.addEventListener("change", () => { if (input.value.trim()) save({ scanName: input.value.trim() }); });
     show();
     return row("Scan file names", "📷 Scan names a new scan with this: {date}, {time}, {folder} (the folder it's saved in) and {n} (the page).", h("div", { class: "pref-col" }, input, example));
-  });
+  }, { group: "new" }));
   D.addNew({ id: "scan", icon: "📷", label: "Scan", order: 82, run: (ctx) => scanDialog(ctx) });
 
   // =====================================================================

@@ -30,7 +30,7 @@ the Documentation tab (DOCS.md) for the full guide.
   app are noticed; earlier versions are kept under **History**.
 - **Search** — everything you can open, by name, pattern or regular expression, by the text inside, and by date,
   size, type, person, sharing, tag and colour; saved searches.
-- **Stay up to date** — 🕑 Activity, Follow for phone notifications (batched, with quiet hours), Home Assistant
+- **Stay up to date** — 🕑 Recent & activity, Follow for phone notifications (batched, with quiet hours), Home Assistant
   sensors for a checklist, a sheet's cell or a folder, and a storage report with duplicates.
 - **Bring things in** — PDF text search, 📷 Scan with the phone's camera (cropped, straightened, one PDF), Google
   Keep and `.zip` imports.

@@ -38,21 +38,36 @@ The sidebar (on a phone: the bar at the bottom — **Docs · Search · ➕ · Sh
 
 - **Home** — your **📌 pinned** documents and folders, favourites and the top of My docs.
 - **📄 My docs** — your folder, with folders inside it as deep as you like (ten levels).
-- **👥 Shared with me** — what others shared with you, each with its owner. **Show hidden** brings back what you hid.
-- **👪 Everyone** — what people shared with Everyone (your own too).
+- **👥 Shared with me** — what others shared with you, grouped by who shared it ("From Priya"), newest first; a dot
+  marks what you haven't opened yet. **Show hidden** brings back what you hid.
+- **👪 Everyone** — what people shared with Everyone (your own too), grouped the same way.
 - **📁 Shared folders** — folders in `/share` an admin opened up for you (shown when you have any), each 🔒 read
   only or ✏️ read and write.
-- **⭐ Favourites**, **🏷 Tags** (your most used tags, with counts — shown once there are tags) and
-  **🔎 Saved searches** (pinned ones are listed under it).
-- **🕑 Activity** — one page with tabs: **Recent**, **Activity**, **Trash** and **Storage**.
+- **⭐ Favourites**, **🏷 Tags** (your five most used tags, with counts — shown once there are tags) and
+  **🔎 Saved searches** (up to five pinned ones are listed under it; **More…** opens the rest).
+- **🕑 Recent & activity** — one page with tabs: **Recent**, **Activity** and **Storage**.
+- **🗑 Trash** — what was deleted (see *Trash*).
 
-**➕ New** makes a **Note** (plain text or Markdown, as you chose in Settings — the other kind is listed too), a
-**Checklist**, a **Sheet** or a **Folder**, or **Upload files**, in the folder you're looking at (or in My docs when
+**Home** shows your 📌 pinned items, what you opened recently, what's newly shared with you, your favourites, your
+shared folders and the documents in My docs you changed last. On a phone, **More** (in the bar at the bottom) lists
+the other pages, Settings and the theme; search with the **Search** tab.
+
+**➕ New** has three groups: **Create** (a **Note** — plain text or Markdown, as you chose in Settings, the other
+kind is listed too — a **Checklist**, a **Sheet** or a **Folder**), **From…** (a template, or AI when it's set up)
+and **Bring in** (Upload files, Scan, imports). New things go in the folder you're looking at (or in My docs when
 you can only view that folder). **⚡ Quick note** at the top of every page makes a note straight away (see below).
-Each item has a **⋯** menu: Open, Favourite, Pin to home, Rename, Move, Tags and colour, Make a copy in My docs,
-Share, Transfer ownership, Download (a folder as a `.zip`), Print or save as PDF, Download as PDF, Save PDF here,
-History / Earlier copies, Make it Markdown / plain text, Where it's stored, Search in this folder, Leave / Hide,
-Delete — each shown only when you may do it.
+Each item has a **⋯** menu with the everyday actions — Open, Rename, Move, Make a copy in My docs, Share, History /
+Earlier copies, Search in this folder, Leave / Hide, Delete — and four submenus:
+
+- **Organise**: Favourite, Pin to home, Follow, Tags and colour;
+- **Export**: Download (a folder as a `.zip`), Print or save as PDF, Download as PDF, Save PDF here;
+- **AI** (when an admin set it up);
+- **Advanced**: Filing and clean-up rules, Show in Home Assistant, Where it's stored, Save as template, Make it
+  Markdown / plain text, Transfer ownership.
+
+Each is shown only when you may do it. On a phone a folder's **⋯** also holds Sort by, the list/grid view and Mark
+all as seen. A folder shows how many items it holds and their size under its name; **↓ / ↑** next to the sort
+reverses the order (on this device).
 
 Files added to your folder outside the app (over Samba, say) show up the next time the folder is opened or
 scanned, marked "added outside the app".
@@ -68,9 +83,9 @@ scanned, marked "added outside the app".
   into History), **Keep both** (the new one gets " (2)") or **Skip**.
 - Opening a file shows its **file panel**: a preview for pictures (PNG, JPEG, GIF, WebP — the app checks the file
   really is one), its size, who changed it and where it's stored, **Download**, and **Replace with a new copy…**.
-- **PDFs**: **👁 View** in the file panel (or ⋯ → **View**) shows the PDF inside the app, on the whole screen, page
-  by page — on a phone too. **−** / **+** zoom, **Fit** fits the width (or the keys `+`, `-` and `0`), the page
-  number shows where you are, and **Download** is at hand. A password-protected PDF asks for its password. The app
+- **PDFs**: tapping a PDF shows it inside the app, on the whole screen, page by page — on a phone too (⋯ → **View**
+  does the same). **−** / **+** zoom, **Fit** fits the width (or the keys `+`, `-` and `0`), **‹ ›** and the page box
+  show where you are and jump to a page, **Download** is at hand and **ℹ Details** opens the file panel. A password-protected PDF asks for its password. The app
   draws the pages itself: links, forms and anything else a PDF could run don't work in this view (download it for
   those). PDFs over 50 MB download instead.
 - Everything else (documents, SVG and HTML files …) downloads and opens in your own apps — the app never shows them
@@ -86,8 +101,8 @@ scanned, marked "added outside the app".
 ## Notes
 
 A note is a plain-text file (`.txt`) or a **Markdown** note (`.md`). Type and it saves itself a second after you
-stop (and when you leave); the header says **Saved**, **Saving…** or **Offline — will retry**. **Wrap lines** and
-**Monospace** change how it looks on this device. The title is the file name: tap it to rename. **⛶** (next to
+stop (and when you leave); the header says **Saved**, **Saving…** or **Offline — will retry**. **Aa View** has
+**Wrap lines** and **Monospace**, which change how it looks on this device. The title is the file name: tap it to rename. **⛶** (next to
 Share, in every note, checklist and sheet) gives the document the whole screen; ⛶ again or **Esc** brings the rest
 back.
 
@@ -101,7 +116,8 @@ shows for people who may share.
 - **Links**: web addresses (`https://…`) in a note are listed under it, tap to open them (in a new tab).
 - **Links to other documents**: type `[[` (or tap **[[ ]] Link**) and pick a document or folder you can see — the
   note gets `[[Its name]]`, readable in any editor, and the link keeps working when the document is renamed or
-  moved. A document shows **Linked from** with the notes that link to it (only those you can open). A link to
+  moved. A document shows **Linked from** with the notes that link to it (only those you can open); the
+  **↩ Linked from (n)** chip at the top jumps there. A link to
   something you can't open shows "🔒 No access" (and nothing about it); one to something deleted shows
   "Deleted". A link typed by hand, or one in a file written elsewhere, is found by the name.
 - **Markdown notes** show **Edit / Preview / Split** (side by side on a computer): headings (`#`), **bold**
@@ -135,8 +151,10 @@ with `#quick-note` at the end does the same.
 
 A checklist is a Markdown task list (`.md`): every line is `- [ ] item` or `- [x] item`, two spaces before the
 dash for an indented item — it opens as a checklist in any Markdown editor too. Tick items, tap an item's text to
-edit it, use ↑ ↓ to reorder, ⇥ / ⇤ to indent, ✕ to delete, and the box at the bottom to add. **Hide ticked**
-and **Untick all** are at the top, with "3 of 12 done". Who ticked an item and when shows under it.
+edit it, use ↑ ↓ to reorder, ⇥ / ⇤ to indent, ✕ to delete (on a phone these are in each item's **⋯**), and the box
+at the top to add. A deleted item can be put back with **Undo** on the message that follows. Ticked items fold into
+**Done (n)** under the list; a bar at the top shows "3 of 12 done", next to **Untick all**. Who ticked an item and
+when shows under it.
 
 Two people can tick and edit the same checklist at once: each change is applied to the file as it is now. If
 someone else changed or deleted the item you touched, the app says so and shows the list as it is.
@@ -199,8 +217,8 @@ Excel they're ordinary Excel charts. **Conditional colours** (🎨) colour cells
 number, between two, contain a text, are dates before or after a day, are the top or bottom N, or are duplicates —
 with a fill and/or a text colour; Excel shows them as conditional formatting.
 
-**Export and print** (⬇): the `.xlsx` itself, a CSV of the current tab (the values you see, or the formulas), and
-**Print or save as PDF** — the tab with gridlines, the header row repeated on every page, the totals row and its
+**Export and print** (the sheet's ⋯ → **Export**): the `.xlsx` itself, a CSV of the current tab (the values you
+see, or the formulas), and **Print or save as PDF** — the tab with gridlines, the header row repeated on every page, the totals row and its
 charts (choose Landscape for wide sheets).
 
 **Saving.** Changes save a second after you stop. Several people can work in the same sheet: only the cells you
@@ -231,7 +249,7 @@ it; only the display changes.
 
 ## Tags and colours
 
-**⋯ → Tags and colour…** gives a file or folder any number of tags (`taxes`, `car`, `school` — suggestions come
+**⋯ → Organise → Tags and colour…** gives a file or folder any number of tags (`taxes`, `car`, `school` — suggestions come
 from the tags already in use) and one of eight colours (a dot and a tint on its icon). Tick several items and use
 **🏷 Tag…** to add or take off tags, or set a colour, on all of them. Everyone who can see an item sees its tags
 and colour; people who can edit it change them. Tags and colours stay with the item when it's renamed or moved
@@ -242,7 +260,7 @@ and Colour filters on the Search page.
 
 ## Pins
 
-**⋯ → Pin to home** puts up to 8 documents or folders at the top of your home page. Each card shows something
+**⋯ → Organise → Pin to home** puts up to 8 documents or folders at the top of your home page. Each card shows something
 useful: a checklist "3 of 12 done", a note's first lines, how many items a folder has, and — for a sheet — one
 cell you choose when pinning (for example *Budget › B4*, "Left this month: €312.40"). Drag a card by **⠿** to
 reorder (on a phone too); **⋯ → Unpin from home** takes it off. Pins are yours alone.
@@ -260,7 +278,7 @@ reorder (on a phone too); **⋯ → Unpin from home** takes it off. Pins are you
 
 ## Activity and following
 
-**🕑 Activity** is one page with four tabs — **Recent** (what you opened lately), **Activity**, **Trash** and
+**🕑 Recent & activity** is one page with three tabs — **Recent** (what you opened lately, by day), **Activity** and
 **Storage**. The **Activity** tab lists what changed — added, edited, renamed, moved, deleted, restored, shared with you — in
 everything you can open: your own documents, what's shared with you and your shared folders. Changes made over
 Samba or the File editor show as "Someone outside the app" (the app finds them when it scans). Edits are grouped
@@ -270,22 +288,22 @@ Shared with me, shared folders, one shared folder) and **type**. It never lists 
 names a folder you can't open ("moved to Family", not where from), nor an old name from before you could open the
 item, nor anything in someone else's Trash; an admin sets how far back it goes (*Keep activity for*, 90 days).
 
-**Follow** a document, a folder or a shared folder (⋯ → **Follow**, also in a shared folder's ⋯) to get a phone
+**Follow** a document, a folder or a shared folder (⋯ → Organise → **Follow**, also in a shared folder's ⋯) to get a phone
 notification when something in it changes:
 
 - at most **one notification per followed item every 15 minutes** — a burst of changes becomes one message
   ("3 new files in House papers › Taxes", "Alex edited “Budget”");
 - **never for your own changes**, never for anything you can't open, never any text from the documents;
-- **quiet hours** (Settings → You, 22:00–07:00 by default, Home Assistant's time zone): nothing is sent then;
+- **quiet hours** (Settings → Notifications, 22:00–07:00 by default, Home Assistant's time zone): nothing is sent then;
   what happened is told in one message afterwards. The same two times means no quiet hours;
-- *Notify me about what I follow* (Settings → You) turns them off. Notifications go to the phones Home Assistant
+- *Notify me about what I follow* (Settings → Notifications) turns them off. Notifications go to the phones Home Assistant
   links to you (Settings → People → you → Track device) and any extra notify services an admin added.
 
-**🕑 Activity → You follow** lists what you follow, with **Unfollow**.
+**🔔 Following** at the top of the Activity tab lists what you follow, with **Unfollow**.
 
 ## Home Assistant sensors
 
-⋯ → **Show in Home Assistant…** on a checklist, a sheet or a folder (an admin can turn this off: *Items can be shown
+⋯ → Advanced → **Show in Home Assistant…** on a checklist, a sheet or a folder (an admin can turn this off: *Items can be shown
 in Home Assistant*). A sensor shows the item to everyone who uses Home Assistant, so in a person's folder only its
 owner or a manager can make one; in an admin shared folder anyone with Read and write. People who can edit the item
 can turn its sensor off. Kids' space has no sheets, so a child can't show a sheet's cell either.
@@ -342,7 +360,7 @@ now** deletes everything in everyone's Trash and the shared folders' Trash for g
    photo, **Whole photo** keeps all of it.
 3. **Black and white** makes text crisp (even in uneven light).
 4. **Save as** one **PDF** (made in your browser, a page per photo) or **JPEG pictures**; the name comes from your
-   pattern (Settings → You → *Scan file names*, `Scan {date} {time}` by default; `{folder}` and `{n}` work too).
+   pattern (Settings → New documents → *Scan file names*, `Scan {date} {time}` by default; `{folder}` and `{n}` work too).
 
 The scan is saved in the folder you're in. With AI set up, **✨ Read text** is offered straight after (below).
 
@@ -373,7 +391,7 @@ An admin can connect an AI model in **Admin → App settings → AI**: your own 
 service, or **Anthropic Claude** — address, access key, a *text model* and a *vision model* (for pictures), and a
 monthly token limit. **Until then nothing is sent anywhere and no AI buttons are shown.** Every action asks first,
 in a dialog that names the provider and the model and says what will be sent; nothing is sent before you press
-Send. *Show AI buttons* (Settings → You) hides them for you. The provider may keep what it receives under its own
+Send. *Show AI buttons* (Settings → Display) hides them for you. The provider may keep what it receives under its own
 terms — your own Ollama keeps everything in your house.
 
 **What each action sends:**
@@ -467,7 +485,7 @@ what you could open here yourself (your own documents and what's shared with you
 
 Each answer links back to the document in Docs. Reading through the assistant doesn't count as opening the document
 (no "seen" mark, no activity). An admin can turn this off for everyone (**App settings → Household Assistant**),
-and you can turn it off for yourself (**Settings → You → Let the Household Assistant answer for me**).
+and you can turn it off for yourself (**Settings → Household Assistant → Let the Household Assistant answer for me**).
 
 These answers carry document text, so keep them out of Home Assistant's history with the `recorder` exclusion above
 — **do this if you use the Household Assistant**.
@@ -479,13 +497,13 @@ These answers carry document text, so keep them out of Home Assistant's history 
 **Babysitter info** and **Trip plan** — plus the household's templates and your own. The new document goes into the
 folder you're in (or My docs).
 
-**⋯ → Save as template…** on a note, checklist or sheet you can open keeps a copy of it as it is now among **your**
+**⋯ → Advanced → Save as template…** on a note, checklist or sheet you can open keeps a copy of it as it is now among **your**
 templates; admins can tick *For the whole household*. Templates are plain files in hidden `.templates` folders (in
 your own folder, and in the documents folder for the household's) — remove one with ✕ in the template list.
 
 ## Filing and clean-up rules
 
-**⋯ → Filing and clean-up rules…** on a folder you can change (or on a shared folder's top, ⋯, with read and
+**⋯ → Advanced → Filing and clean-up rules…** on a folder you can change (or on a shared folder's top, ⋯, with read and
 write):
 
 - **Filing rules** act on files that **arrive** in that folder — uploaded, scanned, or added over Samba / the File
@@ -605,8 +623,9 @@ people it was shared with no longer find it — not in search (not even with *Tr
 links or pins; a shared folder's Trash is seen only by people who can change that folder. **Restore** puts it back
 into the folder it came from — that same folder, even if it was renamed or moved since (never another folder that
 now has the old name) — or into the top of My docs (or the shared folder) if its folder is gone, with "(restored)"
-added if the name is taken — with its shares and history. **Empty Trash** deletes for good; items are emptied
-automatically after the number of days in App settings (30 by default).
+added if the name is taken — with its shares and history. **Empty Trash** deletes for good, and an item's ⋯ →
+**Delete now** deletes just that one; items are emptied automatically after the number of days in App settings (30
+by default) — each says when it goes. With more than 20 items, a box finds one by name.
 
 ## Search
 
@@ -652,10 +671,11 @@ admin can turn them off in App settings.
 
 ## Settings
 
-**Settings** (everyone): tell me when something is shared with me, notify me about what I follow and quiet hours,
-how folders are sorted, whether new sheets are `.xlsx` or `.csv`, the number style for sheets, whether new notes are
-plain text or Markdown, scan file names, show AI buttons (when AI is set up), let the Household Assistant answer for
-me (while an admin allows it), the theme, How the app sees you, and where your folder is.
+**Settings** (everyone), in cards: **Notifications** (tell me when something is shared with me, notify me about what
+I follow, quiet hours), **New documents** (whether new notes are plain text or Markdown, whether new sheets are
+`.xlsx` or `.csv`, the number style for sheets, scan file names), **Display** (how folders are sorted, the theme,
+show AI buttons when AI is set up), **Household Assistant** (let it answer for me, while an admin allows it), where
+your folder is, and — folded, last — How the app sees you.
 
 ### App settings (Admin → App settings)
 
@@ -693,6 +713,8 @@ They apply at once.
 after changing it.
 
 ## Admin
+
+Admin opens on **People** once the documents folder is confirmed (before that, on **Documents folder**).
 
 - **Documents folder** — where the documents are, whether it's reachable, free space, how many files, **Rescan
   now**, (until documents are in use) choosing a different folder with a folder browser over `/share`, and

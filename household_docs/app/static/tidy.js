@@ -26,17 +26,19 @@
       const card = (t, removable) => h("div", { class: "template-card", dataset: { template: t.ref } },
         h("button", { class: "template-main", type: "button", onclick: () => use(t) },
           h("span", { class: "tile-icon", "aria-hidden": "true" }, KIND_ICON[t.kind] || "📄"),
-          h("span", { class: "row-text" }, h("span", { class: "row-name" }, t.name), t.about ? h("span", { class: "row-meta" }, t.about) : null)),
+          h("span", { class: "row-text" }, h("span", { class: "row-name" }, t.name), t.about ? h("span", { class: "row-meta" }, t.about) : null,
+            t.preview && t.preview.length ? h("span", { class: "template-preview" }, t.preview.map((l) => h("span", null, l))) : null)),
         removable ? h("button", { class: "icon-btn danger", type: "button", title: "Remove this template", "aria-label": `Remove ${t.name}`, onclick: async () => {
           if (!(await confirmDialog("Remove template", `Remove the template “${t.name}”? Documents made from it stay.`, "Remove", true))) return;
           try { await api(`api/templates/${encodeURIComponent(t.ref)}`, { method: "DELETE" }); draw(); } catch (e) { fail(e); }
         } }, "✕") : null);
       const section = (title, list, removable, empty) => h("section", { class: "template-section" }, h("h4", null, title),
         list.length ? h("div", { class: "template-grid" }, list.map((t) => card(t, removable))) : h("p", { class: "hint" }, empty));
+      // yours and the household's first (what you made is what you reach for), then the built-in ones
       mount(body,
+        section("Yours", d.mine, true, "None yet — ⋯ → Advanced → Save as template on any note, checklist or sheet you can open."),
+        section("The household's", d.household, d.canHousehold, d.canHousehold ? "None yet — ⋯ → Advanced → Save as template on any note, checklist or sheet." : "None yet — an admin can add them."),
         section("Built in", d.builtin, false, ""),
-        section("The household's", d.household, d.canHousehold, d.canHousehold ? "None yet — ⋯ → Save as template on any note, checklist or sheet." : "None yet — an admin can add them."),
-        section("Yours", d.mine, true, "None yet — ⋯ → Save as template on any note, checklist or sheet you can open."),
         h("p", { class: "hint" }, "Templates are plain files in hidden .templates folders. Making a document from one copies it into ", ctx.label, "."));
     }
     async function use(t) {
