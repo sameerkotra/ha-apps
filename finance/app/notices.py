@@ -37,6 +37,20 @@ MESSAGES = {
                           "A QFX file whose account couldn't be worked out needs the page with its script.",
     # Setup → Accounts → an account's upload settings (routes/accounts.py)
     "layout_cleared": "The saved CSV layout was cleared.",
+    # Setup → Categories (routes/categories.py)
+    "cat_added": "Category added.",
+    "cat_renamed": "Category renamed — its transactions and rules follow.",
+    "cat_merged": "Merged — its transactions and rules moved.",
+    "cat_moved": "Moved to the other list. Its transactions keep their category.",
+    "cat_hidden": "Hidden from the menus. Transactions that have it keep it, and its rules still work.",
+    "cat_shown": "Back in the menus.",
+    "cat_colour": "Colour saved.",
+    "cat_deleted": "Category deleted.",
+    "rule_saved": "Rule saved.",
+    "rule_copied": "Copied into your rules — change it below. Yours is tried before the built-in one.",
+    "suggestion_made": "Rule made.",
+    "suggestion_dismissed": "Suggestion dismissed — it won't be offered again.",
+    "income_sorted": "Your income was sorted.",
 }
 
 

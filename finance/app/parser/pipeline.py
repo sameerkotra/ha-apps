@@ -37,7 +37,7 @@ from collections import Counter
 from functools import partial
 
 from ..amounts import to_cents
-from ..categorize import apply_categories, plan_categories
+from ..categorize import apply_categories, flow_of, plan_categories
 from ..db import get_db
 from ..matching import auto_link_unambiguous, cascade_unlink_on_delete
 from ..storage import forget_pdf
@@ -476,16 +476,15 @@ def process_statement(statement_id: int, user_id: str, account_id: int, ollama_u
 
         # Categorization (section 9) runs whatever the review status, decided in
         # memory BEFORE the rows are written: its LLM fallback can take minutes,
-        # and no write transaction may be open meanwhile. A credit-card payment
-        # (negative on a card) isn't a merchant purchase, so it goes straight to
-        # "Payments" instead of through the cascade.
+        # and no write transaction may be open meanwhile. Each row goes with its
+        # direction (flow_of): the AI is offered only that direction's list, and
+        # money back on a card (negative there) is "Payments" — a card payment,
+        # not a merchant purchase — unless a rule says Refunds.
         _set_step(conn, statement_id, "Categorizing transactions")
-        card_payment = {i for i, (txn, _, _) in enumerate(rows) if account_type == "credit_card" and txn.amount < 0}
         plan = plan_categories(conn, user_id, ollama_url, ollama_model,
-                               [(i, txn.description) for i, (txn, _, _) in enumerate(rows) if i not in card_payment])
+                               [(i, txn.description, flow_of(account_type, txn.amount))
+                                for i, (txn, _, _) in enumerate(rows)])
         conn.commit()
-        for i in card_payment:
-            plan.assignments[i] = ("Payments", "card_payment", None)
 
         _set_step(conn, statement_id, "Saving transactions")
         # One short write transaction: every row, the skipped lines, the

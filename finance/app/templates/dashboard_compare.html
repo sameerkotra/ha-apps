@@ -100,7 +100,7 @@
         <tbody>
             {% for r in rows %}
             <tr>
-                <td data-label="Category">{{ r.category }}</td>
+                <td data-label="Category"><span class="cat-label"><span class="cat-dot" style="background: {{ r.colour }}" aria-hidden="true"></span>{{ r.category }}</span></td>
                 <td data-label="{{ label_a }}" class="num">{{ drill(r.a, r.category, flow, range_a) if r.a else "—" }}</td>
                 <td data-label="{{ label_b }}" class="num">{{ drill(r.b, r.category, flow, range_b) if r.b else "—" }}</td>
                 <td data-label="Change" class="num">{{ delta(r.change, good_when_up) }}</td>

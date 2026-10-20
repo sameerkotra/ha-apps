@@ -14,7 +14,7 @@ from .. import ai_client as _ai_client
 from .. import settings as _settings
 
 from ..auth import User, get_current_user, get_acting_user, require_admin
-from ..categorize import list_all_categories
+from ..categorize import list_all_categories, menu_groups
 from ..db import get_db
 from ..version import APP_VERSION
 from .. import ai_usage, card_payments, jobs, notices, ofx, qfx_import, settings, statement_due, storage, upload_page
@@ -773,6 +773,7 @@ def uploads_list(
     with get_db() as conn:
         accounts = _live_accounts(conn, acting.id)
         categories = list_all_categories(conn, acting.id)
+        category_groups = menu_groups(conn, acting.id)
         overdue = statement_due.visible_overdue(conn, current, acting)
         payments_due = card_payments.notices(conn, current, acting)
         strip = upload_page.strip_cards(conn, current, acting)
@@ -793,7 +794,8 @@ def uploads_list(
         request, "uploads_list.html",
         {
             **history,
-            "user": acting, "accounts": accounts, "categories": categories, "upload_accounts": upload_accounts,
+            "user": acting, "accounts": accounts, "categories": categories, "category_groups": category_groups,
+            "upload_accounts": upload_accounts,
             "preselect": preselect, "overdue": overdue, "due_next": "uploads", "strip": strip,
             "payments_due": payments_due,
             "all_accept": upload_page.ALL_ACCEPT, "notice": notices.text(notice),

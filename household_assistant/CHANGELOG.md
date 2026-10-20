@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.6.5
+
+- **Tests only:** the Finance Dashboard can now say how income breaks down by category (Finance 1.13.0); the tests check that its own phrases ("income breakdown", "sources of income", "interest earned", …) reach that answer, that "How much did I earn in September?" still gets the month's figures, and that every existing quick-answer phrase still reads as before.
+
 ## 1.6.4
 
 - **Tests only:** the Finance Dashboard no longer answers balance history or net worth (Finance 1.12.0); the tests now check that "What's our net worth?" and the balance questions reach Finance's latest balances instead.

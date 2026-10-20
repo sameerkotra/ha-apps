@@ -408,7 +408,7 @@ def test_migration_0031_runs_on_an_old_database(tmp_path, monkeypatch, env):
     tables = {r[0] for r in c.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
     assert {"notify_prefs", "payment_dismissals", "payment_reminders", "subscription_dismissals",
             "subscription_alerts"} <= tables
-    assert c.execute("SELECT MAX(version) FROM schema_version").fetchone()[0] == 31
+    assert c.execute("SELECT MAX(version) FROM schema_version").fetchone()[0] == 32     # the newest migration
     with pytest.raises(sqlite3.IntegrityError):
         with c:
             c.execute("UPDATE accounts SET payment_due_day = 32")
@@ -421,7 +421,7 @@ def test_migration_0031_runs_on_an_old_database(tmp_path, monkeypatch, env):
 def test_one_persons_data_schema_31_carries_the_new_rows_but_not_the_logs(env):
     from test_people_data import _export, _import
     from app import people_data as pdata
-    assert pdata.SCHEMA == 31 and 30 in pdata.UPGRADES
+    assert pdata.SCHEMA >= 31 and 30 in pdata.UPGRADES
     env.insert("known_users", id="tester", name="Tester")
     env.insert("known_users", id="wife", name="Wife")
     visa = card(env, day=0)
@@ -437,7 +437,7 @@ def test_one_persons_data_schema_31_carries_the_new_rows_but_not_the_logs(env):
     data = _export(env)
     import zipfile
     with zipfile.ZipFile(io.BytesIO(data)) as z:
-        assert json.loads(z.read("manifest.json"))["schema"] == 31
+        assert json.loads(z.read("manifest.json"))["schema"] == pdata.SCHEMA
         names = z.namelist()
     assert "data/notify_prefs.json" in names and "data/payment_reminders.json" not in names
     assert "data/subscription_alerts.json" not in names

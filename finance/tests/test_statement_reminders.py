@@ -641,7 +641,7 @@ def test_migration_0029_runs_on_an_old_database(tmp_path, monkeypatch, env):
                      "expected_set_at FROM accounts").fetchone() == ("qfx", None, None, 1, None)
     tables = {r[0] for r in c.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
     assert {"reminder_prefs", "statement_dismissals", "statement_reminders", "user_notify"} <= tables
-    assert c.execute("SELECT MAX(version) FROM schema_version").fetchone()[0] == 31     # the newest migration
+    assert c.execute("SELECT MAX(version) FROM schema_version").fetchone()[0] == 32     # the newest migration
     c.close()
 
 

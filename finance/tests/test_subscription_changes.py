@@ -115,6 +115,8 @@ def test_two_charges_arent_recurring_until_confirmed_and_confirming_makes_it_new
     a = env.account()
     charges(env, a, "HULU", [("2026-09-01", 7.99), ("2026-10-01", 7.99)])
     assert found(env, subs) == []
+    # the confirmation is dated by the real clock (recurring_overrides.created_at): not before the test's day
+    clock.set(*max(datetime(2026, 10, 19, 10, 0), datetime.now()).timetuple()[:5])
     r = env.post("recurring-override", data={"merchant_pattern": "HULU@7.99", "is_recurring": "1"})
     assert r.status_code == 303
     assert found(env, subs) == [("new", "New: HULU 7.99 monthly since Sep 1")]

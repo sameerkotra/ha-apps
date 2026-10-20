@@ -9,7 +9,7 @@ from fastapi.responses import RedirectResponse, StreamingResponse
 from fastapi.templating import Jinja2Templates
 
 from ..auth import User, get_current_user, get_acting_user
-from ..categorize import UNCATEGORIZED, list_all_categories
+from ..categorize import SPEND_AMOUNT_SQL, SPEND_SQL, UNCATEGORIZED, flow_of, list_all_categories, menu_groups
 from ..common import csv_export
 from ..db import get_db
 from ..version import APP_VERSION
@@ -232,8 +232,7 @@ def _build_transaction_conditions(user_id: str, f: dict) -> tuple[list[str], lis
         # app's credit-card sign convention is the opposite of a
         # checking/savings account's (see app/matching.py's docstring).
         conditions.append(_flow_sql(
-            "((a.type = 'credit_card' AND t.amount > 0) OR (a.type != 'credit_card' AND t.amount < 0)) "
-            "AND t.txn_type != 'transfer' AND t.is_excluded = 0 AND t.review_status = 'clean'", f))
+            SPEND_SQL + " AND t.txn_type != 'transfer' AND t.is_excluded = 0 AND t.review_status = 'clean'", f))
     elif f["txn_type"] in ("expense", "income", "transfer"):
         conditions.append("t.txn_type = ?")
         params.append(f["txn_type"])
@@ -340,8 +339,7 @@ def list_transactions(
     # was spent", or this total would silently disagree with the exact
     # dashboard figure that linked here in the first place. Every other
     # view sums the amount column exactly as displayed.
-    total_expr = ("CASE WHEN a.type = 'credit_card' THEN t.amount ELSE -t.amount END"
-                  if flow == "expense" else "t.amount")
+    total_expr = SPEND_AMOUNT_SQL if flow == "expense" else "t.amount"
     where_sql = " AND ".join(conditions)
     pager = None
     transactions: list = []
@@ -373,6 +371,7 @@ def list_transactions(
             (acting.id,),
         ).fetchall()
         all_categories = list_all_categories(conn, acting.id)
+        groups = menu_groups(conn, acting.id)
 
     # The CSV export button lives inside the #txn-filters search form
     # itself now (transactions_list.html) as a native form submit
@@ -381,7 +380,10 @@ def list_transactions(
     # needs computing/threading through this route anymore.
     context = {
         "user": acting, "transactions": transactions, "accounts": accounts,
-        "categories": all_categories,
+        "categories": all_categories, "category_groups": groups,
+        # Bulk categorize lists Income first only when every row shown is money in on checking/savings.
+        "bulk_income_first": bool(transactions) and all(flow_of(t["account_type"], t["amount"]) == "in"
+                                                        for t in transactions),
         "total": total, "txn_count": txn_count, "pager": pager,
         "q": q, "selected_account_id": account_id_int,
         "filter_category": category, "filter_txn_type": txn_type, "filter_flow": flow,

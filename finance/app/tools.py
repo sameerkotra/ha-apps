@@ -1,7 +1,10 @@
 """What Finance Dashboard answers the Household Assistant (HOUSEHOLD_ASSISTANT_SPEC.md §4.2; the shared
 app/common/assist_tools.py).
 
-- `finance.summary`: a month's income, spending, net and top categories — the Overview's numbers;
+- `finance.summary`: a month's income, spending, net, top categories and top income categories — the Overview's
+  numbers;
+- `finance.income`: a month's income by category (Home's Income breakdown); with `category`, that category's
+  income this year month by month (or in the month asked) and its largest payments;
 - `finance.spending`: a month's spending by category, or one category's largest charges;
 - `finance.recurring`: the recurring charges with their next expected date and amount;
 - `finance.bills`: the recurring charges expected in the next N days;
@@ -42,7 +45,7 @@ import re
 from datetime import date, timedelta
 from types import SimpleNamespace
 
-from . import card_payments, recurring, settings, statement_due, subscriptions, upload_page
+from . import card_payments, categorize, recurring, settings, statement_due, subscriptions, upload_page
 from .common import app_bus as bus
 from .common import assist_tools
 from .common.assist_tools import Arg
@@ -52,9 +55,10 @@ PANEL: dict = {"value": None}                         # set at start-up (app_mes
 
 WHERE = ("t.user_id = ? AND t.deleted_at IS NULL AND t.review_status = 'clean' AND t.date >= ? AND t.date <= ? "
          "AND t.txn_type != 'transfer' AND t.is_excluded = 0")
-SPEND = "((a.type = 'credit_card' AND t.amount > 0) OR (a.type != 'credit_card' AND t.amount < 0))"
-SPEND_AMOUNT = "CASE WHEN a.type = 'credit_card' THEN t.amount ELSE -t.amount END"
-INCOME = "(t.amount > 0 AND a.type IN ('checking', 'savings'))"
+# The Overview's own rules (categorize.py): a card's money back categorized Refunds is a negative spend.
+SPEND = categorize.SPEND_SQL
+SPEND_AMOUNT = categorize.SPEND_AMOUNT_SQL
+INCOME = categorize.INCOME_SQL
 
 
 def _actor(conn, uid: str):
@@ -138,10 +142,20 @@ def _month_numbers(ctx, uid: str, start: str, end: str) -> tuple[dict, float, fl
     return spend, income, total, sorted(spend.items(), key=lambda kv: -kv[1])[:5]
 
 
+def _income_by_category(ctx, uid: str, start: str, end: str) -> list[tuple[str, float]]:
+    """Home's Income breakdown for a date range: (category, amount), largest first."""
+    rows = _by_category(ctx, uid, start, end, INCOME, "t.amount")
+    return sorted(rows.items(), key=lambda kv: (-kv[1], kv[0]))
+
+
+TOP_INCOME = 3
+
+
 @tools.tool("finance.summary",
             "One month's income, spending, net and top categories (how did we do, a named month).",
             args={"month": _MONTH, "person": _PERSON},
-            returns="income, spending, net, the top 5 categories", examples=("How did we do this month?",))
+            returns="income, spending, net, the top 5 categories, the top income categories",
+            examples=("How did we do this month?",))
 def summary(ctx):
     uid, owner = _owner(ctx)
     m, start, end = _month(ctx)
@@ -151,7 +165,75 @@ def summary(ctx):
     text = (f"{_label(m)}{_whose(owner, ctx)}: income {_money(income)}, spending {_money(total)}, net "
             f"{_money(income - total)}. Top categories: " + ", ".join(f"{c} {_money(v)}" for c, v in top) + ".")
     items = [{"category": c, "spend": v} for c, v in top]
+    top_income = _income_by_category(ctx, uid, start, end)[:TOP_INCOME]
+    if top_income:
+        text += (f" Income {_money(income)}: " + ", ".join(f"{c} {_money(v)}" for c, v in top_income) + ".")
+        items += [{"category": c, "income": v} for c, v in top_income]
     return ctx.result(text, items=items, links=[_link(ctx, f"/month/{m}")])
+
+
+def _income_category(ctx, wanted: str, uid: str) -> str | None:
+    """The income category the person named: one of theirs (any case, else the only one containing it)."""
+    names = categorize.categories_by_kind(ctx.conn, uid, include_hidden=True)["income"]
+    w = wanted.casefold().strip()
+    exact = [n for n in names if n.casefold() == w]
+    part = [n for n in names if w and w in n.casefold()]
+    return (exact or (part if len(part) == 1 else [None]))[0]
+
+
+@tools.tool("finance.income",
+            "Income by category in a month (salary, interest, refunds…); with `category`, that one this year or in "
+            "the month.",
+            args={"month": _MONTH, "category": Arg("string", "an income category, e.g. Interest", max_length=100),
+                  "person": _PERSON},
+            returns="income per category, or one category's months and largest payments",
+            examples=("How much did I earn in September?", "How much interest did we get this year?"),
+            # Plain words only (no INCOME concept: that's the month's summary); none of the corpus's own phrases.
+            quick={"words": ["income breakdown", "income by category", "sources of income", "interest earned",
+                             "dividends received", "refunds received"]})
+def income(ctx):
+    uid, owner = _owner(ctx)
+    if "category" not in ctx.args:
+        m, start, end = _month(ctx)
+        rows = _income_by_category(ctx, uid, start, end)
+        if not rows:
+            return ctx.result(f"No income in {_label(m)}{_whose(owner, ctx)}.", links=[_link(ctx, f"/month/{m}")])
+        total = round(sum(v for _c, v in rows), 2)
+        text = (f"{_label(m)}{_whose(owner, ctx)}: income {_money(total)}: "
+                + "; ".join(f"{c} {_money(v)}" for c, v in rows[:10]) + ("…" if len(rows) > 10 else "") + ".")
+        items = [{"category": c, "income": v, "share": round(v / total * 100, 1) if total else 0.0} for c, v in rows]
+        return ctx.result(text, items=items, links=[_link(ctx, f"/month/{m}")])
+    match = _income_category(ctx, ctx.args["category"], uid)
+    if match is None:
+        names = categorize.categories_by_kind(ctx.conn, uid)["income"]
+        return ctx.result(f"“{ctx.args['category']}” isn't an income category{_whose(owner, ctx)}. Income categories: "
+                          + ", ".join(names) + ".", links=[_home(ctx)])
+    if ctx.args.get("month"):
+        m, start, end = _month(ctx)
+        span, link = f"in {_label(m)}", _link(ctx, f"/month/{m}")
+    else:                                               # this year so far, month by month
+        today = _today()
+        start, end = f"{today.year}-01-01", today.isoformat()
+        span, link = f"in {today.year} so far", _link(ctx, f"/month/{today.strftime('%Y-%m')}")
+    rows = ctx.conn.execute(
+        f"SELECT t.date, t.description, t.amount, a.name AS account FROM transactions t "
+        f"JOIN accounts a ON a.id = t.account_id WHERE {WHERE} AND {INCOME} AND COALESCE(t.category, 'Uncategorized') = ? "
+        "ORDER BY t.date", (uid, start, end, match)).fetchall()
+    if not rows:
+        return ctx.result(f"No {match} {span}{_whose(owner, ctx)}.", links=[link])
+    per_month: dict[str, float] = {}
+    for r in rows:
+        per_month[r["date"][:7]] = round(per_month.get(r["date"][:7], 0.0) + r["amount"], 2)
+    total = round(sum(per_month.values()), 2)
+    largest = sorted(rows, key=lambda r: (-r["amount"], r["date"]))[:5]
+    items = [{"month": k, "income": v} for k, v in sorted(per_month.items())]
+    items += [{"date": r["date"], "merchant": _safe(r["description"])[:80], "amount": round(r["amount"], 2),
+               "account": _safe(r["account"])} for r in largest]
+    text = (f"{match} {span}{_whose(owner, ctx)}: {_money(total)}"
+            + (": " + "; ".join(f"{_label(k)} {_money(v)}" for k, v in sorted(per_month.items())) if len(per_month) > 1
+               else "") + ". Largest: "
+            + "; ".join(f"{_safe(r['description'])[:40]} {_money(r['amount'])} ({r['date']})" for r in largest[:3]) + ".")
+    return ctx.result(text, items=items, links=[link])
 
 
 @tools.tool("finance.spending",

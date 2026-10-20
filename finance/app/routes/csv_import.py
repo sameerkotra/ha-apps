@@ -10,7 +10,7 @@ from fastapi.responses import JSONResponse
 from fastapi.templating import Jinja2Templates
 
 from ..auth import User, get_current_user, get_acting_user
-from ..categorize import apply_categories, plan_categories
+from ..categorize import apply_categories, flow_of, plan_categories
 from ..matching import relink
 from ..db import get_db
 from ..version import APP_VERSION
@@ -290,7 +290,7 @@ def _import_csv_file(
 
     inserted_ids: list[int] = []
     inserted_set: set[int] = set()       # the same ids, for the "repeated in this file" check below
-    to_categorize: list[tuple[int, str]] = []
+    to_categorize: list[tuple[int, str, str | None]] = []      # (id, description, which way the money goes)
     row_errors: list[str] = []
     duplicates: list[str] = []
     skipped_rows: list[tuple] = []   # (account_id, date, amount, description, category, reason, matched id)
@@ -365,7 +365,9 @@ def _import_csv_file(
             inserted_ids.append(result)
             inserted_set.add(result)
             if not raw_category:
-                to_categorize.append((result, description))
+                signed = parse_number(amount)
+                to_categorize.append((result, description,
+                                      flow_of(account_types.get(account_id), signed) if account_types else None))
         else:
             row_errors.append(f"Row {i}: {result}")
 

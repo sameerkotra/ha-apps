@@ -1,156 +1,435 @@
 {% extends "base.html" %}
 {% import "_nav_macros.html" as nav %}
+{% import "_category_options.html" as catopt %}
 {% block title %}Categories{% endblock %}
 {% block content %}
+{# Setup → Categories (SPEC.md section 9): tabs Spending · Income · Rules. Without the script (static/pages/categories.js)
+   the tabs are links and every action is a plain form that comes back to the same tab. #}
 {{ nav.setup_tabs("categories", acting_qs, request.state.is_real_admin) }}
 <h1>Categories &amp; rules</h1>
-<p class="hint">
-    A new transaction is categorized automatically on import: your rules
-    below are tried first (most specific match wins — exact beats a
-    prefix match beats a substring match; ties go to the longer pattern,
-    then whichever rule was saved most recently), then the built-in
-    rules further down, then a one-off AI guess if nothing matches, and
-    finally "Uncategorized" if nothing works at all (SPEC.md
-    section 9).
-</p>
+<p class="hint one-line">Each transaction gets one category — from your rules, then the built-in ones, then the AI.</p>
+<details class="how-it-works" id="how-categories">
+    <summary>How this works</summary>
+    <div class="how-body">
+        <p>A new transaction is categorized automatically on import: your rules are tried first (most specific
+        match wins — exact beats starts with beats contains; ties go to the longer text, then whichever rule was
+        saved most recently), then the built-in rules for its direction, then a one-off AI guess if nothing matches,
+        and finally &ldquo;Uncategorized&rdquo;. You can always change a transaction's category by hand.</p>
+        <p>Every category is <strong>Spending</strong> or <strong>Income</strong>. Whether a transaction counts as
+        income or spending is still its direction: money in on a checking or savings account is income, whatever
+        its category. The kind decides which list a category is offered from (money in on checking or savings
+        shows Income first) and how Home breaks your income down. The AI is offered only the list for the
+        transaction's direction. Money back on a card stays a card payment unless a rule says
+        <strong>Refunds</strong>, and then it counts as spending going down.</p>
+        <p>Hidden categories stay on the transactions that have them and their rules still work; they just aren't
+        offered in the menus. A colour is used for the category on Home and Compare.</p>
+    </div>
+</details>
 
-<h2>Your categories</h2>
-<p class="hint">
-    The built-in category list (Groceries, Dining, Shopping, etc.) plus
-    anything you add here &mdash; shown in every category picker in the
-    app (transaction editing, bulk actions, rules below).
+<div id="cat-root">
+<div id="cat-messages" aria-live="polite">
+{% if notice %}<p class="hint notice-hint" role="status">{{ notice }}</p>{% endif %}
+{% if just_recategorized is not none %}
+<p class="hint notice-hint" role="status">
+    {% if just_recategorized > 0 %}Updated the category on {{ just_recategorized }} existing transaction{{ "s" if just_recategorized != 1 else "" }}.
+    {% else %}No existing transactions changed.{% endif %}
 </p>
-<div class="card">
-    <h3>Add a category</h3>
-    <form method="post" action="custom-categories{% if acting_qs %}?{{ acting_qs }}{% endif %}" class="add-account-form">
-        <label>
-            Category name
-            <input type="text" name="name" placeholder="e.g. Pet Care" required maxlength="60">
-        </label>
-        <button type="submit">Add category</button>
-    </form>
+{% endif %}
+{% if just_sorted is not none %}<p class="hint notice-hint" role="status">Changed {{ just_sorted }} transaction{{ "s" if just_sorted != 1 else "" }}.</p>{% endif %}
 </div>
 
-{% if custom_categories %}
-<div class="card">
-    <h3>Your added categories</h3>
-    <table class="statements-table">
+<nav class="subtabs cat-tabs" id="cat-tabs" aria-label="Categories">
+    {% for key, label, count in [("spending", "Spending", lists.spending.shown | length), ("income", "Income", lists.income.shown | length), ("rules", "Rules", rules_total)] %}
+    <a href="categories?tab={{ key }}{{ aq }}" class="subtab cat-tab{{ ' active' if tab == key else '' }}" data-tab="{{ key }}" id="cat-tab-{{ key }}"
+       {% if tab == key %}aria-current="page"{% endif %}>{{ label }} <span class="tab-count">{{ count }}</span></a>
+    {% endfor %}
+</nav>
+
+<div id="cat-data" hidden data-acting-qs='{{ acting_qs | tojson }}'></div>
+
+{# ------------------------------------------------------------------ the ⋯ menu of one category (C, F) #}
+{% macro menu(c) -%}
+{% set others = (groups[c.kind] | reject("equalto", c.name) | list) %}
+<details class="row-menu" data-menu>
+    <summary class="row-menu-btn" aria-label="More for {{ c.name }}" title="Rename, merge, move, hide, colour">&#8943;</summary>
+    <div class="menu-sheet" role="group" aria-label="{{ c.name }}">
+        <p class="menu-title"><span class="cat-dot" style="background: {{ c.hex }}" aria-hidden="true"></span>{{ c.name }}{% if c.builtin %} <span class="badge-builtin">Built in</span>{% endif %}</p>
+        <form method="post" action="category-colour{{ q1 }}" class="menu-form colour-form" data-action="colour">
+            <input type="hidden" name="name" value="{{ c.name }}">
+            <input type="hidden" name="tab" value="{{ c.kind }}">
+            <fieldset class="swatches">
+                <legend>Colour</legend>
+                {% for key, hexcode in palettes[c.kind].items() %}
+                <label class="swatch" title="{{ key }}">
+                    <input type="radio" name="colour" value="{{ key }}" {{ "checked" if c.colour == key else "" }}>
+                    <span class="swatch-chip" style="background: {{ hexcode }}" aria-hidden="true"></span>
+                    <span class="visually-hidden">{{ key }}</span>
+                </label>
+                {% endfor %}
+            </fieldset>
+            <button type="submit" class="btn-secondary">Save colour</button>
+        </form>
+        {% if not c.builtin %}
+        <form method="post" action="category-rename{{ q1 }}" class="menu-form" data-action="rename">
+            <input type="hidden" name="id" value="{{ c.id }}">
+            <input type="hidden" name="tab" value="{{ c.kind }}">
+            <label>Rename <input type="text" name="name" value="{{ c.name }}" required maxlength="60"></label>
+            <button type="submit" class="btn-secondary">Rename</button>
+        </form>
+        {% endif %}
+        {% if others %}
+        <form method="post" action="category-merge{{ q1 }}" class="menu-form" data-action="merge"
+              data-confirm="Move every transaction and rule of &quot;{{ c.name }}&quot; into the chosen category, then {{ 'hide' if c.builtin else 'delete' }} &quot;{{ c.name }}&quot;?">
+            <input type="hidden" name="name" value="{{ c.name }}">
+            <input type="hidden" name="tab" value="{{ c.kind }}">
+            <label>Merge into&hellip;
+                <select name="into">{% for o in others %}<option value="{{ o }}">{{ o }}</option>{% endfor %}</select>
+            </label>
+            <button type="submit" class="btn-secondary">Merge</button>
+        </form>
+        {% endif %}
+        {% if not c.builtin %}
+        {% set other_kind = "income" if c.kind == "spending" else "spending" %}
+        <form method="post" action="category-kind{{ q1 }}" class="menu-form" data-action="kind">
+            <input type="hidden" name="id" value="{{ c.id }}">
+            <input type="hidden" name="kind" value="{{ other_kind }}">
+            <input type="hidden" name="tab" value="{{ c.kind }}">
+            <button type="submit" class="btn-secondary">Move to {{ other_kind | capitalize }}</button>
+            <span class="hint">Its transactions keep the category.</span>
+        </form>
+        <form method="post" action="custom-category-delete{{ q1 }}" class="menu-form" data-action="delete"
+              data-confirm="Delete &quot;{{ c.name }}&quot;? Its transactions move to the category you chose.">
+            <input type="hidden" name="id" value="{{ c.id }}">
+            <input type="hidden" name="tab" value="{{ c.kind }}">
+            <label>Delete, moving its transactions to
+                <select name="move_to">
+                    <option value="Uncategorized" selected>Uncategorized</option>
+                    {% for kind in ["spending", "income"] %}
+                    <optgroup label="{{ kind | capitalize }}">{% for o in groups[kind] if o != c.name %}<option value="{{ o }}">{{ o }}</option>{% endfor %}</optgroup>
+                    {% endfor %}
+                    <option value="Payments">Payments</option>
+                </select>
+            </label>
+            <button type="submit" class="btn-danger">Delete</button>
+        </form>
+        {% else %}
+        <form method="post" action="category-hide{{ q1 }}" class="menu-form" data-action="hide">
+            <input type="hidden" name="name" value="{{ c.name }}">
+            <input type="hidden" name="tab" value="{{ c.kind }}">
+            <button type="submit" class="btn-secondary">Hide from menus</button>
+            <span class="hint">Built in: it can't be deleted. Transactions that have it keep it.</span>
+        </form>
+        {% endif %}
+    </div>
+</details>
+{%- endmacro %}
+
+{# ------------------------------------------------------------------ rule suggestions (E) #}
+{% macro suggestion_list(items, tab_key) -%}
+{% if items %}
+<div class="suggestions" aria-label="Suggested rules">
+    {% for s in items %}
+    <div class="suggestion" data-merchant="{{ s.merchant }}" data-category="{{ s.category }}">
+        <p class="suggestion-text">You set <strong>{{ s.merchant }}</strong> to <strong>{{ s.category }}</strong> {{ s.times }} times &mdash; make it a rule?
+            <span class="hint">(starts with &ldquo;{{ s.pattern }}&rdquo;)</span></p>
+        <div class="suggestion-actions">
+            <form method="post" action="category-suggestion-make{{ q1 }}">
+                <input type="hidden" name="merchant" value="{{ s.merchant }}">
+                <input type="hidden" name="category" value="{{ s.category }}">
+                <input type="hidden" name="tab" value="{{ tab_key }}">
+                <button type="submit" class="btn-primary">Make rule</button>
+            </form>
+            <form method="post" action="category-suggestion-dismiss{{ q1 }}">
+                <input type="hidden" name="merchant" value="{{ s.merchant }}">
+                <input type="hidden" name="category" value="{{ s.category }}">
+                <input type="hidden" name="tab" value="{{ tab_key }}">
+                <button type="submit" class="btn-secondary">Dismiss</button>
+            </form>
+        </div>
+    </div>
+    {% endfor %}
+</div>
+{% endif %}
+{%- endmacro %}
+
+{# ------------------------------------------------------------------ Spending and Income (A, B) #}
+{% for kind in ["spending", "income"] %}
+{% set lst = lists[kind] %}
+<section class="cat-panel" id="panel-{{ kind }}" data-panel="{{ kind }}" aria-labelledby="cat-tab-{{ kind }}" {% if tab != kind %}hidden{% endif %}>
+    {% set n_unc = uncategorized[kind] %}
+    {% if n_unc %}
+    <div class="uncat-line" id="uncategorized-{{ kind }}">
+        {% if kind == "spending" %}
+        <a href="transactions?category=Uncategorized&flow=expense{{ aq }}" class="uncat-link">{{ n_unc }} uncategorized &rarr; sort them</a>
+        {% else %}
+        <form method="post" action="category-sort-income{{ q1 }}" class="inline-form">
+            <button type="submit" class="link-button uncat-link">{{ n_unc }} uncategorized &rarr; Sort my income</button>
+        </form>
+        {% endif %}
+    </div>
+    {% endif %}
+
+    {{ suggestion_list(suggestions[kind], kind) }}
+
+    {% if kind == "income" %}
+    <div class="sort-income card" id="sort-income">
+        <form method="post" action="category-sort-income{{ q1 }}" class="inline-form">
+            <button type="submit" class="btn-secondary" id="sort-income-btn">Sort my income</button>
+        </form>
+        <span class="hint">Runs your rules, then the AI, over money in that is still Other income or Uncategorized, and
+            lists what it would change &mdash; nothing changes until you confirm.</span>
+        {% if sort_plan is not none %}
+        <div class="sort-plan" id="sort-income-plan">
+            {% if sort_plan %}
+            <h3>{{ sort_plan | length }} change{{ "s" if sort_plan | length != 1 else "" }} to confirm</h3>
+            <form method="post" action="category-sort-income-apply{{ q1 }}">
+                <div class="table-scroll">
+                <table class="statements-table sort-plan-table" data-no-sort>
+                    <thead><tr><th><span class="visually-hidden">Change</span></th><th>Date</th><th>Description</th><th class="num">Amount</th><th>Now</th><th>Becomes</th></tr></thead>
+                    <tbody>
+                        {% for p in sort_plan %}
+                        <tr>
+                            <td data-label="Change"><input type="checkbox" name="pick" value="{{ p.id }}" checked aria-label="Change {{ p.description }}">
+                                <input type="hidden" name="to_{{ p.id }}" value="{{ p.to }}">
+                                <input type="hidden" name="source_{{ p.id }}" value="{{ p.source }}">
+                                <input type="hidden" name="pattern_{{ p.id }}" value="{{ p.pattern }}">
+                                <input type="hidden" name="type_{{ p.id }}" value="{{ p.match_type }}"></td>
+                            <td data-label="Date">{{ p.date }}</td>
+                            <td data-label="Description" class="wrap-cell">{{ p.description }}</td>
+                            <td data-label="Amount" class="num">{{ "%.2f"|format(p.amount) }}</td>
+                            <td data-label="Now">{{ p.category }}</td>
+                            <td data-label="Becomes"><strong>{{ p.to }}</strong> <span class="hint">({{ {"user_rule": "your rule", "builtin_rule": "built-in rule", "llm": "AI"}[p.source] }})</span></td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+                </div>
+                <div class="form-actions">
+                    <button type="submit" class="btn-primary">Change the ticked ones</button>
+                    <a href="categories?tab=income{{ aq }}" class="btn-secondary">Cancel</a>
+                </div>
+            </form>
+            {% else %}
+            <p class="empty-state">Nothing to change: no rule or AI answer gives those transactions a better category.</p>
+            {% endif %}
+        </div>
+        {% endif %}
+    </div>
+    {% endif %}
+
+    <div class="cat-toolbar">
+        <details class="sheet add-sheet" id="add-{{ kind }}" data-sheet>
+            <summary class="btn-primary sheet-open">Add a category</summary>
+            <div class="sheet-body" role="group" aria-label="Add a category">
+                <p class="sheet-title">Add a category</p>
+                <form method="post" action="custom-categories{{ q1 }}" class="sheet-form" data-action="add">
+                    <input type="hidden" name="tab" value="{{ kind }}">
+                    <label>Category name
+                        <input type="text" name="name" required maxlength="60" placeholder="{{ 'e.g. Rental income' if kind == 'income' else 'e.g. Pet Care' }}">
+                    </label>
+                    <fieldset class="kind-choice">
+                        <legend>Kind</legend>
+                        <label><input type="radio" name="kind" value="spending" {{ "checked" if kind == "spending" else "" }}> Spending</label>
+                        <label><input type="radio" name="kind" value="income" {{ "checked" if kind == "income" else "" }}> Income</label>
+                    </fieldset>
+                    <button type="submit" class="btn-primary">Add category</button>
+                </form>
+            </div>
+        </details>
+        <p class="sort-links" aria-label="Sort">
+            <span class="hint">Sort:</span>
+            {% for key, label in [("name", "Name"), ("total", "This month"), ("use", "Use")] %}
+            <a class="chip" href="categories?tab={{ kind }}&sort={{ key }}{{ aq }}" {% if sort == key %}aria-pressed="true"{% endif %} data-sort="{{ key }}">{{ label }}</a>
+            {% endfor %}
+        </p>
+    </div>
+
+    <div class="table-wrap">
+    <table class="statements-table cat-table" data-no-sort data-kind="{{ kind }}">
         <thead>
-            <tr><th>Category</th><th></th></tr>
+            <tr><th>Category</th><th class="num">This month</th><th class="num">Last 12 months</th><th class="num">Rules</th><th><span class="visually-hidden">More</span></th></tr>
         </thead>
         <tbody>
-            {% for c in custom_categories %}
-            <tr>
-                <td data-label="Category">{{ c.name }}</td>
-                <td data-label="">
-                    <form method="post" action="custom-category-delete{% if acting_qs %}?{{ acting_qs }}{% endif %}"
-                          data-confirm="Remove &quot;{{ c.name }}&quot; from the category list? Transactions and rules already using it keep it &mdash; it just won't be offered as a pick anymore.">
-                        <input type="hidden" name="id" value="{{ c.id }}">
-                        <button type="submit" class="restart-btn">Remove</button>
-                    </form>
-                </td>
+            {% for c in lst.shown %}
+            <tr class="cat-row" data-category="{{ c.name }}" data-href="transactions?category={{ c.name | urlencode }}{{ aq }}">
+                <td data-label="Category" class="cat-name-cell"><span class="cat-dot" style="background: {{ c.hex }}" aria-hidden="true"></span><a class="cat-link" href="transactions?category={{ c.name | urlencode }}{{ aq }}">{{ c.name }}</a>{% if c.builtin %} <span class="badge-builtin">Built in</span>{% endif %}</td>
+                <td data-label="This month" class="num">{{ "%.2f"|format(c.month_total) }}</td>
+                <td data-label="Last 12 months" class="num">{{ c.used_12m }}</td>
+                <td data-label="Rules" class="num">{{ c.rules }}</td>
+                <td data-label="" class="cat-menu-cell">{{ menu(c) }}</td>
             </tr>
             {% endfor %}
         </tbody>
     </table>
-</div>
-{% else %}
-<p class="empty-state">No categories added yet beyond the built-in list &mdash; add one above.</p>
-{% endif %}
+    </div>
 
-<div class="card">
-    <h3>Add a rule</h3>
-    <form method="post" action="category-rules{% if acting_qs %}?{{ acting_qs }}{% endif %}" class="add-account-form">
-        <label>
-            Match text
-            <input type="text" name="pattern" placeholder="e.g. NETFLIX" required maxlength="200">
-        </label>
-        <label>
-            Match type
-            <select name="match_type">
-                <option value="substring">contains</option>
-                <option value="prefix">starts with</option>
-                <option value="exact">exact match</option>
-            </select>
-        </label>
-        <label>
-            Category
-            <select name="category">
-                {% for c in categories %}<option value="{{ c }}">{{ c }}</option>{% endfor %}
-            </select>
-        </label>
-        <label class="recategorize-label">
-            <input type="checkbox" name="recategorize" value="1">
-            Also apply to all existing transactions (overwrites their current category)
-        </label>
-        <button type="submit">Add rule</button>
-    </form>
-</div>
-
-{% if just_recategorized is not none %}
-<p class="hint">
-    {% if just_recategorized > 0 %}
-    Updated the category on {{ just_recategorized }} existing transaction{{ "s" if just_recategorized != 1 else "" }}.
-    {% else %}
-    No existing transactions matched this rule.
+    {% if lst.hidden %}
+    <details class="hidden-cats" id="hidden-{{ kind }}">
+        <summary>Show hidden ({{ lst.hidden | length }})</summary>
+        <ul class="hidden-list">
+            {% for c in lst.hidden %}
+            <li><span class="cat-dot" style="background: {{ c.hex }}" aria-hidden="true"></span><span class="hidden-name">{{ c.name }}</span>
+                <span class="hint">{{ c.used_12m }} in the last 12 months</span>
+                <form method="post" action="category-show{{ q1 }}" class="inline-form">
+                    <input type="hidden" name="name" value="{{ c.name }}">
+                    <input type="hidden" name="tab" value="{{ kind }}">
+                    <button type="submit" class="btn-secondary">Show in menus</button>
+                </form>
+            </li>
+            {% endfor %}
+        </ul>
+    </details>
     {% endif %}
-</p>
-{% endif %}
+</section>
+{% endfor %}
 
-<h2>Your rules</h2>
-{% if grouped_rules %}
-{% for category, rules in grouped_rules.items() %}
-<div class="card">
-    <h3>{{ category }}</h3>
-    <table class="statements-table">
+{# ------------------------------------------------------------------ Rules (D) #}
+{% macro rule_form(r, t) -%}
+{% set editing = r is not none %}
+<form method="post" action="{{ 'category-rule-edit' if editing else 'category-rules' }}{{ q1 }}" class="sheet-form rule-form" data-rule-form {% if editing %}data-rule-id="{{ r.id }}"{% endif %}>
+    <input type="hidden" name="tab" value="rules">
+    {% if editing %}<input type="hidden" name="id" value="{{ r.id }}"><input type="hidden" name="rule_id" value="{{ r.id }}">{% endif %}
+    {% if as_user %}<input type="hidden" name="as_user" value="{{ as_user }}">{% endif %}
+    <label>Match text
+        <input type="text" name="pattern" value="{{ (t.pattern if t else (r.pattern if editing else '')) }}" required maxlength="200" placeholder="e.g. ACME PAYROLL" autocomplete="off">
+    </label>
+    {% set mt = t.match_type if t else (r.match_type if editing else "substring") %}
+    <label>Match type
+        <select name="match_type">
+            {% for key in ["substring", "prefix", "exact"] %}<option value="{{ key }}" {{ "selected" if mt == key else "" }}>{{ match_labels[key] }}</option>{% endfor %}
+        </select>
+    </label>
+    <label>Category
+        <select name="category">
+            {{ catopt.options(groups, t.category if t else (r.category if editing else "")) }}
+        </select>
+    </label>
+    <label class="recategorize-label">
+        <input type="checkbox" name="recategorize" value="1">
+        Also re-categorize existing transactions <span class="will-change" data-will-change>{% if t %}(will change {{ t.will_change }}){% endif %}</span>
+    </label>
+    <div class="form-actions">
+        <button type="submit" class="btn-primary">{{ "Save" if editing else "Add rule" }}</button>
+        <button type="submit" class="btn-secondary" formaction="category-rule-test" formmethod="get" data-test-button>Test</button>
+    </div>
+    <div class="rule-test" data-rule-test aria-live="polite">
+        {% if t %}
+        <p class="rule-test-summary">Matches <strong>{{ t.count }}</strong> transaction{{ "s" if t.count != 1 else "" }}; saving with &ldquo;Also re-categorize&rdquo; will change <strong>{{ t.will_change }}</strong>. Nothing is saved by a test.</p>
+        {% if t.matches %}
+        <ul class="rule-test-list">
+            {% for m in t.matches %}
+            <li><span class="rt-date">{{ m.date }}</span> <span class="rt-desc">{{ m.description }}</span> <span class="rt-amount">{{ "%.2f"|format(m.amount) }}</span>
+                <span class="rt-cat">{{ m.category or "Uncategorized" }}{% if m.to != m.category %} &rarr; <strong>{{ m.to }}</strong>{% endif %}</span></li>
+            {% endfor %}
+        </ul>
+        {% if t.count > t.matches | length %}<p class="hint">The first {{ t.matches | length }} of {{ t.count }}.</p>{% endif %}
+        {% endif %}
+        {% endif %}
+    </div>
+</form>
+{%- endmacro %}
+
+<section class="cat-panel" id="panel-rules" data-panel="rules" aria-labelledby="cat-tab-rules" {% if tab != "rules" %}hidden{% endif %}>
+    {{ suggestion_list(all_suggestions, "rules") }}
+    {% if test_error %}<div class="warning-hint" role="alert"><p>{{ test_error }}</p></div>{% endif %}
+
+    <div class="cat-toolbar">
+        <details class="sheet add-sheet" id="add-rule" data-sheet {% if test and not test.rule_id %}open{% endif %}>
+            <summary class="btn-primary sheet-open">Add a rule</summary>
+            <div class="sheet-body" role="group" aria-label="Add a rule">
+                <p class="sheet-title">Add a rule</p>
+                <p class="hint">For example &ldquo;ACME PAYROLL&rdquo; &rarr; Salary. Rules work the same for income and spending.</p>
+                {{ rule_form(none, test if test and not test.rule_id else none) }}
+            </div>
+        </details>
+        <form method="get" action="categories" class="rules-search" role="search">
+            <input type="hidden" name="tab" value="rules">
+            {% if who %}<input type="hidden" name="who" value="{{ who }}">{% endif %}
+            {% if kind_filter %}<input type="hidden" name="kind" value="{{ kind_filter }}">{% endif %}
+            {% if rule_category %}<input type="hidden" name="rule_category" value="{{ rule_category }}">{% endif %}
+            {% if as_user %}<input type="hidden" name="as_user" value="{{ as_user }}">{% endif %}
+            <label class="visually-hidden" for="rules-q">Search rules</label>
+            <input type="search" id="rules-q" name="q" value="{{ q }}" placeholder="Search match text or category" data-rules-search>
+            <button type="submit" class="btn-secondary">Search</button>
+        </form>
+    </div>
+
+    <div class="rule-chips" aria-label="Filter rules">
+        <div class="chip-group">
+            <a class="chip" href="{{ rule_url(who_='') }}" {% if not who %}aria-pressed="true"{% endif %}>All</a>
+            <a class="chip" href="{{ rule_url(who_='mine') }}" {% if who == 'mine' %}aria-pressed="true"{% endif %} data-chip="mine">Mine</a>
+            <a class="chip" href="{{ rule_url(who_='builtin') }}" {% if who == 'builtin' %}aria-pressed="true"{% endif %} data-chip="builtin">Built in</a>
+        </div>
+        <div class="chip-group">
+            <a class="chip" href="{{ rule_url(kind_='spending' if kind_filter != 'spending' else '') }}" {% if kind_filter == 'spending' %}aria-pressed="true"{% endif %} data-chip="spending">Spending</a>
+            <a class="chip" href="{{ rule_url(kind_='income' if kind_filter != 'income' else '') }}" {% if kind_filter == 'income' %}aria-pressed="true"{% endif %} data-chip="income">Income</a>
+        </div>
+        <form method="get" action="categories" class="chip-category">
+            <input type="hidden" name="tab" value="rules">
+            {% if q %}<input type="hidden" name="q" value="{{ q }}">{% endif %}
+            {% if who %}<input type="hidden" name="who" value="{{ who }}">{% endif %}
+            {% if kind_filter %}<input type="hidden" name="kind" value="{{ kind_filter }}">{% endif %}
+            {% if as_user %}<input type="hidden" name="as_user" value="{{ as_user }}">{% endif %}
+            <label class="visually-hidden" for="rules-category">One category</label>
+            <select name="rule_category" id="rules-category" data-autosubmit>
+                <option value="">Any category</option>
+                {% for c in rule_categories %}<option value="{{ c }}" {{ "selected" if c == rule_category else "" }}>{{ c }}</option>{% endfor %}
+            </select>
+            <noscript><button type="submit" class="btn-secondary">Show</button></noscript>
+        </form>
+    </div>
+
+    {% if rules %}
+    <div class="table-wrap">
+    <table class="statements-table rules-table" data-no-sort>
         <thead>
-            <tr><th>Match text</th><th>Match type</th><th></th></tr>
+            <tr><th>Match text</th><th>Match</th><th>Category</th><th>Kind</th><th class="num">Matches</th><th>Last matched</th><th><span class="visually-hidden">Actions</span></th></tr>
         </thead>
         <tbody>
             {% for r in rules %}
-            <tr>
-                <td data-label="Match text">{{ r.pattern }}</td>
-                <td data-label="Match type">{{ r.match_type }}</td>
-                <td data-label="">
-                    <form method="post" action="category-rule-delete{% if acting_qs %}?{{ acting_qs }}{% endif %}"
+            <tr class="rule-row{{ ' rule-builtin' if r.builtin else '' }}" {% if r.id %}id="rule-{{ r.id }}"{% endif %} data-pattern="{{ r.pattern }}">
+                <td data-label="Match text" class="wrap-cell"><code class="rule-pattern">{{ r.pattern }}</code>{% if r.builtin %} <span class="badge-builtin">Built in</span>{% endif %}{% if r.overridden %} <span class="hint">(yours is used)</span>{% endif %}</td>
+                <td data-label="Match">{{ match_labels[r.match_type] }}</td>
+                <td data-label="Category"><span class="cat-label"><span class="cat-dot" style="background: {{ hexes.get(r.category, neutral) }}" aria-hidden="true"></span>{{ r.category }}</span></td>
+                <td data-label="Kind">{{ (r.kind or "—") | capitalize }}</td>
+                <td data-label="Matches" class="num">{{ r.matches }}</td>
+                <td data-label="Last matched">{{ r.last_matched or "—" }}</td>
+                <td data-label="" class="rule-actions">
+                    {% if r.builtin %}
+                    <form method="post" action="category-rule-copy{{ q1 }}" class="inline-form">
+                        <input type="hidden" name="pattern" value="{{ r.pattern }}">
+                        <input type="hidden" name="match_type" value="{{ r.match_type }}">
+                        <input type="hidden" name="tab" value="rules">
+                        <button type="submit" class="btn-secondary">Use my own instead</button>
+                    </form>
+                    {% else %}
+                    <details class="sheet rule-edit" data-sheet {% if edit_id == r.id %}open{% endif %}>
+                        <summary class="btn-secondary sheet-open">Edit</summary>
+                        <div class="sheet-body" role="group" aria-label="Edit the rule {{ r.pattern }}">
+                            <p class="sheet-title">Edit rule</p>
+                            {{ rule_form(r, test if test and test.rule_id == r.id else none) }}
+                        </div>
+                    </details>
+                    <form method="post" action="category-rule-delete{{ q1 }}" class="inline-form"
                           data-confirm="Delete this rule? Transactions already categorized by it keep their category — only future auto-categorization is affected.">
                         <input type="hidden" name="id" value="{{ r.id }}">
-                        <button type="submit" class="restart-btn">Delete</button>
+                        <input type="hidden" name="tab" value="rules">
+                        <button type="submit" class="btn-secondary">Delete</button>
                     </form>
+                    {% endif %}
                 </td>
             </tr>
             {% endfor %}
         </tbody>
     </table>
+    </div>
+    {% else %}
+    <p class="empty-state">No rules match that search.</p>
+    {% endif %}
+</section>
 </div>
-{% endfor %}
-{% else %}
-<p class="empty-state">No rules saved yet &mdash; add one above, or check &ldquo;Save as rule&rdquo; when editing a transaction's category.</p>
-{% endif %}
+{% endblock %}
 
-<h2>Built-in rules (reference only)</h2>
-<p class="hint">
-    Applied automatically for common merchants whenever none of your own
-    rules above match. Not editable here &mdash; save a rule above with
-    the same (or a more specific) match text to override one of these
-    for your own transactions.
-</p>
-{% for category, rules in builtin_grouped.items() %}
-<div class="card">
-    <h3>{{ category }}</h3>
-    <table class="statements-table">
-        <thead>
-            <tr><th>Match text</th><th>Match type</th></tr>
-        </thead>
-        <tbody>
-            {% for pattern, match_type in rules %}
-            <tr>
-                <td data-label="Match text">{{ pattern }}</td>
-                <td data-label="Match type">{{ match_type }}</td>
-            </tr>
-            {% endfor %}
-        </tbody>
-    </table>
-</div>
-{% endfor %}
+{% block page_scripts %}
+<script src="static/pages/categories.js?v={{ app_version }}" defer></script>
 {% endblock %}

@@ -76,7 +76,7 @@ def test_migration_0030_runs_on_an_old_database(tmp_path, monkeypatch, env):
     c = sqlite3.connect(path)
     assert c.execute("SELECT name, preferred_upload_method, expected_day, csv_layout, skip_confirmation FROM accounts"
                      ).fetchone() == ("A", "csv", 12, None, None)
-    assert c.execute("SELECT MAX(version) FROM schema_version").fetchone()[0] == 31
+    assert c.execute("SELECT MAX(version) FROM schema_version").fetchone()[0] == 32     # the newest migration
     with pytest.raises(sqlite3.IntegrityError):
         with c:
             c.execute("UPDATE accounts SET skip_confirmation = 2")
@@ -217,7 +217,7 @@ def test_the_account_page_shows_and_changes_what_uploads_remember(env):
 def test_person_data_carries_what_uploads_remember(env):
     from test_people_data import _export, _import
     from app import people_data as pdata
-    assert pdata.SCHEMA == 31
+    assert pdata.SCHEMA == 32
     env.insert("known_users", id="tester", name="Tester")
     env.insert("known_users", id="wife", name="Wife")
     layout = {"header_row": 2, "data_row": 3, "date_column": "Date Made", "debit_credit": False}
@@ -226,7 +226,7 @@ def test_person_data_carries_what_uploads_remember(env):
     data = _export(env)
     import zipfile
     with zipfile.ZipFile(io.BytesIO(data)) as z:
-        assert json.loads(z.read("manifest.json"))["schema"] == 31
+        assert json.loads(z.read("manifest.json"))["schema"] == 32
         [row] = json.loads(z.read("data/accounts.json"))
     assert json.loads(row["csv_layout"]) == layout and row["skip_confirmation"] == 1
     r = _import(env, data, uid="wife")

@@ -11,7 +11,7 @@ BASE = "api/admin/people"
 
 # Every table that holds a person's rows (electric_meter_details hangs on utility_bills).
 TABLES = ("accounts", "statements", "transactions", "csv_imports", "skipped_duplicates", "category_rules",
-          "custom_categories", "recurring_overrides", "utility_bills", "toll_cars", "toll_devices", "toll_statements",
+          "custom_categories", "category_prefs", "category_suggestion_dismissals", "recurring_overrides", "utility_bills", "toll_cars", "toll_devices", "toll_statements",
           "toll_transactions", "toll_pattern_groups", "toll_patterns", "toll_trip_overrides", "toll_trips")
 
 
@@ -39,6 +39,9 @@ def _setup(env):
                amount=-12.34, description="COFFEE SHOP", reason="on_file", matched_transaction_id=t1)
     env.insert("category_rules", user_id="tester", pattern="COFFEE", match_type="substring", category="Dining")
     env.insert("custom_categories", user_id="tester", name="Pets")
+    env.insert("custom_categories", user_id="tester", name="Rent in", kind="income", colour="teal")
+    env.insert("category_prefs", user_id="tester", name="Gas", hidden=1, colour="red")
+    env.insert("category_suggestion_dismissals", user_id="tester", merchant="AMAZON MKTPL", category="Shopping")
     env.insert("recurring_overrides", user_id="tester", merchant_pattern="NETFLIX", is_recurring=1)
     bill = env.insert("utility_bills", user_id="tester", utility_type="electric", provider="Power Co", status="complete",
                       file_hash="h-bill", cost=80.5)
@@ -118,7 +121,7 @@ def _craft(tables=None, files=(), schema=None, app="finance"):
 def test_schema_is_the_latest_migration():
     # A migration that changes a person's table needs an UPGRADES step in app/people_data.py; then move this on.
     from app import people_data as pdata
-    assert pdata.SCHEMA == 31 and set(pdata.UPGRADES) == {27, 28, 29, 30}
+    assert pdata.SCHEMA == 32 and set(pdata.UPGRADES) == {27, 28, 29, 30, 31}
 
 
 def test_export_delete_import_gives_back_the_same(env):
@@ -134,7 +137,7 @@ def test_export_delete_import_gives_back_the_same(env):
         names = z.namelist()
         manifest = json.loads(z.read("manifest.json"))
         accounts = json.loads(z.read("data/accounts.json"))
-    assert manifest["app"] == "finance" and manifest["schema"] == 31 and manifest["person"]["name"] == "Tester"
+    assert manifest["app"] == "finance" and manifest["schema"] == 32 and manifest["person"]["name"] == "Tester"
     assert "files/stmt-1.pdf" in names and "data/toll_trips.json" not in names
     assert all("user_id" not in a for a in accounts)
     assert "user_access" not in str(names) and "saved_reports" not in str(names)

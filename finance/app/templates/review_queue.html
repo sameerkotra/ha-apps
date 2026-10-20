@@ -1,5 +1,6 @@
 {% extends "base.html" %}
 {% import "_nav_macros.html" as nav %}
+{% import "_category_options.html" as catopt %}
 {% block title %}Review{% endblock %}
 {% block content %}
 {{ nav.upload_tabs("review", acting_qs, request.state.features) }}
@@ -60,8 +61,8 @@
         <label class="bulk-select-all"><input type="checkbox" id="select-all"> Select all</label>
         <button type="button" class="btn-secondary bulk-action-btn" data-action="approve">Approve selected</button>
         <span class="bulk-categorize">
-            <select class="bulk-category-select">
-                {% for c in categories %}<option value="{{ c }}">{{ c }}</option>{% endfor %}
+            <select class="bulk-category-select" aria-label="Category for the selected transactions">
+                {{ catopt.options(category_groups, income_first=bulk_income_first) }}
             </select>
             <button type="button" class="btn-secondary bulk-action-btn" data-action="categorize">Categorize selected</button>
         </span>

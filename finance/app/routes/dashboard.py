@@ -4,8 +4,10 @@ Totals leave out transfers and excluded rows (section 8) and count only clean
 (reviewed) rows, since a flagged amount may still change. Both are account-type
 aware (section 8's sign convention):
 - Income: positive rows on checking/savings only (a positive card row is a
-  payment received, never income).
-- Spend: negative rows on checking/savings, positive rows on credit cards.
+  payment received, never income), whatever their category — the Income
+  breakdown splits them by category (spending names included).
+- Spend: negative rows on checking/savings, positive rows on credit cards,
+  and money back on a card categorized Refunds as a negative spend.
 
 Category rows and the cards link to Transactions with the same filters
 (`flow`, category, dates), so a figure and its drill-down always agree.
@@ -26,6 +28,7 @@ from .. import ai_client as _ai_client
 from .. import card_payments, statement_due, subscriptions
 
 from ..auth import User, get_current_user, get_acting_user
+from ..categorize import INCOME_SQL, NEUTRAL_COLOUR, SPEND_AMOUNT_SQL, SPEND_SQL, colours as category_colours
 from ..db import get_db
 from ..version import APP_VERSION
 from ..matching import InflowIndex, find_transfer_candidates
@@ -139,16 +142,13 @@ def dashboard(
 
     counted_where = where + " AND t.txn_type != 'transfer' AND t.is_excluded = 0"
 
-    income_where = (
-        counted_where
-        + " AND t.amount > 0 AND a.type IN ('checking', 'savings')"
-    )
+    income_where = counted_where + " AND " + INCOME_SQL
 
     # A "spend" row, and its magnitude, both depend on account type: a
     # negative amount on checking/savings, or a POSITIVE amount on a
     # credit_card account (see this file's module docstring).
-    spend_filter = "((a.type = 'credit_card' AND t.amount > 0) OR (a.type != 'credit_card' AND t.amount < 0))"
-    spend_amount_expr = "CASE WHEN a.type = 'credit_card' THEN t.amount ELSE -t.amount END"
+    spend_filter = SPEND_SQL
+    spend_amount_expr = SPEND_AMOUNT_SQL
 
     with get_db() as conn:
         accounts = conn.execute(
@@ -182,6 +182,17 @@ def dashboard(
             """,
             params,
         ).fetchall()
+        # The Income total's breakdown, the same shape as By category: every row the total counts, by category.
+        income_category_rows = conn.execute(
+            f"""
+            SELECT COALESCE(t.category, 'Uncategorized') AS category, COALESCE(SUM(t.amount), 0) AS total
+            FROM transactions t JOIN accounts a ON a.id = t.account_id
+            WHERE {income_where}
+            GROUP BY COALESCE(t.category, 'Uncategorized') ORDER BY total DESC, category
+            """,
+            params,
+        ).fetchall()
+        palette = category_colours(conn, acting.id)
         months, years = available_periods(conn, acting.id)
         excluded_row = conn.execute(
             f"""
@@ -207,7 +218,12 @@ def dashboard(
     categories = []
     for r in category_rows:
         pct = (r["total"] / total_spend * 100) if total_spend else 0.0
-        categories.append({"category": r["category"], "total": r["total"], "pct": pct})
+        categories.append({"category": r["category"], "total": r["total"], "pct": pct,
+                           "colour": palette.get(r["category"], NEUTRAL_COLOUR)})
+    total_income = income_row["total"]
+    income_categories = [{"category": r["category"], "total": r["total"],
+                          "pct": (r["total"] / total_income * 100) if total_income else 0.0,
+                          "colour": palette.get(r["category"], NEUTRAL_COLOUR)} for r in income_category_rows]
 
     with get_db() as conn:          # overdue statements (SPEC.md section 27): the notice above the charts
         overdue = statement_due.visible_overdue(conn, current, acting)
@@ -225,8 +241,9 @@ def dashboard(
             "selected_account_id": safe_account_id,
             "selected_account_name": selected_account_name,
             "total_spend": total_spend,
-            "total_income": income_row["total"],
+            "total_income": total_income,
             "categories": categories,
+            "income_categories": income_categories,
             "excluded_total": excluded_row["total"],
             "excluded_count": excluded_row["n"],
             "drill_start_date": drill_start_date,
@@ -255,9 +272,7 @@ def period_totals(conn, user_id: str, start: str, end: str, account_id: int | No
         where += " AND t.account_id = ?"
         params.append(account_id)
     where += " AND t.txn_type != 'transfer' AND t.is_excluded = 0"
-    spend_filter = "((a.type = 'credit_card' AND t.amount > 0) OR (a.type != 'credit_card' AND t.amount < 0))"
-    spend_amount = "CASE WHEN a.type = 'credit_card' THEN t.amount ELSE -t.amount END"
-    income_filter = "(t.amount > 0 AND a.type IN ('checking', 'savings'))"
+    spend_filter, spend_amount, income_filter = SPEND_SQL, SPEND_AMOUNT_SQL, INCOME_SQL
 
     def by_category(condition: str, amount: str) -> dict[str, float]:
         rows = conn.execute(
@@ -328,6 +343,7 @@ def dashboard_compare(
         (a_start, a_end), (b_start, b_end) = to_range(a), to_range(b)
         totals_a = period_totals(conn, acting.id, a_start, a_end, safe_account_id)
         totals_b = period_totals(conn, acting.id, b_start, b_end, safe_account_id)
+        palette = category_colours(conn, acting.id)
 
     options = years if mode == "year" else months
     options = sorted(set(options) | {a, b}, reverse=True)
@@ -338,6 +354,8 @@ def dashboard_compare(
 
     spend_rows = compare_rows(totals_a["spend_by_cat"], totals_b["spend_by_cat"])
     income_rows = compare_rows(totals_a["income_by_cat"], totals_b["income_by_cat"])
+    for r in spend_rows + income_rows:
+        r["colour"] = palette.get(r["category"], NEUTRAL_COLOUR)
     net_a, net_b = round(totals_a["income"] - totals_a["spend"], 2), round(totals_b["income"] - totals_b["spend"], 2)
 
     return templates.TemplateResponse(

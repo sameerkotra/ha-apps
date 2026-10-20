@@ -1,4 +1,4 @@
--- Finance Dashboard: the database schema as migrations 0001-0031 leave it (generated; the
+-- Finance Dashboard: the database schema as migrations 0001-0032 leave it (generated; the
 -- migrations in finance/migrations are the source of truth). SQLite, WAL mode, foreign keys on.
 
 CREATE TABLE "accounts" (
@@ -36,6 +36,16 @@ CREATE TABLE app_settings (
     updated_by  TEXT
 );
 
+CREATE TABLE category_prefs (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id     TEXT    NOT NULL,
+    name        TEXT    NOT NULL,                                   -- a built-in category's name
+    hidden      INTEGER NOT NULL DEFAULT 0 CHECK (hidden IN (0, 1)),
+    colour      TEXT,                                               -- a palette key; NULL: its default
+    updated_at  TEXT    NOT NULL DEFAULT (datetime('now')),
+    UNIQUE (user_id, name)
+);
+
 CREATE TABLE category_rules (
     id            INTEGER PRIMARY KEY AUTOINCREMENT,
     user_id       TEXT    NOT NULL,
@@ -43,6 +53,15 @@ CREATE TABLE category_rules (
     match_type    TEXT    NOT NULL CHECK (match_type IN ('exact', 'prefix', 'substring')),
     category      TEXT    NOT NULL,
     created_at    TEXT    NOT NULL DEFAULT (datetime('now'))
+, last_matched_at TEXT);
+
+CREATE TABLE category_suggestion_dismissals (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id       TEXT    NOT NULL,
+    merchant      TEXT    NOT NULL,
+    category      TEXT    NOT NULL,
+    dismissed_at  TEXT    NOT NULL DEFAULT (datetime('now')),
+    UNIQUE (user_id, merchant, category)
 );
 
 CREATE TABLE csv_imports (
@@ -65,7 +84,7 @@ CREATE TABLE custom_categories (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
     user_id     TEXT    NOT NULL,
     name        TEXT    NOT NULL,
-    created_at  TEXT    NOT NULL DEFAULT (datetime('now')),
+    created_at  TEXT    NOT NULL DEFAULT (datetime('now')), kind TEXT NOT NULL DEFAULT 'spending' CHECK (kind IN ('spending', 'income')), colour TEXT,
     UNIQUE (user_id, name)
 );
 

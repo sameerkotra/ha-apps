@@ -162,7 +162,8 @@ def test_balances_from_the_latest_statements(env):
 def test_catalogue_and_reports_never_see_the_bus(env):
     from app import query_engine, tools
     tools.tools.check()
-    assert [t["name"] for t in tools.tools.spec()] == ["finance.summary", "finance.spending", "finance.recurring",
+    assert [t["name"] for t in tools.tools.spec()] == ["finance.summary", "finance.income", "finance.spending",
+                                                       "finance.recurring",
                                                        "finance.bills", "finance.merchant", "finance.balances",
                                                        "finance.expense.add", "finance.statements",
                                                        "finance.payments_due", "finance.subscription_changes",

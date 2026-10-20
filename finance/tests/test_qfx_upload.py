@@ -407,7 +407,7 @@ def test_migration_0028_runs_on_an_old_database(tmp_path, monkeypatch, env):
     assert c.execute("SELECT source, period_start FROM statements").fetchone() == ("pdf", None)
     assert c.execute("SELECT fitid, account_id FROM transactions").fetchone() == (None, ids[1])
     assert c.execute("PRAGMA foreign_key_check").fetchall() == []
-    assert c.execute("SELECT MAX(version) FROM schema_version").fetchone()[0] == 31     # the newest migration
+    assert c.execute("SELECT MAX(version) FROM schema_version").fetchone()[0] == 32     # the newest migration
     with c:
         c.execute("UPDATE accounts SET preferred_upload_method = 'qfx' WHERE id = ?", (ids[0],))
     try:

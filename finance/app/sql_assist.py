@@ -17,7 +17,7 @@ import time
 from dataclasses import dataclass, field
 
 from . import ai_client, ai_usage, jobs, query_engine as qe, settings
-from .categorize import list_all_categories
+from .categorize import categories_by_kind, list_all_categories
 from .db import get_db
 
 logger = logging.getLogger(__name__)
@@ -121,6 +121,7 @@ def schema_text(acting_id: str) -> str:
     overview = qe.table_overview(acting_id)
     with get_db() as conn:
         categories = list_all_categories(conn, acting_id)
+        by_kind = categories_by_kind(conn, acting_id)
         accounts = conn.execute("SELECT id, name, type FROM accounts WHERE user_id = ? AND deleted_at IS NULL "
                                 "ORDER BY name COLLATE NOCASE", (acting_id,)).fetchall()
     lines = ["TABLES (SQLite). Every table holds only this person's live rows: never filter by user and never "
@@ -143,6 +144,9 @@ def schema_text(acting_id: str) -> str:
         "- utility_bills.cost is positive; only rows with status IN ('complete', 'pending_review') are finished bills.",
         "- toll_transactions.amount is positive.",
         f"- Categories in use: {', '.join(categories)}." if categories else "",
+        (f"- Spending categories: {', '.join(by_kind['spending'])}. Income categories: {', '.join(by_kind['income'])}. "
+         "The categories view has each one's kind; income is still money in on checking/savings, whatever its "
+         "category."),
         ("- Accounts: " + "; ".join(f"id {a['id']} = {a['name']} ({a['type']})" for a in accounts) + ".") if accounts else "",
     ]
     return "\n".join(line for line in lines if line is not None)

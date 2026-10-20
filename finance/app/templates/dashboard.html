@@ -100,9 +100,20 @@
 
 {% include "_subscription_changes.html" %}
 
+{# The share of each category as one bar (its colour from Setup → Categories), then the table; the colour dots are
+   its legend. The same shape for spending (By category) and for the Income total's breakdown. #}
+{% macro share_bar(rows, label) -%}
+<div class="share-bar" role="img" aria-label="{{ label }}">
+    {%- for c in rows if c.total > 0 and c.pct >= 0.5 -%}
+    <span class="share-seg" style="width: {{ '%.2f'|format(c.pct) }}%; background: {{ c.colour }}" title="{{ c.category or 'Uncategorized' }} {{ '%.1f'|format(c.pct) }}%"></span>
+    {%- endfor -%}
+</div>
+{%- endmacro %}
+
 <h2>By category</h2>
 {% if categories %}
 <div class="card">
+    {{ share_bar(categories, "Spending by category") }}
     <table class="statements-table">
         <thead>
             <tr><th>Category</th><th>Amount</th><th>% of spend</th></tr>
@@ -111,7 +122,7 @@
             {% for c in categories %}
             {% set cat_qs = "category=" + (c.category | urlencode) + "&flow=expense&start_date=" + (drill_start_date | urlencode) + "&end_date=" + (drill_end_date | urlencode) + account_qs + (("&" + acting_qs) if acting_qs else "") %}
             <tr>
-                <td data-label="Category"><a href="transactions?{{ cat_qs }}">{{ c.category }}</a></td>
+                <td data-label="Category"><span class="cat-label"><span class="cat-dot" style="background: {{ c.colour }}" aria-hidden="true"></span><a href="transactions?{{ cat_qs }}">{{ c.category }}</a></span></td>
                 <td data-label="Amount">{{ "%.2f"|format(c.total) }}</td>
                 <td data-label="% of spend">{{ "%.1f"|format(c.pct) }}%</td>
             </tr>
@@ -122,6 +133,32 @@
 {% else %}
 <p class="empty-state">
     No spending {{ period_label }}{{ " on " + selected_account_name if selected_account_name else "" }}.
+</p>
+{% endif %}
+
+<h2 id="income-by-category">Income by category</h2>
+{% if income_categories %}
+<div class="card income-breakdown">
+    {{ share_bar(income_categories, "Income by category") }}
+    <table class="statements-table">
+        <thead>
+            <tr><th>Category</th><th>Amount</th><th>% of income</th></tr>
+        </thead>
+        <tbody>
+            {% for c in income_categories %}
+            {% set cat_qs = "category=" + (c.category | urlencode) + "&flow=income&start_date=" + (drill_start_date | urlencode) + "&end_date=" + (drill_end_date | urlencode) + account_qs + (("&" + acting_qs) if acting_qs else "") %}
+            <tr>
+                <td data-label="Category"><span class="cat-label"><span class="cat-dot" style="background: {{ c.colour }}" aria-hidden="true"></span><a href="transactions?{{ cat_qs }}">{{ c.category }}</a></span></td>
+                <td data-label="Amount">{{ "%.2f"|format(c.total) }}</td>
+                <td data-label="% of income">{{ "%.1f"|format(c.pct) }}%</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% else %}
+<p class="empty-state">
+    No income {{ period_label }}{{ " on " + selected_account_name if selected_account_name else "" }}.
 </p>
 {% endif %}
 

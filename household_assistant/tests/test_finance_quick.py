@@ -7,7 +7,10 @@ in place of the fixture's Finance tools in the phrase corpus's household (quick_
 - "Give me a finance summary" reaches finance.overview, "How did we do this month?" finance.summary;
 - "What's our net worth?" and balance questions reach finance.balances (Finance 1.12.0 removed
   finance.balance_history), never the month's finance.summary;
-- the whole phrase corpus still reads as it did, but for "finance summary" (now the overview, as decided).
+- the whole phrase corpus still reads as it did, but for "finance summary" (now the overview, as decided);
+- Finance 1.13.0's finance.income takes only its own words ("income breakdown", "sources of income", "interest
+  earned", …): "How much did I earn in September?" stays the month's finance.summary (which now names the top
+  income categories), and a question the rules can't place goes to the AI as before.
 """
 import _env  # noqa: F401  (must be first)
 
@@ -98,6 +101,20 @@ class FinanceQuick(unittest.TestCase):
         # questions whose words are other apps' or the AI's (FINANCE_ASSISTANT_TOOLS_SPEC deviations)
         self.assertEqual(tool_of("What's due today?", self.c)[0], "todo.tasks")
         self.assertEqual(understand("Did any subscription go up?", self.c).kind, "model")
+
+    def test_the_income_questions(self):
+        cases = {
+            "Show my income breakdown for September": ("finance.income", {"month": "2026-09"}),
+            "What are our sources of income?": ("finance.income", {}),
+            "How much interest earned this month?": ("finance.income", {"month": "2026-10"}),
+            "dividends received last month": ("finance.income", {"month": "2026-09"}),
+            "How much did I earn in September?": ("finance.summary", {"month": "2026-09"}),
+            "income this month": ("finance.summary", {"month": "2026-10"}),
+        }
+        for q, want in cases.items():
+            with self.subTest(q):
+                self.assertEqual(tool_of(q, self.c), want)
+        self.assertNotIn("concepts", self.c.tools["finance.income"]["spec"]["quick"])
 
     def test_the_corpus_reads_as_before_but_finance_summary(self):
         total, misses = 0, []

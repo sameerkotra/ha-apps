@@ -57,8 +57,12 @@ tokens on App settings to see the cost.
 
 ### Home
 Income and spending by category for this week, this month, last month, this or last year, all
-time or any month; drill into the transactions behind a figure. **Compare** puts two months
-or two years side by side. When one of your statements is overdue (see **Expected statements**
+time or any month; drill into the transactions behind a figure. **By category** splits spending, and
+**Income by category** splits the Income total the same way (each category's amount and share,
+largest first; tap one for its transactions). Income is money in on a checking or savings account
+whatever its category, so a deposit with a spending category still counts as income. Each category
+has its colour (see **Categories** below). **Compare** puts two months
+or two years side by side, spending and income each by category. When one of your statements is overdue (see **Expected statements**
 below), an amber card above the charts lists it with **Upload** and **Dismiss**; a card payment due
 soon or overdue (see **Card payments** below) gets one too, with **Mark as paid**.
 - **Subscription changes**: a recurring charge whose price changed ("Netflix 15.49 → 17.99 (+16%)
@@ -66,8 +70,8 @@ soon or overdue (see **Card payments** below) gets one too, with **Mark as paid*
   **Dismiss** (see **Recurring** below).
 
 ### Transactions
-- **All**: search by notes, description, account, category, money in/out, excluded, dates and
-  amounts; edit categories (and save a rule), notes and Exclude; select several at once;
+- **All**: search by notes, description, account, category (grouped Spending / Income), money
+  in/out, excluded, dates and amounts — **All income** shows money in on checking and savings; edit categories (and save a rule), notes and Exclude; select several at once;
   export to CSV. A long result shows 100 rows a page (250 or 1000 if you choose); the count and
   total are for every matching row, and the export has them all.
 - **Transfers**: money between your own accounts (card payments, checking ↔ savings) is linked
@@ -178,12 +182,48 @@ write the SQL from a plain-English question.
 - **Accounts**: add, rename, archive, set the preferred upload type (any, PDF, CSV or QFX — a
   reminder on the Upload page, never a block), a website link, the **Expected statement** and, for a
   credit card, **Payment due**.
-- **Categories**: your own categories and rules (exact, prefix or contains); rules are tried
-  before the built-in ones and the AI. **Also apply to all existing transactions** gives the
-  transactions the new rule matches the category your rules give them (a more specific rule
-  still wins); other transactions keep theirs.
+- **Categories** — three tabs, **Spending**, **Income** and **Rules** (see **Categories** below).
 - **Settings**: your own settings (not App settings): **My reminders**, **Card payments** and
   **Subscription changes**.
+
+#### Categories
+Every category is **Spending** or **Income**. The built-in spending ones are Groceries, Dining,
+Transportation, Shopping, Subscriptions, Utilities, Gas, Health, Entertainment, Travel, Housing
+and Other; the built-in income ones Salary, Interest, Dividends, Refunds, Reimbursements, Gifts
+received and Other income. **Payments** (a card payment) and **Uncategorized** are neither. Every
+category menu lists Spending and Income as two groups — Income first for money in on a checking
+or savings account, Spending first for everything else. The kind only decides the list and how
+income is broken down: whether a transaction is income or spending is still its direction.
+
+- **Spending** and **Income** list that kind's categories, built-in and your own, each with this
+  month's total, its transactions in the last 12 months and the rules pointing to it; sort by
+  name, this month or use. Tap a row for its transactions. **Add a category** takes its kind from
+  the tab (you can switch it); a name can't be used twice, in either list, in any case.
+- The **⋯** menu: **Colour** (a small set that reads well in every theme; Home and Compare use
+  it), **Rename** (your own: its transactions and rules follow), **Merge into…** (another category
+  of the same kind; a built-in merged away is hidden), **Move to Income / Spending** (your own; its
+  transactions keep it), **Hide from menus** (built-ins you never use: they stay on old
+  transactions and their rules still work; **Show hidden** brings them back) and **Delete** (your
+  own: choose where its transactions go, Uncategorized unless you pick another).
+- **Rules**: every rule — yours and the built-in ones — in one table you can search and narrow
+  (Mine · Built in · Spending · Income · one category), with how many transactions each matches
+  and when it last categorized one. **Edit** changes a rule in place. **Test** shows the first 10
+  transactions a rule would match and how many **Also re-categorize existing transactions** would
+  change ("will change 14") without saving anything. A built-in rule's **Use my own instead**
+  copies it into your rules to change; yours is tried first. Rules work for income exactly as for
+  spending ("ACME PAYROLL" → Salary).
+- A new transaction is categorized by your rules first (the most specific match wins), then the
+  built-in rules for its direction (PAYROLL, DIRECT DEP or SALARY → Salary, INTEREST PAID / EARNED
+  → Interest, DIVIDEND, REFUND; money in from ZELLE FROM / VENMO FROM is left to the AI), then the
+  AI — offered only the categories for its direction — and finally Uncategorized. Money back on a
+  card is a card payment (Payments) unless a rule says **Refunds**; then it counts as spending going
+  down.
+- When you set the same merchant to the same category by hand 3 times, the page offers a rule
+  (**Make rule** or **Dismiss**, for good). The number still Uncategorized shows at the top: on
+  Spending it opens them on Transactions, on Income it runs **Sort my income** — your rules, then
+  the AI, over money in that is still Other income or Uncategorized, listed for you to tick before
+  anything changes.
+- Existing transactions are never re-categorized on their own.
 
 #### Expected statements and reminders
 - **Expected statement** (on Add account and each account's Edit details): Off, Monthly, every 2, 3
@@ -268,7 +308,7 @@ Each person's card on **Admin → Users** has a **⋯ Data** button, and **Impor
 sits above the list.
 
 - **Export their data** downloads one `.zip` with everything that person has: accounts,
-  statements, transactions, CSV imports, rules and categories, recurring choices, reminder and
+  statements, transactions, CSV imports, rules and categories (with their kinds, colours, hidden built-ins and dismissed rule suggestions), recurring choices, reminder and
   notification choices (with the statements, card payments and subscription changes they dismissed),
   utility bills and toll statements with their cars, tags and choices. You can leave out the statement PDFs
   still kept, include Recently deleted items, and leave out the text read from statements. The
@@ -301,8 +341,12 @@ about the data an admin shared with them on **Users**, by that person's name —
 else's. An admin's "act as" doesn't apply to the assistant. Anyone can turn off **Let the Household Assistant
 answer for me** on **Who am I**; the assistant then won't answer their questions from Finance.
 
-- "How did we do this month?" — a month's income, spending, net and top categories, counted
-  exactly as the Overview counts them (transfers and excluded rows left out);
+- "How did we do this month?" — a month's income, spending, net and top categories, and its top
+  income categories, counted exactly as the Overview counts them (transfers and excluded rows left
+  out);
+- "What are our sources of income?", "How much interest earned this month?", "How much interest did
+  we get this year?" — income by category for a month (Home's Income breakdown), or one income
+  category this year month by month (or in the month you name) with its largest payments;
 - "How much did we spend on groceries in September?" — spending by category, or one category's
   10 largest charges: the bank's description, date, amount and account — **never your notes**;
 - "What subscriptions do we pay for?", "How much is Netflix?" or "What's charged to my Visa every

@@ -1452,3 +1452,153 @@ main.uploads-main { max-width: 1100px; }
 .subscription-changes form { display: inline; margin: 0; }
 .subscription-changes > h2 { margin-top: 0; }
 #payment-due form.inline-form { display: inline; margin-left: 0.5rem; }
+
+/* ---------- Category colours on Home and Compare (SPEC.md section 9, F): a dot per category (the table's legend)
+   and one share bar. The colours come from the category (style attribute), from a palette that reads on every
+   theme's --card and --panel. ---------- */
+.cat-dot { display: inline-block; width: 0.7rem; height: 0.7rem; border-radius: 50%; margin-right: 0.45rem; vertical-align: -0.05rem; flex: 0 0 auto; }
+.share-bar { display: flex; gap: 2px; height: 0.7rem; margin: 0 0 0.9rem; border-radius: 4px; overflow: hidden; background: var(--panel-alt); }
+.share-seg { display: block; min-width: 3px; height: 100%; }
+.quick-filters { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; margin: 0 0 0.75rem; }
+.quick-filters .hint { margin: 0; }
+
+/* ---------- Setup → Categories (SPEC.md section 9): tabs, the category lists, the ⋯ menus, the rules table.
+   Without the script every <details> opens in place; with it, on a phone, they open as sheets. ---------- */
+.cat-panel[hidden], .sheet-backdrop[hidden] { display: none !important; }
+.cat-tabs .tab-count { font-weight: 600; opacity: 0.75; margin-left: 0.2rem; font-size: 0.8rem; }
+.cat-toolbar { display: flex; flex-wrap: wrap; align-items: flex-start; justify-content: space-between; gap: 0.6rem 1rem; margin: 0 0 0.75rem; }
+.sort-links { display: flex; flex-wrap: wrap; align-items: center; gap: 0.35rem; margin: 0; }
+.sort-links .hint { margin: 0 0.2rem 0 0; }
+.badge-builtin { display: inline-block; margin-left: 0.4rem; padding: 0 0.45rem; border-radius: 999px; font-size: 0.7rem; font-weight: 700;
+    background: var(--panel-alt); color: var(--text-dim); border: 1px solid var(--border); vertical-align: 0.1rem; white-space: nowrap; }
+.table-wrap { max-width: 100%; }
+.cat-table, .rules-table { width: 100%; }
+.cat-table tr.cat-row { cursor: pointer; }
+.cat-table tr.cat-row:hover td { background: var(--panel-hover); }
+.cat-table .cat-name-cell { overflow-wrap: anywhere; }
+.cat-table .cat-menu-cell, .rules-table .rule-actions { position: relative; text-align: right; white-space: nowrap; }
+.wrap-cell { overflow-wrap: anywhere; }
+.rule-pattern { font-size: 0.85rem; background: var(--panel-alt); padding: 0.05rem 0.35rem; border-radius: 4px; overflow-wrap: anywhere; }
+.rules-table .rule-actions .inline-form { display: inline-flex; margin: 0 0 0 0.35rem; vertical-align: top; }
+.rule-builtin td { color: var(--text-dim); }
+.uncat-line { margin: 0 0 0.75rem; }
+.uncat-link { font-weight: 700; color: var(--warn); }
+.link-button { background: none; border: 0; padding: 0; font: inherit; font-weight: 700; color: var(--warn); text-decoration: underline; cursor: pointer; }
+.link-button:hover { background: none; color: var(--text); }
+.suggestions { display: flex; flex-direction: column; gap: 0.5rem; margin: 0 0 1rem; }
+.suggestion { display: flex; flex-wrap: wrap; align-items: center; gap: 0.4rem 1rem; background: var(--panel); border: 1px solid var(--border);
+    border-left: 3px solid var(--accent); border-radius: 10px; padding: 0.55rem 0.8rem; }
+.suggestion-text { flex: 1 1 18rem; margin: 0; min-width: 0; overflow-wrap: anywhere; }
+.suggestion-text .hint { margin: 0; }
+.suggestion-actions { display: flex; gap: 0.4rem; }
+.suggestion-actions form { margin: 0; }
+.sort-income { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem 0.9rem; }
+.sort-income .hint { margin: 0; flex: 1 1 18rem; }
+.sort-income .inline-form { margin: 0; }
+.sort-plan { flex: 1 1 100%; min-width: 0; }
+.form-actions { display: flex; flex-wrap: wrap; gap: 0.5rem; margin-top: 0.4rem; }
+.notice-error { border-left-color: var(--danger); color: var(--danger); }
+.hidden-cats { margin: 0.75rem 0 0; }
+.hidden-cats > summary { cursor: pointer; color: var(--accent); font-weight: 600; width: max-content; max-width: 100%; }
+.hidden-list { list-style: none; margin: 0.5rem 0 0; padding: 0; display: flex; flex-direction: column; gap: 0.35rem; }
+.hidden-list li { display: flex; flex-wrap: wrap; align-items: center; gap: 0.3rem 0.6rem; padding: 0.35rem 0; border-bottom: 1px solid var(--border); }
+.hidden-list .hint { margin: 0; }
+.hidden-list .inline-form { margin: 0; }
+.hidden-name { font-weight: 600; }
+.rules-search { display: flex; gap: 0.4rem; align-items: center; min-width: 0; flex: 0 1 24rem; }
+.rules-search input[type="search"] { flex: 1 1 auto; min-width: 0; font-family: inherit; padding: 0.45rem 0.6rem; background: var(--panel-alt);
+    border: 1px solid var(--border); color: var(--text); border-radius: 8px; font-size: 0.9rem; }
+.rule-chips { display: flex; flex-wrap: wrap; align-items: center; gap: 0.4rem 1rem; margin: 0 0 0.75rem; }
+.rule-chips .chip-group { flex-wrap: wrap; }
+.chip-category { margin: 0; display: flex; gap: 0.4rem; align-items: center; }
+.chip-category select { font-family: inherit; padding: 0.25rem 0.5rem; background: var(--panel-alt); border: 1px solid var(--border);
+    color: var(--text); border-radius: 999px; font-size: 0.8rem; max-width: 14rem; }
+a.chip { text-decoration: none; display: inline-block; }
+
+/* The sheets: Add a category, Add a rule, Edit a rule. A <details> whose summary is the button. */
+.sheet > summary, .row-menu > summary { list-style: none; cursor: pointer; }
+.sheet > summary::-webkit-details-marker, .row-menu > summary::-webkit-details-marker { display: none; }
+.sheet-body { margin-top: 0.6rem; background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); padding: 0.9rem 1rem; text-align: left; white-space: normal; }
+.sheet-title, .menu-title { margin: 0 0 0.5rem; font-weight: 700; color: var(--text); overflow-wrap: anywhere; }
+.sheet-form { display: flex; flex-direction: column; gap: 0.6rem; min-width: 0; }
+.sheet-form label { display: flex; flex-direction: column; gap: 0.25rem; font-size: 0.82rem; font-weight: 600; color: var(--text-dim); }
+.sheet-form label.recategorize-label { flex-direction: row; align-items: center; gap: 0.45rem; color: var(--text); font-weight: 500; white-space: normal; }
+.sheet-form input[type="text"], .sheet-form select, .menu-form input[type="text"], .menu-form select {
+    font-family: inherit; padding: 0.45rem 0.6rem; background: var(--panel-alt); border: 1px solid var(--border); color: var(--text);
+    border-radius: 8px; font-size: 0.9rem; max-width: 100%; min-width: 0; }
+.kind-choice { border: 1px solid var(--border); border-radius: 8px; padding: 0.35rem 0.75rem 0.5rem; margin: 0; display: flex; gap: 1rem; flex-wrap: wrap; }
+.kind-choice legend { font-size: 0.8rem; font-weight: 700; color: var(--text-dim); padding: 0 0.25rem; }
+.sheet-form .kind-choice label { flex-direction: row; align-items: center; gap: 0.35rem; color: var(--text); font-size: 0.9rem; }
+.will-change { color: var(--accent); font-weight: 700; }
+.rule-test:empty, .rule-test:not(:has(*)) { display: none; }
+.cat-label { display: inline-flex; align-items: center; min-width: 0; overflow-wrap: anywhere; }
+.rule-test { border-left: 3px solid var(--accent-dim); padding: 0.3rem 0 0.3rem 0.7rem; font-size: 0.85rem; min-width: 0; }
+.rule-test-summary { margin: 0 0 0.4rem; }
+.rule-test-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.2rem; }
+.rule-test-list li { display: flex; flex-wrap: wrap; gap: 0.2rem 0.6rem; overflow-wrap: anywhere; }
+.rt-date { color: var(--text-dim); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.rt-desc { flex: 1 1 10rem; min-width: 0; }
+.rt-amount { font-variant-numeric: tabular-nums; white-space: nowrap; }
+.rt-cat { color: var(--text-dim); }
+.sheet-close { margin-top: 0.75rem; }
+@media (min-width: 768px) { .sheet-close { display: none; } }
+
+/* The ⋯ menu: a small list under its button (a bottom list on a phone). */
+.row-menu { display: inline-block; text-align: left; }
+.row-menu-btn { display: inline-flex; align-items: center; justify-content: center; min-width: 2.25rem; min-height: 2rem; padding: 0 0.5rem;
+    border-radius: 8px; border: 1px solid var(--border); background: var(--panel-alt); color: var(--text); font-weight: 700; font-size: 1.1rem; }
+.row-menu-btn:hover, .row-menu[open] > .row-menu-btn { border-color: var(--accent); color: var(--accent); }
+.menu-sheet { white-space: normal; }
+.menu-form { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 0.4rem 0.5rem; margin: 0; padding: 0.55rem 0; border-top: 1px solid var(--border); }
+.menu-form label { display: flex; flex-direction: column; gap: 0.25rem; font-size: 0.8rem; font-weight: 600; color: var(--text-dim); flex: 1 1 10rem; min-width: 0; }
+.menu-form .hint { margin: 0; flex: 1 1 100%; }
+.swatches { border: 0; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 0.3rem; flex: 1 1 100%; }
+.swatches legend { font-size: 0.8rem; font-weight: 600; color: var(--text-dim); margin-bottom: 0.3rem; padding: 0; }
+.swatch, .menu-form label.swatch { position: relative; cursor: pointer; display: inline-block; flex: 0 0 auto; }
+.swatch input { position: absolute; opacity: 0; width: 100%; height: 100%; margin: 0; cursor: pointer; }
+.swatch-chip { display: block; width: 1.75rem; height: 1.75rem; border-radius: 50%; border: 2px solid transparent; box-shadow: inset 0 0 0 2px var(--panel); }
+.swatch input:checked + .swatch-chip { border-color: var(--text); }
+.swatch input:focus-visible + .swatch-chip { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+@media (min-width: 768px) {
+    .row-menu[open] > .menu-sheet, .rule-edit[open] > .sheet-body {
+        position: absolute; right: 0; top: calc(100% - 0.25rem); z-index: 30; width: 22rem; max-width: calc(100vw - 2rem);
+        background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); padding: 0.75rem 0.9rem;
+        box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35); margin: 0;
+    }
+    .rule-edit[open] > .sheet-body { width: 28rem; }
+    .row-menu .menu-sheet .menu-form:first-of-type { border-top: 0; padding-top: 0; }
+    .add-sheet[open] > .sheet-body { max-width: 36rem; }
+}
+
+@media (max-width: 767px) {
+    /* G. Phone: rows are cards (the app's phone table pattern), the forms and the ⋯ menu are full-width sheets
+       from the bottom with big touch targets, and nothing scrolls sideways at 390px. */
+    .cat-toolbar { flex-direction: column; align-items: stretch; }
+    .cat-toolbar > .sheet > summary { display: block; text-align: center; }
+    .rules-search { flex: 1 1 auto; }
+    .rule-chips { flex-direction: column; align-items: flex-start; }
+    .rule-chips .chip-group { flex-wrap: wrap; overflow-x: visible; }
+    .cat-table td.cat-name-cell { justify-content: flex-start; }
+    .cat-table td.cat-name-cell::before { display: none; }
+    .cat-table td.cat-menu-cell, .rules-table td.rule-actions { justify-content: flex-end; gap: 0.5rem; flex-wrap: wrap; }
+    .cat-table td.cat-menu-cell::before, .rules-table td.rule-actions::before { display: none; }
+    .rules-table td.wrap-cell { flex-wrap: wrap; }
+    .sheet[open] > .sheet-body, .row-menu[open] > .menu-sheet {
+        position: fixed; left: 0; right: 0; bottom: 0; z-index: 80; max-height: 85vh; overflow-y: auto; margin: 0;
+        background: var(--panel); border: 1px solid var(--border); border-bottom: 0; border-radius: 16px 16px 0 0;
+        padding: 1rem 1rem calc(1rem + env(safe-area-inset-bottom)); box-shadow: 0 -10px 30px rgba(0, 0, 0, 0.4);
+    }
+    .sheet-body button, .menu-sheet button, .sheet-body select, .sheet-body input[type="text"], .menu-sheet select,
+    .menu-sheet input[type="text"] { min-height: 44px; }
+    .menu-sheet button, .sheet-body .form-actions button, .sheet-close { width: 100%; }
+    .menu-form { flex-direction: column; align-items: stretch; }
+    .menu-form label { flex: 0 0 auto; }
+    .swatch-chip { width: 2.5rem; height: 2.5rem; }
+    .sheet-backdrop { position: fixed; inset: 0; z-index: 75; background: rgba(0, 0, 0, 0.45); }
+    body.sheet-is-open { overflow: hidden; }
+    .suggestion-actions { width: 100%; }
+    .suggestion-actions form, .suggestion-actions button { flex: 1 1 auto; }
+    .rule-test-list li { flex-direction: column; }
+    .rule-test-list .rt-desc { flex: 0 0 auto; }
+}

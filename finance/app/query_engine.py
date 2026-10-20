@@ -56,8 +56,13 @@ REGISTRY: dict[str, TableSpec] = {
                             _LIVE + _LIVE_ACCOUNT),
     "csv_imports": TableSpec("Each CSV import: file, rows imported, duplicates, errors, rows skipped by status. "
                              "Transactions link to it by csv_import_id.", _LIVE),
-    "category_rules": TableSpec("Your categorization rules: pattern, match type, category.", _OWN),
-    "custom_categories": TableSpec("Categories you added.", _OWN),
+    "category_rules": TableSpec("Your categorization rules: pattern, match type, category, last_matched_at (when it "
+                                "last categorized a transaction).", _OWN),
+    "custom_categories": TableSpec("Categories you added: name, kind ('spending' or 'income'), colour (NULL = its "
+                                   "default).", _OWN),
+    "category_prefs": TableSpec("Your choices for the built-in categories: name, hidden (1 = left out of the menus), "
+                                "colour.", _OWN),
+    "category_suggestion_dismissals": TableSpec("Rule suggestions you dismissed: merchant, category.", _OWN),
     "recurring_overrides": TableSpec("Merchants you marked as recurring or not recurring.", _OWN),
     "utility_bills": TableSpec("Xcel Energy and Aurora Water bills: type, provider, billing period, due date, cost, usage_amount, usage_unit.", _LIVE),
     "electric_meter_details": TableSpec(
@@ -96,12 +101,32 @@ HIDDEN_TABLES = {"known_users", "app_settings", "ai_usage_log", "schema_version"
                  "statement_reminders", "user_notify",          # the reminders' send log and Admin → Users' notify services
                  "payment_reminders", "subscription_alerts"}    # the card payment and subscription send logs
 
+def _categories_view() -> str:
+    """Every category you have, built-in and your own: the built-ins come from the app's code (categorize.py)."""
+    from .categorize import BUILTIN_KIND, DEFAULT_COLOURS, DISPLAY_CATEGORIES
+
+    def q(v):
+        return "NULL" if v is None else "'" + str(v).replace("'", "''") + "'"
+    values = ", ".join(f"({q(n)}, {q(BUILTIN_KIND.get(n))}, {q(DEFAULT_COLOURS.get(n))})" for n in DISPLAY_CATEGORIES)
+    return ("WITH builtin(name, kind, colour) AS (VALUES " + values + ") "
+            "SELECT b.name AS name, b.kind AS kind, 1 AS built_in, COALESCE(p.hidden, 0) AS hidden, "
+            "COALESCE(p.colour, b.colour) AS colour FROM builtin b LEFT JOIN category_prefs p ON p.name = b.name "
+            "UNION ALL SELECT c.name, c.kind, 0, 0, c.colour FROM custom_categories c "
+            "WHERE lower(c.name) NOT IN (SELECT lower(name) FROM builtin)")
+
+
 # Convenience views, built on the scoped views above.
 EXTRA_VIEWS: dict[str, tuple[str, str]] = {
     "transactions_with_account": (
         "Live transactions, with account_name, account_bank and account_last4. The easiest place to start.",
         "SELECT t.*, a.name AS account_name, a.bank_name AS account_bank, a.account_number_last4 AS account_last4 "
         "FROM transactions t JOIN accounts a ON a.id = t.account_id"),
+    "categories": (
+        "Every category, built-in and your own: name, kind ('spending', 'income', or NULL for Payments and "
+        "Uncategorized), built_in, hidden, colour. kind says which list a category is in; whether a transaction is "
+        "income or spending is still its direction and account (money in on checking/savings is income). Join on "
+        "transactions.category = categories.name to group by kind.",
+        _categories_view()),
 }
 
 _BLOCKED_FUNCTIONS = {"load_extension", "readfile", "writefile", "edit", "fts3_tokenizer"}

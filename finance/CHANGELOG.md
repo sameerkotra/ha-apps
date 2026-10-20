@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.13.0
+
+- **Income categories.** Every category is now **Spending** or **Income**. New built-in income categories: **Salary**, **Interest**, **Dividends**, **Refunds**, **Reimbursements**, **Gifts received** and **Other income** — the old "Income" category is now **Other income**, with its transactions and rules, so no total changes. Your own categories start as Spending; a new one can be either. Whether a transaction counts as income is still its direction (money in on checking or savings), whatever its category.
+- **Grouped category menus** everywhere (a transaction's category, Select multiple, Review, Add by hand, the rule form, the Transactions filter): Spending and Income, with Income first for money in on a checking or savings account.
+- **Automatic categorizing knows income:** built-in rules for PAYROLL / DIRECT DEP / SALARY (Salary), INTEREST PAID / EARNED (Interest), DIVIDEND and REFUND; the AI is offered only the categories for the transaction's direction. Money back on a card is still a card payment unless a rule says **Refunds** — then it counts as spending going down.
+- **Home: Income by category**, the same shape as By category for spending, each row opening its transactions. Compare already split income by category; both now show each category's colour. Transactions has an **All income** quick filter.
+- **A new Setup → Categories page** with **Spending**, **Income** and **Rules** tabs: each category with this month's total, its transactions in the last 12 months and its rules; sort by name, this month or use; **Add a category**; a ⋯ menu to **rename**, **merge into…** (built-ins too), **move** to the other list, **hide from menus** (and **Show hidden**), choose its **colour** or **delete** it (choosing where its transactions go). **Rules** is one searchable table of your rules and the built-in ones, with filter chips, edit in place, **Test** before saving ("will change 14"), how many transactions each matches, when it last matched and **Use my own instead**. It suggests a rule when you set the same merchant to the same category by hand 3 times, shows how many are still Uncategorized, and the Income tab has **Sort my income** (rules, then the AI, listed for you to confirm). Works without JavaScript; on a phone rows are cards and forms open as sheets.
+- **Household Assistant:** "How did we do this month?" also names the top income categories, and a new answer for income by category ("What are our sources of income?", "How much interest earned this month?").
+- **Reports / Query:** a `categories` view with each category's kind.
+- One person's data carries the kinds, colours, hidden built-ins and dismissed suggestions (export version 32; older files still import, their "Income" as "Other income").
+
 ## 1.12.0
 
 - **Removed: balance over time and net worth.** Each account's page no longer has **Balance over time** (its chart and table), Home no longer has the **Net worth** card, and the Household Assistant no longer answers balance history or net worth: "Give me a finance summary" now gives what's due, this month so far and subscription changes, and "What's our net worth?" or "How has my Visa balance changed?" get each account's latest statement balance, as "What's the balance on my accounts?" does.

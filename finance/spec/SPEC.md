@@ -411,14 +411,132 @@ No App setting: a household that never uses QFX sees no difference.
 
 ## 9. Categorization
 
-Order: your own rules → built-in merchant rules → one batched LLM call for the
-rest → "Uncategorized" (never a silent guess). Rules match by specificity
-(exact > prefix > substring, then longer pattern, then newest). Every row
-records how its category was decided (`category_source` and the matched
-pattern); the categorization debug view shows it for PDF and CSV imports alike.
-Saving a rule can re-categorize all existing transactions; custom categories can
-be added and removed. An unreachable or failing LLM only leaves rows
-Uncategorized — it never fails an import.
+**Kinds.** Every category is **spending** or **income** (`categorize.py`). Built-in spending: Groceries, Dining,
+Transportation, Shopping, Subscriptions, Utilities, Gas, Health, Entertainment, Travel, Housing, Other. Built-in
+income (`INCOME_CATEGORIES`): Salary, Interest, Dividends, Refunds, Reimbursements, Gifts received, Other income
+(the old built-in "Income", renamed by migration 0032 with every row and rule that used it). Payments (a card
+payment) and Uncategorized ("not decided") are neither. The built-ins' kinds live in code (`BUILTIN_KIND`); a
+person's own category has `custom_categories.kind` (default spending). One category per transaction, no tags. The
+kind only decides which **list** a category is offered from and how income is broken down: whether a row is income
+or spending is still its direction and account (section 8), so a spending category on a deposit is income and the
+other way round is allowed.
+
+**Names.** `list_all_categories(conn, user)` (names only: built-ins and the person's own, deduplicated in any case,
+sorted, Uncategorized last, hidden built-ins left out) for the Query tab's choices and Write SQL;
+`categories_by_kind(conn, user)` → `{"spending": [...], "income": [...]}` and `menu_groups` for the grouped menus;
+`all_categories` with each one's kind, built-in flag, hidden flag and colour. A name is checked once across both
+kinds, case-insensitively (`check_category_name`: "Salary" can't be added again as spending); at most 60
+characters.
+
+**Menus** (`templates/_category_options.html`): every category `<select>` — a transaction's category (Transactions,
+Review), Select multiple's bulk categorize, Add by hand on Upload, the rule forms, the Transactions filter — lists
+two `<optgroup>`s, Spending and Income, then Payments and Uncategorized. **Income first** for money in on a
+checking or savings account (`income_first`), Spending first for everything else (money out, every card row — a
+card's money back is spending going down). Bulk categorize lists Income first only when every row on the page is
+money in on checking/savings (a mixed selection: Spending first); Add by hand doesn't know the direction yet:
+Spending first. A row whose category isn't in the menus (hidden, or any other name) still shows it, selected.
+
+**The cascade**, per row with its direction (`flow_of(account type, amount)`: `in` money in on checking/savings,
+`out` money out there, `card` a card purchase, `card_in` money back on a card):
+1. the person's own rules (`category_rules`), by specificity (exact > prefix > substring, then longer pattern, then
+   newest); they work for income exactly as for spending;
+2. the built-in rules for the row's direction (`_BUILTIN_RULES`: the spending ones on `out`/`card`, the income ones
+   on `in` — PAYROLL, DIRECT DEP, DIR DEP, SALARY → Salary; INTEREST PAID, INTEREST EARNED, INT PAID → Interest;
+   DIVIDEND → Dividends; REFUND → Refunds). Money in containing ZELLE FROM / VENMO FROM skips them (a gift, a
+   reimbursement or rent: the AI's to judge);
+3. the AI for what no rule matched — one batched call per list, offered **only the list for the direction**: the
+   person's income categories for `in`, their spending categories for `out`, spending plus Refunds for `card`
+   (hidden built-ins left out). An unreachable or failing AI only leaves rows Uncategorized — it never fails an
+   import;
+4. "Uncategorized" — never a silent guess.
+Money back on a card (`card_in`) never goes to the AI: a rule (theirs or built-in) giving **Refunds**, else
+**Payments** (`category_source = 'card_payment'`, as always). Every row records how its category was decided
+(`category_source`, the matched pattern); the categorization debug view shows it, with every prompt sent. A rule of
+the person's that categorizes a row gets `category_rules.last_matched_at`.
+
+**Stored rows are never re-categorized on their own**: saving a rule can "also re-categorize existing
+transactions" (`rule_changes` says which — the Rules tab's Test shows the same number — and
+`recategorize_for_rule` writes them), and **Sort my income** (section 9a) offers it for income, asking first.
+
+**Counting** (`categorize.SPEND_SQL`, `SPEND_AMOUNT_SQL`, `INCOME_SQL`, shared by Home, Compare, Transactions' Money
+out and the Household Assistant): income is money in on checking/savings; spend is money out there and card
+purchases, and a card's money back categorized **Refunds** counts as a negative spend; any other money in on a
+card is a card payment, neither.
+
+**Colours** (F): a fixed palette (`PALETTE`; spending and income have separate ranges, `SPENDING_PALETTE` /
+`INCOME_PALETTE`), each colour at least 3:1 against every theme's `--card` and `--panel` (a test reads
+`static/common/themes.css`); Payments and Uncategorized are grey (`NEUTRAL_COLOUR`). Built-ins start with
+`DEFAULT_COLOURS`; a person's own category without one gets a steady pick from its kind's range. Home's and
+Compare's category dots and Home's share bars use them (`colours(conn, user)`).
+
+## 9a. The Categories page (`categories`, `app/category_admin.py`, `static/pages/categories.js`)
+
+Setup → Categories, the acting person's categories and rules (an admin acting as someone edits theirs; a person
+with shared access works on the owner's, as on every page). `categories?tab=spending|income|rules` (default
+spending); the other tabs' panels are in the page, `hidden`. One line of help with **How this works**
+(`#how-categories`).
+
+- **A. Tabs**: Spending · Income · Rules (`#cat-tabs`, each `a.cat-tab[data-tab]` a plain link). Without the script
+  every action is a plain form posting with its `tab`, redirected (303) back to `categories?tab=…` with a notice code
+  (`notices.MESSAGES`, `cat_*`, `rule_*`, `suggestion_*`, `income_sorted`) or a count (`recategorized=N`,
+  `sorted=N`). The script (no inline script: CSP) switches tabs without a reload (`history.replaceState`), sends the
+  forms with `fetch` and swaps `#cat-root` from the page the redirect answers with (a refused one shows its
+  `{"error"}`), tests rules as they're typed and opens forms as sheets on a phone. Every request carries `as_user`
+  (its `api()`, and a hidden `as_user` in the GET forms).
+- **B. The lists** (`#panel-spending`, `#panel-income`; `table.cat-table`, `tr.cat-row[data-category]`): each
+  category of that kind, built-in and the person's own, with a colour dot, **this month's total** (spending: what
+  the Overview counts as spend in it this calendar month; income: what it counts as income), **transactions in the
+  last 12 months** (any direction) and **rules pointing to it** (theirs and the built-ins), and a ⋯ menu. A
+  built-in says **Built in**. Sorts (`sort=name|total|use`) as links. Tapping a row (or its name) opens
+  `transactions?category=…`. **Add a category** (`#add-spending`, `#add-income`: a `<details>` sheet) posts
+  `custom-categories` with the tab's kind checked and a way to switch.
+- **C. The ⋯ menu** (`details.row-menu`): **Colour** (`category-colour`: `name`, `colour` a key of the kind's range,
+  empty = default; a built-in's in `category_prefs`, the person's own in `custom_categories.colour`); **Rename** (the
+  person's own, `category-rename`: `id`, `name`); **Merge into…** (`category-merge`: `name`, `into`, a category of
+  the same kind; the person's own is then deleted, a built-in hidden); **Move to Income / Spending** (the person's own,
+  `category-kind`: `id`, `kind`; its rows keep the name); **Hide from menus** (built-ins only, `category-hide` /
+  `category-show`: hidden ones stay valid on old rows and their rules still work, the menus and the AI just stop
+  offering them; **Show hidden (n)** lists them); **Delete** (the person's own, `custom-category-delete`: `id`,
+  `move_to` — Uncategorized by default; its rules go with its rows, or are deleted when the rows go to
+  Uncategorized). Rename, merge and delete update every column that stores a category name —
+  `transactions.category`, `category_rules.category`, `skipped_duplicates.category`,
+  `category_suggestion_dismissals.category` — in one transaction (`recurring_overrides` stores a merchant, never a
+  category; the recurring list's category comes from the rows, so it follows).
+- **D. Rules** (`#panel-rules`, `table.rules-table`, `tr.rule-row[data-pattern]`): every rule, the person's first
+  (`id="rule-N"`), then the built-ins (**Built in**; "(yours is used)" when one of theirs has the same text and
+  type), each by category in the cascade's order: match text, match type (exact / starts with / contains), category,
+  kind, **how many live transactions it matches** and **when it last matched** (theirs: `last_matched_at`; a
+  built-in: the newest row it categorized). Search (`q`: text or category) and chips (`who=mine|builtin`,
+  `kind=spending|income`, `rule_category=…`) are links / GET forms. **Add a rule** (`#add-rule`, `category-rules`,
+  as before) and **Edit** (`details.rule-edit`, `category-rule-edit`: `id`, `pattern`, `match_type`, `category`,
+  `recategorize`; only that rule changes; another of theirs with the same text and type is refused). **Test**
+  (`category-rule-test`, GET: `pattern`, `match_type`, `category`, `rule_id?`) never writes: the first 10
+  transactions the rule matches (newest first, each with its category now and the one the rules would give it),
+  how many it matches and how many saving with **Also re-categorize existing transactions** would change ("will
+  change N", worked out by `rule_changes` with the unsaved rule in place — the same rows saving changes). JSON for
+  the script, else the Rules tab with the results under the form. **Use my own instead** (`category-rule-copy`:
+  `pattern`, `match_type` of a built-in) copies it into the person's rules and opens it (`edit=N`); theirs wins.
+- **E. Suggestions**: worked out each time from `category_source = 'manual'` rows, never stored: a merchant (the
+  description's first two words that aren't reference numbers, `merchant_of`) set by hand to the same category
+  **3 times** or more, that their rules don't already give and that they haven't dismissed — "You set AMAZON MKTPL to
+  Shopping 3 times — make it a rule?" (a "starts with" rule on the descriptions' common beginning).
+  **Make rule** (`category-suggestion-make`: `merchant`, `category`) / **Dismiss** (`category-suggestion-dismiss`:
+  stored per person in `category_suggestion_dismissals`, by merchant and category, for good). The count still
+  **Uncategorized** at the top: on Spending, the rows the Overview counts as spending, linking to
+  `transactions?category=Uncategorized&flow=expense`; on Income, those it counts as income, a button to Sort my income.
+- **Sort my income** (Income tab, `category-sort-income`, POST): writes nothing — runs the person's rules, the income
+  built-ins, then the AI (the income list) over money in on checking/savings (not transfers) that is still Other
+  income, Income or Uncategorized, and lists what would change (`#sort-income-plan`, each ticked). The AI is asked
+  with no write transaction open. `category-sort-income-apply` changes only the ticked rows (`pick`), each to the
+  category listed with it (`to_N`, with its source and rule), and only rows that are still the person's sortable
+  income.
+- **F. Colours**: section 9.
+- **G. Phone** (≤ 767 px): the tabs stay at the top; category and rule rows are cards (the app's phone table
+  pattern); Add, Edit and the ⋯ menu open as full-width sheets from the bottom (`position: fixed`) with 44 px touch
+  targets, a dimmed backdrop, Close and Esc; nothing scrolls sideways at 390 px (the chips wrap). At 1280 px the ⋯
+  menu and Edit open as small panels under their buttons; no sideways scroll either.
+- Today's routes keep working: `custom-categories` (now with `kind`, default spending), `custom-category-delete`
+  (now with `move_to`), `category-rules`, `category-rule-delete`.
 
 ## 10. Manual entry, CSV import, CSV export
 
@@ -556,7 +674,12 @@ Uncategorized — it never fails an import.
   around it), so a failure leaves the database as it was; a migration that
   leaves foreign-key violations is rolled back and not recorded. Before the
   first pending migration a copy is kept as `finance.db.pre-NNNN` (latest only).
-  The newest, **0031**, adds a credit card's payment due day (`accounts.payment_due_day`,
+  The newest, **0032**, gives categories a kind and the Categories page its data (section 9):
+  `custom_categories.kind` (TEXT NOT NULL DEFAULT 'spending', CHECK spending/income) and `colour`,
+  `category_rules.last_matched_at`, `category_prefs` (per person: a built-in's `hidden` and `colour`) and
+  `category_suggestion_dismissals` (user, merchant, category); it renames the category "Income" to "Other income" in
+  `transactions`, `category_rules` and `skipped_duplicates`, and drops a person's own category named like a new
+  built-in. **0031** added a credit card's payment due day (`accounts.payment_due_day`,
   `payment_due_set_at`) and the tables of the card payment and subscription change notifications
   (`notify_prefs`, `payment_dismissals`, `payment_reminders`, `subscription_dismissals`,
   `subscription_alerts`; sections 29–31). **0030** added `accounts.csv_layout` (TEXT, JSON; NULL = none
@@ -574,8 +697,9 @@ Uncategorized — it never fails an import.
   Enter) runs the query with whatever the form holds and always sends
   `searched=1`, so "All accounts" with nothing else set shows everything; links
   arriving with a filter (dashboard drill-downs) run at once. Filters: note text,
-  description contains, account, category, money in / money out (account-type
-  aware, matching the dashboard), excluded (show all / excluded only / hide
+  description contains, account, category (grouped Spending / Income, section 9), money in / money out (account-type
+  aware, matching the dashboard; the quick filter **All income**, `#quick-all-income`, is `flow=income`: money in on
+  checking and savings), excluded (show all / excluded only / hide
   excluded; with money in or out, "excluded only" shows the excluded rows of
   that direction), date range, amount range. CSV export follows the same
   filters. A running total of
@@ -595,7 +719,7 @@ Uncategorized — it never fails an import.
   | Upload | Statements · Review · Utility bill · toll statement | `uploads`, `review` (Back returns to Statements), `utilities?tab=upload`, `tolls?tab=upload` (each with its history) |
   | Bills | Utilities (Dashboard · Compare) · Tolls (Dashboard · Compare · Analyze) | `utilities`, `utility-comparison`, `tolls`, `toll-compare`, `toll-analyze` |
   | Reports | — | `reports`, `report` |
-  | Setup | Accounts · Categories · Settings | `accounts`, `account`, `categories`, `my-settings` (the person's own settings: My reminders, section 27; Card payments and Subscription changes, section 31) |
+  | Setup | Accounts · Categories · Settings | `accounts`, `account`, `categories` (tabs Spending · Income · Rules, section 9a), `my-settings` (the person's own settings: My reminders, section 27; Card payments and Subscription changes, section 31) |
   | Admin | Storage · Query · Users · Recently deleted · AI usage · App settings | `admin-storage`, `recently-deleted`, `ai-usage`, `settings` |
 
   A page's section comes from its `active_page` (utilities/tolls pages count as
@@ -803,10 +927,14 @@ checking-account payment).
 
 - Periods: this week, this month (default), last month, this year, last year, all
   time, a specific month or year; optional account filter.
-- Income (checking/savings inflows) and Spend (account-type aware; transfers and
-  excluded rows out), each by category, with drill-down into Transactions.
+- Income (checking/savings inflows, whatever their category) and Spend (account-type aware, a card's Refunds a
+  negative spend; transfers and excluded rows out; section 9's counting), with drill-down into Transactions.
+- **By category** splits Spend; **Income by category** (`#income-by-category`) splits the Income total the same
+  way — each category (Uncategorized included) with its amount and share, largest first, adding up to the total,
+  each row opening `transactions?category=…&flow=income` with the period. Each table has a share bar and colour dots
+  in the categories' colours (section 9).
 - **Compare** (`dashboard-compare`): two months or two years side by side, income
-  and spend by category, with change and percent change.
+  and spend by category (each with its colour dot), with change and percent change.
 - Above the filters: the overdue-statements notice (section 27) and the card payments due notice (section 30).
   Below Income and Spend, before By category: **Subscription changes** (section 29).
 
@@ -915,6 +1043,10 @@ re-run of the AI.
 - **Registry.** `REGISTRY` lists each queryable table with its short description and the rule that scopes it to one user (`reminder_prefs` by its user, `statement_dismissals` by its account's owner). Hidden, never copied: `known_users`, `schema_version`, `sqlite_sequence`, `saved_reports`, `statement_reminders` (a send log) and `user_notify`. A test fails if a table is in neither list, so a table added later stays hidden until registered.
 - **Deleted rows never appear.** A row is left out when it or its parent is soft-deleted: statements and transactions of a deleted account; transactions of a deleted statement or CSV import; meter details of a deleted utility bill; toll transactions of a deleted toll statement. `user_id` and `deleted_at` are not copied.
 - `transactions_with_account` is a convenience view: live transactions with `account_name`, `account_bank`, `account_last4`.
+- `categories` is a view of every category the person has (section 9): `name`, `kind` (`'spending'`, `'income'`, or
+  NULL for Payments and Uncategorized), `built_in`, `hidden`, `colour` — the built-ins from the app's code, their own
+  from `custom_categories`. Join `transactions.category = categories.name` to group by kind; whether a row is income
+  is still its direction. `category_prefs` and `category_suggestion_dismissals` are registered (the person's own).
 - **Limits:** 10 s per run unless "No time limit" is on (19.6); SQL up to 20 KB; at most 100,000 rows (cut with a note); a result over 64 MB is refused; single values capped at 10 MB (Python 3.11+). Runs happen in a worker thread, never on the event loop, and never in the Ollama job lock.
 - Variables reach SQLite as bound named parameters, never pasted into the SQL.
 
@@ -1003,17 +1135,22 @@ file format, its checks and the id remapping are the shared `app/common/person_d
   options, checksums), `data/<table>.json` (rows by column name, as stored, without `user_id`; ids kept so
   references can be remapped), `files/…` (the PDFs still kept, at their path inside the person's folder:
   `x.pdf`, `utility-bills/…`, `toll-statements/…`), `README.txt`.
-- **`schema`** is the newest migration number (`migrations/NNNN_*.sql`; 31 today). Newer is refused; older is
+- **`schema`** is the newest migration number (`migrations/NNNN_*.sql`; 32 today). Newer is refused; older is
   brought up to date by `people_data.UPGRADES` (one step per migration that changes a table below): from 27,
   every statement gets `source = 'pdf'` (`fitid`, `period_start`/`period_end` and `import_details` start empty);
   from 28, every account gets `reminders_on = 1` (its expected statement starts Off; section 27); from 29,
   nothing to fill in (an account's `csv_layout` and `skip_confirmation`, migration 0030, start as nothing saved);
   from 30, nothing to fill in either (a card's `payment_due_day`, migration 0031, starts Off; the new tables start
-  empty). Those columns travel with `accounts`; a `payment_due_day` must be on a credit card and 0–31; an imported `csv_layout` must be a layout `upload_page.clean_layout` accepts
+  empty); from 31, every custom category gets `kind = 'spending'`, one named like a new built-in income category is
+  left out, and "Income" becomes "Other income" in transactions, rules and skipped rows (migration 0032; the new
+  tables start empty). A custom category's `kind` must be spending or income and a `colour` a palette key; a
+  `category_prefs` row must name a built-in; a dismissed suggestion needs a merchant and category; a custom category
+  named like a built-in counts as already there. Those columns travel with `accounts`; a `payment_due_day` must be on a credit card and 0–31; an imported `csv_layout` must be a layout `upload_page.clean_layout` accepts
   (stored in its cleaned form) and `skip_confirmation` 0, 1 or empty, else the file is refused.
   Columns are read from the database itself (`PRAGMA table_info`), so a new column needs no change here.
 - **Tables, in load order:** `accounts`, `csv_imports`, `statements`, `transactions`, `skipped_duplicates`,
-  `category_rules`, `custom_categories`, `recurring_overrides`, `utility_bills`, `electric_meter_details` (by its
+  `category_rules`, `custom_categories`, `category_prefs` (one per built-in), `category_suggestion_dismissals`,
+  `recurring_overrides`, `utility_bills`, `electric_meter_details` (by its
   bill), `toll_cars`, `toll_devices`, `toll_statements`, `toll_transactions`, `toll_pattern_groups`,
   `toll_patterns`, `toll_trip_overrides`, `reminder_prefs` (My reminders; one per person: on Add, theirs is kept
   when they already have one), `statement_dismissals` (by its account), `notify_prefs` (Card payments and
@@ -1058,7 +1195,8 @@ file format, its checks and the id remapping are the shared `app/common/person_d
   `skipped_duplicates`, `transactions`, `statements`, `csv_imports`, `accounts`, `utility_bills`,
   `toll_trip_overrides`, `toll_trips`, `toll_transactions` (before `toll_devices`: that key has no `ON DELETE`),
   `toll_statements`, `toll_devices`, `toll_cars`, `toll_patterns`, `toll_pattern_groups`, `category_rules`,
-  `custom_categories`, `recurring_overrides`, both sides of `user_access`, and with **forget them** the
+  `custom_categories`, `category_prefs`, `category_suggestion_dismissals`, `recurring_overrides`, both sides of
+  `user_access`, and with **forget them** the
   `known_users` row. After the commit their `PENDING_DIR/<id>/` folder goes. `app_settings.updated_by` and
   `user_access.granted_by` naming them stay (admin history); no Home Assistant sensors to remove. The dialog says
   what it can't reach: earlier backups and `finance.db.pre-NNNN`.
@@ -1165,7 +1303,16 @@ file format, its checks and the id remapping are the shared `app/common/person_d
     include "net worth" (the nearest answer since 1.12.0; without it the Assistant's own INCOME word "net" would send
     "What's our net worth?" to `finance.summary`).
   - `finance.summary` (`month?`): income, spending, net and the top 5 categories, with the Overview's rules (clean
-    rows; no transfers or excluded rows; income only on checking/savings; a card purchase is spend).
+    rows; no transfers or excluded rows; income only on checking/savings; a card purchase is spend; a card's Refunds
+    a negative spend), then the top 3 income categories: "… Income 5,200.00: Salary 4,800.00, Refunds 387.60,
+    Interest 12.40." (items `{category, income}`).
+  - `finance.income` (`month?`, `category?`, `person?`): without `category`, the month's income by category (Home's
+    Income breakdown), largest first, items `{category, income, share}`; with `category` (one of the person's income
+    categories, any case, or the only one containing it; else the text lists them), that category this year so far
+    month by month (or in `month`), with the 5 largest payments `{date, merchant, amount, account}` — never `note`.
+    Quick words, plain only (no INCOME concept: that is the month's `finance.summary`): "income breakdown", "income by
+    category", "sources of income", "interest earned", "dividends received", "refunds received" — chosen so no phrase
+    of the Assistant's corpus changes its answer ("How much did I earn in September?" stays `finance.summary`).
   - `finance.spending` (`month?`, `category?`): spend by category, or a category's 10 largest charges as
     `{date, merchant (the bank's description), amount, account}` — **never `note`**.
   - `finance.recurring` (`merchant?`, `account?`): `recurring.scan_recurring`'s recurring series on live, unarchived
@@ -1268,7 +1415,7 @@ finance/                    the app (slug "finance")
                 upload, admin_storage, ai_usage_page, settings_page, utilities, tolls, ...)
     templates/  static/  (style.css, ui.js, base.js, nav-boot.js, query.js, htmx.min.js, pages/*.js;
                 static/common/: theme-boot.js, themes.css, ui.js — shared copies)
-  migrations/   0001-0031, applied at startup (and after a database import)
+  migrations/   0001-0032, applied at startup (and after a database import)
   tests/        pytest suite (python3 -m pytest); tests/common_tests/: shared helpers and tests (copies)
 ```
 `app/common/`, `app/static/common/` and `tests/common_tests/` are written by

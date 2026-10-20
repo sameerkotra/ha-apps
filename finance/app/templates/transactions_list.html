@@ -1,5 +1,6 @@
 {% extends "base.html" %}
 {% import "_nav_macros.html" as nav %}
+{% import "_category_options.html" as catopt %}
 {% block title %}Transactions{% endblock %}
 {% block main_class %}main-wide{% endblock %}
 {% block content %}
@@ -14,6 +15,12 @@
     &mdash; <a href="transactions{% if acting_qs %}?{{ acting_qs }}{% endif %}">clear filter</a>
 </p>
 {% endif %}
+
+{# Quick filters: plain links to a filtered view. #}
+<p class="quick-filters">
+    <a class="chip" href="transactions?flow=income{% if acting_qs %}&{{ acting_qs }}{% endif %}" {% if filter_flow == "income" and not filter_category %}aria-pressed="true"{% endif %} id="quick-all-income">All income</a>
+    <span class="hint">money in on checking and savings</span>
+</p>
 
 {# No type="submit" control on purpose: a form's only submit button is activated
    by Enter in ANY field (it once silently triggered Export), and a click and an
@@ -42,13 +49,7 @@
     <label>
         Category
         <select name="category">
-            <option value="">All categories</option>
-            {% for c in categories %}
-            <option value="{{ c }}" {{ "selected" if filter_category == c else "" }}>{{ c }}</option>
-            {% endfor %}
-            {% if filter_category and filter_category not in categories %}
-            <option value="{{ filter_category }}" selected>{{ filter_category }}</option>
-            {% endif %}
+            {{ catopt.options(category_groups, filter_category, income_first=(filter_flow == "income"), blank="All categories") }}
         </select>
     </label>
     <label>

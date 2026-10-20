@@ -5,7 +5,7 @@ from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 
 from ..auth import User, get_current_user, get_acting_user
-from ..categorize import categorize_transactions, list_all_categories
+from ..categorize import categorize_transactions, flow_of, list_all_categories, menu_groups
 from ..db import get_db
 from ..amounts import parse_number
 from ..datenorm import normalize_date
@@ -40,7 +40,7 @@ def review_queue(
             txn_params.append(statement_id)
         transactions = conn.execute(
             f"""
-            SELECT t.*, a.name AS account_name
+            SELECT t.*, a.name AS account_name, a.type AS account_type
             FROM transactions t
             JOIN accounts a ON a.id = t.account_id
             WHERE t.user_id = ? AND t.deleted_at IS NULL AND t.review_status = 'pending_review' {txn_filter}
@@ -76,6 +76,7 @@ def review_queue(
             stmt_params,
         ).fetchall()
         all_categories = list_all_categories(conn, acting.id)
+        groups = menu_groups(conn, acting.id)
         skipped = _skipped_duplicates(conn, acting.id, statement_id)
 
     return templates.TemplateResponse(
@@ -84,7 +85,9 @@ def review_queue(
             "skipped": skipped,
             "user": acting, "transactions": transactions,
             "mismatched_statements": mismatched_statements,
-            "categories": all_categories,
+            "categories": all_categories, "category_groups": groups,
+            "bulk_income_first": bool(transactions) and all(flow_of(t["account_type"], t["amount"]) == "in"
+                                                            for t in transactions),
             "acting_as_banner": _acting_banner(current, acting),
             "acting_qs": _acting_qs(current, acting),
             "active_page": "review",
@@ -302,11 +305,9 @@ def _insert_skipped(conn, user_id: str, skipped_id: int) -> bool:
     )
     txn_id = cur.lastrowid
     if not row["category"]:
-        if row["account_type"] == "credit_card" and row["amount"] < 0:
-            conn.execute("UPDATE transactions SET category = 'Payments', category_source = 'card_payment' "
-                         "WHERE id = ?", (txn_id,))
-        else:   # rules only: no model call while the page waits
-            categorize_transactions(conn, user_id, "", "", [(txn_id, row["description"])])
+        # rules only: no model call while the page waits (money back on a card: Refunds by a rule, else Payments)
+        categorize_transactions(conn, user_id, "", "",
+                                [(txn_id, row["description"], flow_of(row["account_type"], row["amount"]))])
     conn.execute(
         "UPDATE skipped_duplicates SET status = 'inserted', inserted_transaction_id = ?, "
         "resolved_at = datetime('now') WHERE id = ?", (txn_id, skipped_id))

@@ -12,12 +12,47 @@
     "what": "a shared owner (default the asker)"
    }
   },
-  "returns": "income, spending, net, the top 5 categories",
+  "returns": "income, spending, net, the top 5 categories, the top income categories",
   "acts": false,
   "scope": "person",
   "examples": [
    "How did we do this month?"
   ]
+ },
+ {
+  "name": "finance.income",
+  "what": "Income by category in a month (salary, interest, refunds…); with `category`, that one this year or in the month.",
+  "args": {
+   "month": {
+    "type": "month",
+    "what": "the month (default this month)"
+   },
+   "category": {
+    "type": "string",
+    "what": "an income category, e.g. Interest"
+   },
+   "person": {
+    "type": "string",
+    "what": "a shared owner (default the asker)"
+   }
+  },
+  "returns": "income per category, or one category's months and largest payments",
+  "acts": false,
+  "scope": "person",
+  "examples": [
+   "How much did I earn in September?",
+   "How much interest did we get this year?"
+  ],
+  "quick": {
+   "words": [
+    "income breakdown",
+    "income by category",
+    "sources of income",
+    "interest earned",
+    "dividends received",
+    "refunds received"
+   ]
+  }
  },
  {
   "name": "finance.spending",

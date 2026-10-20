@@ -20,7 +20,7 @@ import sqlite3
 
 from . import ai_usage, ofx, settings
 from .amounts import to_cents
-from .categorize import apply_categories, plan_categories
+from .categorize import apply_categories, flow_of, plan_categories
 from .matching import relink
 
 logger = logging.getLogger(__name__)
@@ -346,8 +346,7 @@ def _save_block(conn, user_id, filename, f, b: ofx.Block, file_hash, account: di
         inserted_ids.add(tid)
         if account["type"] == "credit_card" and amount < 0:
             out["card_payments"].append(tid)       # a card payment isn't a purchase: "Payments", as for a PDF
-        else:
-            out["to_categorize"].append((tid, t.description, sid))
+        out["to_categorize"].append((tid, t.description, sid, flow_of(account["type"], amount)))
     if skipped:
         conn.executemany(
             "INSERT INTO skipped_duplicates (user_id, account_id, statement_id, date, amount, description, reason, "
@@ -370,7 +369,9 @@ def _categorize(conn, user_id: str, saved: dict) -> None:
     plan = None
     with ai_usage.recording() as calls:
         try:
-            plan = plan_categories(conn, user_id, settings.ai_url(), settings.ai_model(), [(t, d) for t, d, _ in rows])
+            # (money back on a card stays "Payments" unless a rule says Refunds)
+            plan = plan_categories(conn, user_id, settings.ai_url(), settings.ai_model(),
+                                   [(t, d, flow) for t, d, _, flow in rows])
         except Exception:      # the rows are saved already: they just stay Uncategorized
             logger.exception("Categorizing a QFX file's rows failed")
     conn.commit()
@@ -381,11 +382,11 @@ def _categorize(conn, user_id: str, saved: dict) -> None:
             conn.executemany(
                 "UPDATE statements SET categorization_llm_prompt = ?, categorization_llm_raw_response = ?, "
                 "categorization_llm_error = ? WHERE id = ?",
-                [(prompt, raw_response, error, sid) for sid in sorted({s for _, _, s in rows})])
+                [(prompt, raw_response, error, sid) for sid in sorted({s for _, _, s, _f in rows})])
     else:
         conn.executemany("UPDATE transactions SET category = 'Uncategorized', category_source = "
-                         "'uncategorized_fallback' WHERE id = ? AND category IS NULL", [(t,) for t, _, _ in rows])
+                         "'uncategorized_fallback' WHERE id = ? AND category IS NULL", [(t,) for t, _, _, _f in rows])
     if calls:
-        first = min(s for _, _, s in rows)
+        first = min(s for _, _, s, _f in rows)
         conn.execute("UPDATE statements SET ai_usage = ? WHERE id = ?", (ai_usage.to_json(calls), first))
     conn.commit()

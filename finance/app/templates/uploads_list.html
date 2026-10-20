@@ -1,5 +1,6 @@
 {% extends "base.html" %}
 {% import "_nav_macros.html" as nav %}
+{% import "_category_options.html" as catopt %}
 {% block title %}Uploads{% endblock %}
 {% block main_class %}uploads-main{% endblock %}
 {% block content %}
@@ -221,7 +222,7 @@
             <label>
                 Category
                 <select name="category">
-                    {% for c in categories %}<option value="{{ c }}" {{ "selected" if c == "Uncategorized" else "" }}>{{ c }}</option>{% endfor %}
+                    {{ catopt.options(category_groups, "Uncategorized") }}
                 </select>
             </label>
             <button type="submit">Add transaction</button>

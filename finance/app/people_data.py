@@ -79,6 +79,28 @@ def _to_31(tables: dict) -> None:
 UPGRADES[30] = _to_31
 
 
+def _to_32(tables: dict) -> None:
+    """Migration 0032: categories gained a kind — every custom category from before is Spending — and the old
+    built-in "Income" is "Other income" wherever a category name is stored. A custom category named like a new
+    built-in (Salary, Refunds, …) is that built-in now, so it's left out. The new category_prefs and
+    category_suggestion_dismissals tables start empty."""
+    from .categorize import builtin_name
+    kept = []
+    for row in tables.get("custom_categories", []):
+        if builtin_name(row.get("name") or "") is None:
+            row.setdefault("kind", "spending")
+            kept.append(row)
+    if "custom_categories" in tables:
+        tables["custom_categories"] = kept
+    for table in ("transactions", "category_rules", "skipped_duplicates"):
+        for row in tables.get(table, []):
+            if row.get("category") == "Income":
+                row["category"] = "Other income"
+
+
+UPGRADES[31] = _to_32
+
+
 class Refused(ValueError):
     """A file (or a row in it) that can't be imported; the message is for the admin."""
 
@@ -108,6 +130,9 @@ TABLES = [
                 "matched_transaction_id": "transactions", "inserted_transaction_id": "transactions"}),
     Table("category_rules", "category rules", dedupe_in_file=True),
     Table("custom_categories", "custom categories", dedupe_in_file=True),
+    # The Categories page (SPEC.md section 9): hidden built-ins and their colours, dismissed rule suggestions.
+    Table("category_prefs", "category choices", dedupe_in_file=True),
+    Table("category_suggestion_dismissals", "dismissed rule suggestions", dedupe_in_file=True),
     Table("recurring_overrides", "recurring choices", dedupe_in_file=True),
     Table("utility_bills", "utility bills", pdf=True, text=("llm_raw_response", "deterministic_value", "llm_value")),
     Table("electric_meter_details", "electric meter readings", parent=("utility_bill_id", "utility_bills")),
@@ -157,6 +182,8 @@ LIMITS = {                    # the same bounds the forms and the API use
     ("transactions", "description"): 500, ("transactions", "category"): 60, ("transactions", "note"): 1000,
     ("skipped_duplicates", "description"): 500, ("skipped_duplicates", "category"): 60,
     ("category_rules", "pattern"): 200, ("category_rules", "category"): 60, ("custom_categories", "name"): 60,
+    ("custom_categories", "colour"): 20, ("category_prefs", "name"): 60, ("category_prefs", "colour"): 20,
+    ("category_suggestion_dismissals", "merchant"): 200, ("category_suggestion_dismissals", "category"): 60,
     ("recurring_overrides", "merchant_pattern"): 500,
     ("subscription_dismissals", "series"): 200, ("subscription_dismissals", "change_key"): 600, ("toll_cars", "name"): 60, ("toll_pattern_groups", "name"): 60,
     ("toll_patterns", "signature"): 2000, ("toll_patterns", "name"): 200,
@@ -276,6 +303,19 @@ def clean_row(table: str, row: dict, cols: dict, where: str) -> dict:
         key = "pattern" if table == "category_rules" else "name"
         if not (out.get(key) or "").strip():
             raise Refused(f"{where}: {key} is blank.")
+    if table in ("custom_categories", "category_prefs"):
+        from .categorize import KINDS, PALETTE, BUILTIN_KIND
+        if table == "custom_categories" and out.get("kind") is not None and out["kind"] not in KINDS:
+            raise Refused(f"{where}: kind must be spending or income.")
+        if out.get("colour") is not None and out["colour"] not in PALETTE:
+            raise Refused(f"{where}: colour isn't one of the app's category colours.")
+        if table == "category_prefs" and out.get("name") not in BUILTIN_KIND:
+            raise Refused(f"{where}: {out.get('name')!r} isn't a built-in category.")
+        if out.get("hidden") not in (None, 0, 1):
+            raise Refused(f"{where}: hidden must be 0 or 1.")
+    if table == "category_suggestion_dismissals":
+        if not (out.get("merchant") or "").strip() or not (out.get("category") or "").strip():
+            raise Refused(f"{where}: the dismissed suggestion has no merchant or category.")
     return out
 
 
@@ -323,7 +363,8 @@ def summary(conn, uid: str, name: str) -> dict:
     pdfs = _pdf_files(conn, uid)
     passes = n("SELECT COUNT(*) FROM toll_transactions WHERE user_id = ?", uid)
     rules = sum(n(f"SELECT COUNT(*) FROM {t} WHERE user_id = ?", uid)
-                for t in ("category_rules", "custom_categories", "recurring_overrides"))
+                for t in ("category_rules", "custom_categories", "category_prefs", "category_suggestion_dismissals",
+                          "recurring_overrides"))
     toll_setup = sum(n(f"SELECT COUNT(*) FROM {t} WHERE user_id = ?", uid)
                      for t in ("toll_cars", "toll_devices", "toll_patterns", "toll_pattern_groups", "toll_trip_overrides"))
     sees = n("SELECT COUNT(*) FROM user_access WHERE viewer_id = ?", uid)
@@ -508,6 +549,9 @@ def _existing_keys(conn, table: str, uid: str) -> tuple[dict, dict]:
         "transactions": "SELECT id, account_id, date, amount, description FROM transactions WHERE user_id = ?",
         "category_rules": "SELECT id, pattern, match_type FROM category_rules WHERE user_id = ?",
         "custom_categories": "SELECT id, lower(name) FROM custom_categories WHERE user_id = ?",
+        "category_prefs": "SELECT id, name FROM category_prefs WHERE user_id = ?",
+        "category_suggestion_dismissals": "SELECT id, merchant, category FROM category_suggestion_dismissals "
+                                          "WHERE user_id = ?",
         "recurring_overrides": "SELECT id, merchant_pattern FROM recurring_overrides WHERE user_id = ?",
         "utility_bills": "SELECT id, file_hash, utility_type FROM utility_bills WHERE user_id = ? AND file_hash IS NOT NULL",
         "toll_cars": "SELECT id, lower(name) FROM toll_cars WHERE user_id = ?",
@@ -524,6 +568,10 @@ def _existing_keys(conn, table: str, uid: str) -> tuple[dict, dict]:
     live, every = {}, {}
     if not q:
         return live, every
+    if table == "custom_categories":            # a built-in's name (any case) is never added as their own
+        from .categorize import DISPLAY_CATEGORIES
+        for name in DISPLAY_CATEGORIES:
+            live[(name.lower(),)] = every[(name.lower(),)] = 0
     soft = table in SOFT_DELETED
     if soft:
         q = q.replace("SELECT id, ", "SELECT id, deleted_at IS NOT NULL, ", 1)
@@ -565,6 +613,10 @@ def _key(table: str, r: dict):
         return (r.get("signature"), r.get("window_start_min"), r.get("window_end_min"))
     if table == "toll_trip_overrides":
         return (r.get("trip_key"),)
+    if table == "category_prefs":
+        return (r.get("name"),)              # one per person and built-in: theirs is kept when they have one
+    if table == "category_suggestion_dismissals":
+        return (r.get("merchant"), r.get("category"))
     if table == "reminder_prefs":
         return (1,)                         # one per person: theirs is kept when they already have one
     if table == "notify_prefs":
@@ -696,7 +748,7 @@ def delete_rows(conn, uid: str, forget: bool) -> dict:
     for table in ("skipped_duplicates", "transactions", "statements", "csv_imports", "accounts", "utility_bills",
                   "toll_trip_overrides", "toll_trips", "toll_transactions", "toll_statements", "toll_devices",
                   "toll_cars", "toll_patterns", "toll_pattern_groups", "category_rules", "custom_categories",
-                  "recurring_overrides"):
+                  "category_prefs", "category_suggestion_dismissals", "recurring_overrides"):
         counts[table] = gone(f"DELETE FROM {table} WHERE user_id = ?", uid)
     counts["user_access"] = gone("DELETE FROM user_access WHERE viewer_id = ? OR owner_id = ?", uid, uid)
     if forget:

@@ -1,0 +1,20 @@
+{# Grouped category menus (SPEC.md section 9): every category <select> in the app — a transaction's category,
+   bulk categorize, Review, Add by hand, the rule form, the Transactions filter — lists Spending and Income as two
+   groups, then Payments and Uncategorized. Income comes first for money in on a checking or savings account,
+   Spending first for everything else (categorize.income_first). Hidden built-ins aren't offered, but a row that
+   already has one (or any name outside the menus) still shows it, selected.
+   groups: categorize.menu_groups(conn, user) — {"spending": [...], "income": [...], "neither": [...]}. #}
+{% macro options(groups, selected="", income_first=false, blank=none, neither=true) -%}
+{%- if blank is not none %}<option value="" {{ "selected" if not selected else "" }}>{{ blank }}</option>{% endif -%}
+{%- for kind in (["income", "spending"] if income_first else ["spending", "income"]) %}
+{%- if groups[kind] %}
+<optgroup label="{{ 'Income' if kind == 'income' else 'Spending' }}">
+    {%- for c in groups[kind] %}<option value="{{ c }}" {{ "selected" if c == selected else "" }}>{{ c }}</option>{% endfor %}
+</optgroup>
+{%- endif %}
+{%- endfor %}
+{%- if neither %}{% for c in groups.neither %}<option value="{{ c }}" {{ "selected" if c == selected else "" }}>{{ c }}</option>{% endfor %}{% endif %}
+{%- if selected and selected not in groups.spending and selected not in groups.income and (not neither or selected not in groups.neither) %}
+<option value="{{ selected }}" selected>{{ selected }}</option>
+{%- endif %}
+{%- endmacro %}

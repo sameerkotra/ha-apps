@@ -1,4 +1,5 @@
 {% import "_paging_macros.html" as paging %}
+{% import "_category_options.html" as catopt %}
 <div id="transactions-table-wrap">
 {% if transactions %}
 {# A category saved on one row comes back to this same filtered view. #}
@@ -12,8 +13,8 @@
     <div class="bulk-bar" id="bulk-bar" hidden>
         <label class="bulk-select-all"><input type="checkbox" id="select-all"> Select all</label>
         <span class="bulk-categorize">
-            <select class="bulk-category-select">
-                {% for c in categories %}<option value="{{ c }}">{{ c }}</option>{% endfor %}
+            <select class="bulk-category-select" aria-label="Category for the selected transactions">
+                {{ catopt.options(category_groups, income_first=bulk_income_first) }}
             </select>
             <button type="button" class="btn-secondary bulk-action-btn" data-action="categorize">Categorize selected</button>
         </span>
