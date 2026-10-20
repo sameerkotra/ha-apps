@@ -232,8 +232,9 @@ income is broken down: whether a transaction is income or spending is still its 
   and when it last categorized one. **Edit** changes a rule in place. **Test** shows the first 10
   transactions a rule would match and how many **Also re-categorize existing transactions** would
   change ("will change 14") without saving anything. A built-in rule's **Use my own instead**
-  copies it into your rules to change; yours is tried first. Rules work for income exactly as for
-  spending ("ACME PAYROLL" → Salary).
+  copies it into your rules to change; yours is tried first. Rules work for income as for spending
+  ("ACME PAYROLL" → Salary), but a rule that gives an **Income** category only applies to money in (a
+  positive amount) on a checking or savings account — never to money out or to a card.
 - A new transaction is categorized by your rules first (the most specific match wins), then the
   built-in rules for its direction (PAYROLL, DIRECT DEP or SALARY → Salary, INTEREST PAID / EARNED
   → Interest, DIVIDEND, REFUND; money in from ZELLE FROM / VENMO FROM is left to the AI), then the

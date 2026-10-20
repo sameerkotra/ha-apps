@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.14.1
+
+- **Income rules only for money in.** A rule that gives an Income category (Salary, Interest, your own income
+  categories…) now applies only to money coming into a checking or savings account. A payment out or a card
+  purchase whose description happens to match keeps its own category — on import, with **Also re-categorize
+  existing transactions**, and in a rule's **Test**. Spending rules work as before.
+- **Fixed:** the **⋯** menu of the last categories on the Spending and Income tabs (and a rule's Edit at the bottom
+  of Rules) was cut off below the list; it now opens upwards when there isn't room below.
+
 ## 1.14.0
 
 - **A clearer menu.** Home (Overview, Compare) · Money (Transactions, Transfers, Recurring) · Upload (Statements, Utility bill, Toll statement, Review) · Bills · Reports (Saved, New, Check) · Accounts · Settings (My settings, Categories & rules, How the app sees you) · Admin. On a phone the bar holds Home, Money, Upload and Reports; More has the rest, including the theme.

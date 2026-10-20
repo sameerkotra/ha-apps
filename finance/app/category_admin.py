@@ -313,6 +313,8 @@ def try_rule(conn, user_id: str, pattern: str, match_type: str, category: str, r
     conn.create_function("finance_rule_test", 1, lambda d: cz._matches_upper(p, match_type, (d or "").upper()),
                          deterministic=True)
     where = ("t.user_id = ? AND t.deleted_at IS NULL AND a.deleted_at IS NULL AND finance_rule_test(t.description)")
+    if category.upper() in cz.income_names_upper(conn, user_id):
+        where += " AND a.type != 'credit_card' AND t.amount > 0"     # an income rule: money in on checking/savings only
     total = conn.execute(f"SELECT COUNT(*) FROM transactions t JOIN accounts a ON a.id = t.account_id WHERE {where}",
                          (user_id,)).fetchone()[0]
     rows = conn.execute(

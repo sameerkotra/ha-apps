@@ -179,6 +179,20 @@ def income_first(account_type: str | None, amount: float | None) -> bool:
     return flow_of(account_type, amount) == "in"
 
 
+def income_names_upper(conn, user_id: str) -> set[str]:
+    """The person's income categories (built-in and their own, hidden ones too), upper-cased."""
+    return {n.upper() for n in categories_by_kind(conn, user_id, include_hidden=True)["income"]}
+
+
+def rule_fits_flow(category: str, flow: str | None, income_upper: set[str]) -> bool:
+    """A rule giving an income category applies only to money in on a checking or savings account (flow "in").
+    Other rules apply to every row. A row whose direction isn't known (None) keeps every rule. Money back on a card
+    has its own handling (a rule giving Refunds), not this check."""
+    if flow in ("in", None) or income_upper is None:
+        return True
+    return (category or "").upper() not in income_upper
+
+
 def _builtin_for(flow: str | None) -> list[tuple[str, str, str]]:
     if flow is None:
         return _BUILTIN_RULES
@@ -480,14 +494,16 @@ def recategorize_transactions(conn, user_id: str) -> int:
     rules_upper = [(p.upper(), mt, c, p) for p, mt, c in user_rule_tuples]
 
     rows = conn.execute(
-        "SELECT id, description, category FROM transactions "
-        "WHERE user_id = ? AND deleted_at IS NULL",
+        "SELECT t.id, t.description, t.category, t.amount, a.type AS account_type FROM transactions t "
+        "LEFT JOIN accounts a ON a.id = t.account_id WHERE t.user_id = ? AND t.deleted_at IS NULL",
         (user_id,),
     ).fetchall()
+    income_upper = income_names_upper(conn, user_id)
 
     updates = []
     for row in rows:
-        match = _best_match_upper(rules_upper, (row["description"] or "").upper())
+        match = _best_match_upper(rules_upper, (row["description"] or "").upper(),
+                                  flow_of(row["account_type"], row["amount"]), income_upper)
         if match and match[0] != row["category"]:
             updates.append((match[0], match[1], row["id"], match[2]))
     _write_rule_updates(conn, user_id, updates)
@@ -507,15 +523,18 @@ def rule_changes(conn, user_id: str, pattern: str, match_type: str,
     conn.create_function("finance_rule_matches", 1,
                          lambda d: _matches_upper(p, match_type, (d or "").upper()), deterministic=True)
     rows = conn.execute(
-        "SELECT id, description, category FROM transactions "
-        "WHERE user_id = ? AND deleted_at IS NULL AND finance_rule_matches(description)",
+        "SELECT t.id, t.description, t.category, t.amount, a.type AS account_type FROM transactions t "
+        "LEFT JOIN accounts a ON a.id = t.account_id "
+        "WHERE t.user_id = ? AND t.deleted_at IS NULL AND finance_rule_matches(t.description)",
         (user_id,),
     ).fetchall()
     rules = _user_rules(conn, user_id) if rules is None else rules
     rules_upper = [(rp.upper(), mt, c, rp) for rp, mt, c in rules]
+    income_upper = income_names_upper(conn, user_id)
     out = []
     for row in rows:
-        match = _best_match_upper(rules_upper, (row["description"] or "").upper())
+        match = _best_match_upper(rules_upper, (row["description"] or "").upper(),
+                                  flow_of(row["account_type"], row["amount"]), income_upper)
         if match and match[0] != row["category"]:
             out.append({"id": row["id"], "category": row["category"], "to": match[0], "pattern": match[1],
                         "match_type": match[2]})
@@ -559,11 +578,15 @@ def _user_rules(conn, user_id: str) -> list[tuple[str, str, str]]:
     ).fetchall()]
 
 
-def _best_match_upper(rules_upper, d: str) -> tuple[str, str, str] | None:
+def _best_match_upper(rules_upper, d: str, flow: str | None = None,
+                      income_upper: set[str] | None = None) -> tuple[str, str, str] | None:
     """_best_match with the patterns (p_upper, match_type, category, pattern) and the description
-    upper-cased once by the caller. Returns (category, pattern, match_type)."""
+    upper-cased once by the caller. Returns (category, pattern, match_type). With income_upper, rules giving an
+    income category are skipped unless the row is money in on checking/savings (rule_fits_flow)."""
     best_key = best = None
     for p, match_type, category, pattern in rules_upper:
+        if income_upper is not None and not rule_fits_flow(category, flow, income_upper):
+            continue
         if not _matches_upper(p, match_type, d):
             continue
         key = (_SPECIFICITY[match_type], len(pattern))
@@ -595,6 +618,7 @@ def plan_categories(conn, user_id: str, ollama_url: str, ollama_model: str, rows
     AI: a rule giving Refunds, else "Payments" (a card payment, as always). `conn` is only read (the rules). The
     LLM call can take minutes, so the caller must not hold a write transaction while this runs."""
     rules_upper = [(p.upper(), mt, c, p) for p, mt, c in _user_rules(conn, user_id)]
+    income_upper = income_names_upper(conn, user_id)
     plan = CategoryPlan(user_id=user_id)
     unmatched: dict[tuple, list[tuple]] = {}
     offered_for: dict = {}
@@ -602,7 +626,7 @@ def plan_categories(conn, user_id: str, ollama_url: str, ollama_model: str, rows
         key, description = row[0], row[1]
         flow = row[2] if len(row) > 2 else None
         d = (description or "").upper()
-        user_match = _best_match_upper(rules_upper, d)
+        user_match = _best_match_upper(rules_upper, d, flow, None if flow == "card_in" else income_upper)
         if flow == "card_in":
             if user_match and user_match[0] == REFUNDS:
                 plan.assignments[key] = (REFUNDS, "user_rule", user_match[1])

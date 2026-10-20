@@ -463,3 +463,40 @@ def test_export_and_import_carry_kind_and_an_older_file_imports(env):
     bad = _craft({"custom_categories": [{"id": 1, "name": "X", "kind": "loan"}]})
     r = _upload(env, bad)
     assert r.status_code == 400 and "kind" in r.json()["detail"]
+
+
+def test_rules_giving_an_income_category_apply_only_to_money_in_on_checking_and_savings(env):
+    from app import categorize, category_admin
+    chk, sav, card = env.account("Checking"), env.account("Savings", "savings"), env.account("Visa", "credit_card")
+    env.insert("custom_categories", user_id="tester", name="Rental income", kind="income")
+    env.insert("category_rules", user_id="tester", pattern="ACME", match_type="prefix", category="Salary")
+    env.insert("category_rules", user_id="tester", pattern="TENANT", match_type="prefix", category="Rental income")
+    env.insert("category_rules", user_id="tester", pattern="GROCER", match_type="prefix", category="Groceries")
+    # on import: only money in on checking/savings takes an income rule; a spending rule still applies everywhere
+    rows = [(1, "ACME PAYROLL", "in"), (2, "ACME STORE", "out"), (3, "ACME STORE", "card"), (4, "TENANT RENT", "in"),
+            (5, "TENANT RENT REVERSAL", "out"), (6, "GROCER", "out"), (7, "GROCER", "card"), (8, "ACME BACK", "card_in")]
+    with env.db() as c:
+        plan = categorize.plan_categories(c, "tester", "", "", rows)
+    got = {k: v[:2] for k, v in plan.assignments.items()}
+    assert got[1] == ("Salary", "user_rule") and got[4] == ("Rental income", "user_rule")
+    assert got[2][0] != "Salary" and got[3][0] != "Salary" and got[5][0] != "Rental income"
+    assert got[6] == ("Groceries", "user_rule") and got[7] == ("Groceries", "user_rule")
+    assert got[8] == ("Payments", "card_payment")
+    # re-categorizing existing transactions follows the same rule
+    ids = {}
+    for key, acct, amount, desc in [("chk_in", chk, 2000.0, "ACME PAYROLL"), ("sav_in", sav, 50.0, "ACME BONUS"),
+                                    ("chk_out", chk, -20.0, "ACME STORE"), ("card", card, 30.0, "ACME STORE"),
+                                    ("card_back", card, -30.0, "ACME STORE")]:
+        ids[key] = env.insert("transactions", user_id="tester", account_id=acct, date="2026-10-01", amount=amount,
+                              description=desc, category="Uncategorized")
+    with env.db() as c:
+        changes = {ch["id"]: ch["to"] for ch in categorize.rule_changes(c, "tester", "ACME", "prefix")}
+        tried = category_admin.try_rule(c, "tester", "ACME", "prefix", "Salary")
+        categorize.recategorize_for_rule(c, "tester", "ACME", "prefix")
+        cats = {r["id"]: r["category"] for r in c.execute("SELECT id, category FROM transactions")}
+    assert set(changes) == {ids["chk_in"], ids["sav_in"]}
+    assert tried["count"] == 2 and tried["will_change"] == 2
+    assert cats[ids["chk_in"]] == cats[ids["sav_in"]] == "Salary"
+    assert {cats[ids[k]] for k in ("chk_out", "card", "card_back")} == {"Uncategorized"}
+    with env.db() as c:
+        assert categorize.recategorize_transactions(c, "tester") == 0       # nothing else for an income rule to take

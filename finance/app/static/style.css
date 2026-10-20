@@ -1480,6 +1480,13 @@ main.uploads-main { max-width: 1100px; }
 .cat-table tr.cat-row:hover td { background: var(--panel-hover); }
 .cat-table .cat-name-cell { overflow-wrap: anywhere; }
 .cat-table .cat-menu-cell, .rules-table .rule-actions { position: relative; text-align: right; white-space: nowrap; }
+/* A table's ⋯ menus and Edit forms hang outside the table: the table must not clip them (tables otherwise hide
+   overflow for their rounded corners). ui.js opens them upwards (.menu-up) near the bottom of the window. */
+.cat-table, .rules-table, table:has(details.row-menu), table:has(details.rule-edit) { overflow: visible; }
+@media (min-width: 768px) {
+    .row-menu.menu-up[open] > .menu-sheet, .rule-edit.menu-up[open] > .sheet-body { top: auto; bottom: calc(100% - 0.25rem); }
+    details.row-menu.menu-up > .row-menu-body { top: auto; bottom: calc(100% + 4px); }
+}
 .wrap-cell { overflow-wrap: anywhere; }
 .rule-pattern { font-size: 0.85rem; background: var(--panel-alt); padding: 0.05rem 0.35rem; border-radius: 4px; overflow-wrap: anywhere; }
 .rules-table .rule-actions .inline-form { display: inline-flex; margin: 0 0 0 0.35rem; vertical-align: top; }

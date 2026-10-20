@@ -294,6 +294,24 @@ window.escapeHtml = UI.escapeHtml;
         if (e.detail && e.detail.successful) hideBanner();
     });
 
+    // ---- ⋯ menus near the bottom open upwards ------------------------------
+    // A row's ⋯ menu (and a rule's Edit form) drops below its row; for the last rows of a list it would run past
+    // the bottom of the window, so it opens above the row instead. Phones show these as bottom sheets: no change.
+    var MENU_BODY = ".menu-sheet, .row-menu-body, .sheet-body";
+    document.addEventListener("toggle", function (e) {
+        var d = e.target;
+        if (!d || d.tagName !== "DETAILS" || !d.matches(".row-menu, .rule-edit")) return;
+        d.classList.remove("menu-up");
+        if (!d.open || window.matchMedia("(max-width: 767px)").matches) return;
+        var body = d.querySelector(MENU_BODY);
+        var summary = d.querySelector("summary");
+        if (!body || !summary) return;
+        var below = window.innerHeight - summary.getBoundingClientRect().bottom;
+        var above = summary.getBoundingClientRect().top;
+        var need = body.getBoundingClientRect().height + 12;
+        if (need > below && above > below) d.classList.add("menu-up");
+    }, true);
+
     // ---- Start-up ----------------------------------------------------------
     setupTables(document);
     document.body.addEventListener("htmx:load", function (e) { setupTables(e.target); });
