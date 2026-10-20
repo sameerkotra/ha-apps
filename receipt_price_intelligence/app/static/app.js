@@ -82,6 +82,7 @@
     down: '<path d="M6 9l6 6 6-6"/>',
     store: '<path d="M4 9l1.5-5h13L20 9M4 9v11h16V9M4 9h16M9 20v-6h6v6"/>',
     shield: '<path d="M12 3l7.5 3v5.5c0 4.6-3.2 8.3-7.5 9.5-4.3-1.2-7.5-4.9-7.5-9.5V6z"/><path d="M9 12l2 2 4-4"/>',
+    user: '<circle cx="12" cy="8" r="4"/><path d="M4 21c0-4.2 3.6-7 8-7s8 2.8 8 7"/>',
     cart: '<path d="M3 4h2l2.4 10.2a1 1 0 0 0 1 .8h8.9a1 1 0 0 0 1-.8L20 8H6.2"/><circle cx="9.5" cy="19" r="1.4"/><circle cx="17" cy="19" r="1.4"/>',
   };
   function icon(name, extraClass) {
@@ -271,11 +272,12 @@
   // Every page is wrapped in the same shell (built here, before the page's own script runs). Pages
   // used to add their own row of section links with RPI.nav(); that now only marks the section.
   const SECTIONS = [
-    { id: 'list', href: 'list.html', label: 'List', short: 'List', icon: 'check' },
-    { id: 'receipts', href: 'index.html', label: 'Receipts', short: 'Receipts', icon: 'receipt' },
+    // phone: one of the four tabs of the phone's bottom bar; the rest are under its More sheet
+    { id: 'list', href: 'list.html', label: 'List', short: 'List', icon: 'check', phone: true },
+    { id: 'receipts', href: 'index.html', label: 'Receipts', short: 'Receipts', icon: 'receipt', phone: true },
     { id: 'insights', href: 'analysis.html', label: 'Insights', short: 'Insights', icon: 'chart' },
-    { id: 'deals', href: 'deals.html', label: 'Best prices', short: 'Prices', icon: 'tag' },
-    { id: 'trip', href: 'trip.html', label: 'Trip', short: 'Trip', icon: 'map' },
+    { id: 'deals', href: 'deals.html', label: 'Best prices', short: 'Prices', icon: 'tag', phone: true },
+    { id: 'trip', href: 'trip.html', label: 'Trip', short: 'Trip', icon: 'map', phone: true },
     { id: 'stores', href: 'stores.html', label: 'Stores', short: 'Stores', icon: 'store' },
     { id: 'notify', href: 'notifications.html', label: 'Notify', short: 'Notify', icon: 'bell' },
     { id: 'admin', href: 'admin.html', label: 'Admin', short: 'Admin', icon: 'shield', admin: true },
@@ -288,18 +290,33 @@
   };
   const PAGE = location.pathname.slice(location.pathname.lastIndexOf('/') + 1);
 
-  // Moving between pages replaces the current history entry instead of adding one, so the back
-  // gesture in the Home Assistant app goes to the List (the start page), then out of the app
-  // (backnav.js). When backnav has its extra entry in place, it is removed first and the page
-  // then opens in its place (goHome below picks up the address).
-  const NEXT_KEY = 'rpi.next';
+  // Moving between pages replaces the current history entry instead of adding one (BackNav.goPage), and
+  // remembers the page left in the shared back trail (common/backnav.js), so Back retraces the pages
+  // visited: a sub-page (a receipt, Scan, Upload, Backup, …) goes back to where it was opened from, a
+  // section opened from the menu starts a new trail, and Back with nothing left goes to the page's parent
+  // (PARENT), then to the List (the start page), then out of the app.
+  // When backnav has its extra history entry in place, it is taken away first and the page then opens in
+  // its place, so no page change ever adds an entry to Home Assistant's history.
+  const MAIN_PAGES = new Set(SECTIONS.map((sec) => sec.href));
+  const PARENT = { 'review.html': 'index.html', 'capture.html': 'index.html', 'import.html': 'index.html',
+    'backup.html': 'admin.html', 'debug.html': 'admin.html' };
+  const pageOf = (u) => u.pathname.slice(u.pathname.lastIndexOf('/') + 1);
+  // A section's own page (the menu's links) is a top-level tab: going to one starts a new back trail.
+  function isTab(entry) {
+    if (!entry || entry.startsWith('#')) return false;
+    let u;
+    try { u = new URL(entry, location.href); } catch (_) { return false; }
+    const p = pageOf(u);
+    return (p === '' || MAIN_PAGES.has(p)) && !u.search;
+  }
   let leaving = false;   // a page is opening in this one's place: backnav must not add its entry again
   window.addEventListener('pageshow', (e) => { if (e.persisted) leaving = false; });
-  try { sessionStorage.removeItem(NEXT_KEY); } catch (_) { /* a page that just opened has nowhere pending */ }
-  function go(href) {
-    const url = new URL(href, location.href);
-    const target = url.href;
-    if (url.pathname === location.pathname && url.search === location.search) {   // same page, another tab of it
+  // go(href): another page of the app (or another tab of this one). opts.replace: don't remember this page
+  // in the trail (Scan → its receipt: Back from the receipt goes to where Scan was opened from).
+  function go(href, opts) {
+    const u = new URL(href, location.href);
+    const target = u.href;
+    if (u.pathname === location.pathname && u.search === location.search) {   // same page, another tab of it
       if (target !== location.href) {
         const old = location.href;
         history.replaceState(history.state, '', target);
@@ -307,19 +324,51 @@
       }
       return;
     }
+    const B = window.BackNav;
+    const rel = u.pathname + u.search + u.hash;
+    const skip = !!(opts && opts.replace);
+    if (!B) { leaving = true; location.replace(target); return; }
     const guarded = history.state && history.state.backnav && !document.querySelector('dialog[open]');
-    if (guarded && window.BackNav) {
-      try { sessionStorage.setItem(NEXT_KEY, target); } catch (_) { location.replace(target); return; }
+    if (guarded && B._trail) {
+      const here = location.pathname + location.search + location.hash;
+      const trail = B._trail.get();
+      const next = isTab(target) ? [] : (skip || trail[trail.length - 1] === here ? trail : trail.concat(here)).slice(-20);
+      B._trail.clear();          // nothing for backnav to step back to while its entry is taken away
       leaving = true;
-      history.back();
-      setTimeout(() => {   // in case Back didn't reach us
-        try { sessionStorage.removeItem(NEXT_KEY); } catch (_) { /* ignore */ }
+      let done = false;
+      const finish = () => {
+        if (done) return;
+        done = true;
+        try { sessionStorage.setItem(B._trail.key, JSON.stringify(next)); } catch (_) { /* private mode */ }
         location.replace(target);
-      }, 600);
+      };
+      window.addEventListener('popstate', finish, { once: true });
+      history.back();
+      setTimeout(finish, 600);   // in case Back didn't reach us
       return;
     }
     leaving = true;
-    location.replace(target);
+    if (skip) location.replace(target);
+    else B.goPage(rel);
+  }
+  // An in-app ← button: the previous page of the trail, else the page's parent, else the List. With
+  // backnav's extra entry in place this is the back gesture itself (the entry is used up, not left behind).
+  function goBack(fallback) {
+    document.querySelectorAll('.combo-list').forEach((el) => el.remove());
+    if (window.BackNav && history.state && history.state.backnav) { history.back(); return; }
+    if (window.BackNav && window.BackNav.back()) return;
+    go(fallback || PARENT[PAGE] || 'list.html');
+  }
+  // The back arrow at the start of a sub-page's top bar (Review, Scan, Upload, …).
+  function backButton(label, fallback) {
+    const a = h('a', { class: 'back', href: fallback || PARENT[PAGE] || 'list.html', 'aria-label': 'Back' + (label ? ' to ' + label : '') },
+      icon('back'), label || 'Back');
+    a.addEventListener('click', (e) => {
+      if (e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+      e.preventDefault();
+      goBack(fallback);
+    });
+    return a;
   }
   document.addEventListener('click', (e) => {
     if (e.defaultPrevented || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
@@ -333,13 +382,41 @@
     go(u.href);
   });
 
-  let shellNav = null, adminLink = null, userName = null, banner = null;
+  let shellNav = null, userName = null, banner = null, moreSheet = null, moreUser = null;
+  const adminLinks = [];
+  const CURRENT = PAGE_SECTION[PAGE];
   function sectionLink(sec) {
-    const a = h('a', { class: 'side-tab', href: sec.href, title: sec.label, 'aria-current': PAGE_SECTION[PAGE] === sec.id ? 'page' : null,
+    const a = h('a', { class: 'side-tab' + (sec.phone ? '' : ' in-more'), href: sec.href, title: sec.label, 'aria-current': CURRENT === sec.id ? 'page' : null,
       hidden: sec.admin ? true : null },
     icon(sec.icon), h('span', { class: 'label' }, sec.label), h('span', { class: 'short', 'aria-hidden': 'true' }, sec.short));
-    if (sec.admin) adminLink = a;
+    if (sec.admin) adminLinks.push(a);
     return a;
+  }
+  // Phones: the bottom bar has List, Receipts, Prices, Trip and More; More opens this sheet with the other
+  // sections, Me (how the app sees you) and the theme. A <dialog>, so the back gesture closes it first.
+  function buildMoreSheet() {
+    const items = SECTIONS.filter((sec) => !sec.phone).map((sec) => {
+      const a = h('a', { class: 'more-item', href: sec.href, 'aria-current': CURRENT === sec.id ? 'page' : null, hidden: sec.admin ? true : null },
+        icon(sec.icon), h('span', {}, sec.label));
+      if (sec.admin) adminLinks.push(a);
+      return a;
+    });
+    moreUser = h('span', { class: 'more-sub' }, '…');
+    const me = h('a', { class: 'more-item', href: 'whoami.html', 'aria-current': PAGE === 'whoami.html' ? 'page' : null },
+      icon('user'), h('span', { class: 'more-main' }, h('span', {}, 'Me'), moreUser));
+    const theme = HouseholdTheme.bindSelect(h('select', { class: 'theme-select', 'aria-label': 'Theme' }));
+    const close = h('button', { type: 'button', class: 'icon-btn', 'aria-label': 'Close' }, icon('x'));
+    const dlg = h('dialog', { class: 'sheet more-sheet', 'aria-label': 'More' },
+      h('div', { class: 'sheet-head' }, h('strong', {}, 'More'), h('span', { class: 'spacer' }), close),
+      h('nav', { class: 'more-list', 'aria-label': 'More sections' }, ...items, me),
+      h('label', { class: 'more-theme' }, h('span', {}, 'Theme'), theme));
+    close.addEventListener('click', () => dlg.close());
+    dlg.addEventListener('click', (e) => {
+      if (e.target === dlg) dlg.close();                       // a tap on the backdrop
+      else if (e.target.closest && e.target.closest('a.more-item')) dlg.close();   // then the link opens its page
+    });
+    document.body.append(dlg);
+    return dlg;
   }
   function buildShell() {
     if (document.querySelector('.app')) return;
@@ -360,7 +437,13 @@
     // The page theme (static/common/theme-boot.js): shared with the other household apps.
     const theme = HouseholdTheme.bindSelect(h('select', { id: 'theme-select', class: 'theme-select', title: 'Theme', 'aria-label': 'Theme' }));
     userName = h('span', { class: 'sidebar-user-name' }, '…');
-    shellNav = h('nav', { class: 'side-tabs', 'aria-label': 'Sections' }, SECTIONS.map(sectionLink));
+    moreSheet = buildMoreSheet();
+    const inMore = !SECTIONS.some((sec) => sec.phone && sec.id === CURRENT);
+    const moreTab = h('button', { type: 'button', class: 'side-tab more-tab', 'aria-haspopup': 'dialog', title: 'More',
+      'aria-current': inMore ? 'page' : null },
+    icon('more'), h('span', { class: 'label' }, 'More'), h('span', { class: 'short', 'aria-hidden': 'true' }, 'More'));
+    moreTab.addEventListener('click', () => { if (!moreSheet.open) moreSheet.showModal(); });
+    shellNav = h('nav', { class: 'side-tabs', 'aria-label': 'Sections' }, SECTIONS.map(sectionLink), moreTab);
     const side = h('aside', { class: 'sidebar' }, collapse,
       h('div', { class: 'brand' }, h('span', { class: 'brand-mark' }, icon('cart')), h('span', { class: 'brand-name' }, 'Shopping')),
       shellNav,
@@ -384,7 +467,8 @@
   function fillShell(who) {
     if (!userName) return;
     userName.textContent = who.display_name || who.username || 'you';
-    if (adminLink) adminLink.hidden = !who.is_admin;
+    if (moreUser) moreUser.textContent = 'Signed in as ' + userName.textContent;
+    for (const a of adminLinks) a.hidden = !who.is_admin;
     if (who.noAdmin && banner) {
       // "No admin yet": the shared banner (common/whoami.js), loaded only when it is needed
       loadWhoamiScript().then(() => HouseholdWhoami.fillNoAdminBanner(banner, true, who.username || who.id, { href: 'whoami.html' }))
@@ -407,14 +491,11 @@
     const home = PAGE === '' || PAGE === 'list.html';
     window.BackNav.init({
       atHome: () => home || leaving,
-      goHome: () => {
-        let next = null;
-        try { next = sessionStorage.getItem(NEXT_KEY); sessionStorage.removeItem(NEXT_KEY); } catch (_) { /* ignore */ }
-        leaving = true;
-        location.replace(next || BASE);
-      },
+      goHome: () => { leaving = true; location.replace(BASE); },
       openLayers: () => (leaving ? [] : [...document.querySelectorAll('dialog[open], .combo-list')]),
       closeLayer: (el) => { if (el.tagName === 'DIALOG') el.close('cancel'); else el.remove(); },
+      isTab,
+      parentOf: () => (PARENT[PAGE] ? url(PARENT[PAGE]) : null),
     });
   }
 
@@ -656,7 +737,7 @@
   checkVersion();
 
   buildShell();
-  me().then(fillShell).catch(() => { if (userName) userName.textContent = '—'; });
+  me().then(fillShell).catch(() => { if (userName) userName.textContent = '—'; if (moreUser) moreUser.textContent = ''; });
 
   // A link from Home Assistant (the Household Assistant) opens "/<page>/list", "/<page>/insights", … : Home Assistant
   // shows the start page, and common/static/deeplink.js reads the rest of the path and goes to that page.
@@ -675,7 +756,7 @@
 
   window.RPI = {
     url, api, h, icon, money, fmtDate, relTime, parseNumber, fixed2, trimNum,
-    me, setCurrentHome, pickHome, nav, go, adminTabs, homeContext, homeSwitcher, attachCombobox, sparkline, lineChart, formDialog,
+    me, setCurrentHome, pickHome, nav, go, goBack, backButton, adminTabs, homeContext, homeSwitcher, attachCombobox, sparkline, lineChart, formDialog,
     CHART_COLORS, followJob,
     statusPill, parseExtraction, itemMathIssue, reconcile, isNum, toast, confirmDialog,
   };

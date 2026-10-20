@@ -20,16 +20,19 @@ The app does not include a model.
 
 Everyone who can open the sidebar panel can use the app. Administrators are the people on **admin_users**, and only
 them: they see **Admin** in the menu (App settings, homes, backups and the web debug page). If you don't see it,
-open *Signed in as* at the bottom of the menu (**How the app sees you**): it shows exactly the user name and id Home
+open *Signed in as* at the bottom of the sidebar (on a phone: **More → Me**), **How the app sees you**: it shows exactly the user name and id Home
 Assistant sent and what to add. Changes to admin_users need a restart.
 
 ## Menu, themes and the back gesture
 
-The menu is a sidebar on a computer (it can be collapsed to icons) and a bar along the bottom on a phone: List,
-Receipts, Insights, Best prices, Trip, Stores, Notify and, for administrators, Admin. The theme (Midnight, Slate,
-Daylight, or Auto, which follows the device's light or dark setting) is chosen at the bottom of the sidebar and
-remembered on each device. In the Home Assistant app, the back
-gesture closes an open dialog first, then returns to the List, and only then leaves the app.
+The menu is a sidebar on a computer (it can be collapsed to icons): List, Receipts, Insights, Best prices, Trip,
+Stores, Notify and, for administrators, Admin. On a phone it is a bar along the bottom with List, Receipts, Prices,
+Trip and **More**; More opens a sheet with Insights, Stores, Notify, Admin, **Me** (how the app sees you) and the
+theme. The theme (Midnight, Slate, Daylight, or Auto, which follows the device's light or dark setting) is chosen at
+the bottom of the sidebar (or in More) and remembered on each device. In the Home Assistant app, the back gesture
+(and the ← at the top of a receipt, Scan, Upload and Me) closes an open dialog or sheet first, then goes back
+through the pages you opened (a receipt goes back to Receipts, Backup and Web debug to Admin when opened directly),
+then to the List, and only then leaves the app.
 
 ## Using it
 
@@ -243,7 +246,7 @@ is not used. *Send a test notification* on the List page checks the set-up.
 
 ## Stores near home
 
-On the **Stores** page, *Stores near home* → *Find stores near home* searches OpenStreetMap for grocery stores
+On the **Stores** page, under **Tools** (below the list of stores), *Stores near home* → *Find stores near home* searches OpenStreetMap for grocery stores
 around your home address (set on the Trip page), within a distance you choose, including stores you have never
 shopped at. For each one it shows the distance, kind of store, address and opening hours, when OpenStreetMap has them.
 
@@ -317,7 +320,7 @@ Each location's menu has **Store web page…**: that store's own page (with its 
 read it first; most store pages publish their hours as structured data, which is read without the model. Stores
 found or recognised by *Stores near home* get this page filled in from OpenStreetMap when it lists one.
 
-**Fill in websites** (a card at the top of the Stores page while some stores have no website) does the Website field
+**Fill in websites** (a card under **Tools** on the Stores page while some stores have no website) does the Website field
 for you. First it takes each store's website from its store pages (and from the websites OpenStreetMap lists for its
 branches, after *Stores near home*); those are set straight away. Then, with web search set up, it searches each
 remaining store's name and suggests the site that comes up most, preferably one carrying the store's name. Check each
@@ -347,7 +350,7 @@ only passes on public web addresses, but a page can redirect); answers over 5 MB
 
 If your server calls those fields something else, change **Search request field name** and **Fetch request field name**. On the Stores page an administrator can press **Test connection**: it searches, fetches the first result, asks the model one question, and shows what came back, so you can see exactly where a mismatch is.
 
-- **Opening hours** (Stores page): *Find hours for all stores* (or ⋯ → *Find hours online* for one). For each store the server is searched, the best pages are read by your model, and the answer is offered as a **suggestion** with its source and how sure it is: *Use these hours* or *No thanks*. Nothing changes until you accept, unless you turn on *Apply store hours found online automatically* (only for stores with no hours, and only on evidence: the store's own structured page data, OpenStreetMap, or two different websites giving the same hours; the model's own confidence is never enough). Accepted hours are used by the trip planner.
+- **Opening hours** (Stores page → **Tools**): *Find hours for all stores* (or ⋯ → *Find hours online* for one). For each store the server is searched, the best pages are read by your model, and the answer is offered as a **suggestion** with its source and how sure it is: *Use these hours* or *No thanks*. Nothing changes until you accept, unless you turn on *Apply store hours found online automatically* (only for stores with no hours, and only on evidence: the store's own structured page data, OpenStreetMap, or two different websites giving the same hours; the model's own confidence is never enough). Accepted hours are used by the trip planner.
 - **Deals** (Best prices page): *Look for deals* searches each store's weekly ad and sale pages, has the model list what is on sale, and keeps the products that are items you buy. Each shows the sale price against what you usually pay at that store, when it ends, and where it was found. Deals well below your usual price raise an alert, and the trip planner uses them ("Use deals found online" in its options). They are looked up in the background every few days (an App setting).
 
 - **Current prices** (Best prices page → *Latest prices online*): *Check prices online* looks up what your most bought items cost now on the websites of the stores you bought them at (through the search server, several item-at-a-store checks at once — see *Requests at once* below). A price is only kept when a listing clearly is that item and its price can be compared in the item's own unit (a 1 gal listing against a per-gallon history, a per-lb price against per-lb receipts). Each shows the price against what you last paid there. Prices are read from the page itself where possible: first the product data store sites publish for search engines, then a price printed next to the product's name; the model reads the page only when neither works, and each price is labelled with how it was read. Every check is listed on the Best prices page under *Online price checks by date* (kept 30 days; the last 7 days count). An item-at-store pair checked within **Reuse an online price for** (default 6 hours) is left as it was rather than checked again; if everything you asked for was already fresh, a *Check again anyway* option appears. The trip planner can use them: a current online price replaces the price from your last receipt when it is newer, unless it is wildly different from what you paid (then it is assumed to be misread). The trip result has an *Online prices behind this plan* card listing each online price found for the trip's items, by the day it was checked, with which ones decided the route and why any were not used. **Ignoring online prices.** In the trip planner's options, *Prices to use* can be *My receipt prices only*: online
@@ -381,7 +384,7 @@ Open a saved receipt and use the menu (⋯): **Edit receipt** reopens it so you 
 - **Sales and coupons** (Insights → Overview): what discounts saved you, by store and item.
 - **Your price index** (Insights → Prices): how the things you keep buying cost now compared with a year ago.
 - **Learning**: when you correct how a line was read, the same misreading from that store is fixed automatically next time.
-- **Tags and export**: tag receipts (business, warranty, ...) on the review screen, filter the saved list by tag, and export receipts or every line as CSV from Insights → Export.
+- **Tags and export**: tag receipts (business, warranty, ...) on the review screen, filter the saved list by tag, and export receipts or every line as CSV from Insights → ⋯ → *Export to a spreadsheet*.
 - **Upload several receipts**: the upload icon on the receipts page adds many photos and PDFs at once, one receipt each.
 
 See `docs/INSIGHTS.md` for how each one is calculated.
@@ -441,7 +444,7 @@ recorder:
 
 ## Importing receipts from a folder or email
 
-Set **Folder to import receipts from** (a folder under `/share`, for example `/share/receipts`) and photos and PDFs dropped there become drafts to review; handled files move to a `processed` folder (or `failed`) and are deleted after two weeks. Set the **Mail server (IMAP)** settings and PDF and image attachments of unread emails are imported the same way (the emails are marked as read; only attachments are used, at most 10 per email, and emails over 30 MB are skipped). The mail server's certificate is checked. With *Use SSL for mail* off, the connection is encrypted with STARTTLS; a server that offers neither is only used when *Allow mail login without encryption* is on. *Only import mail from* limits imports to some addresses or domains (`@example.com`); other emails are marked as read and skipped. An attachment already imported is not imported again. When a home already has *Receipts waiting at most* receipts being read or reviewed (200 by default), the folder and the mailbox wait: emails stay unread until some receipts are reviewed. Files in the folder are read only when they are ordinary files (links are left alone), and only real photos (JPEG, PNG, GIF, WebP, up to 40 million pixels) or PDFs are kept, whatever their names say. If you have more than one home, name the home imported receipts go to. Imported receipts are read by the model in the background and wait under *To review*. Nothing reaches your price history until you approve it. The receipts page has a *Check now* button.
+Set **Folder to import receipts from** (a folder under `/share`, for example `/share/receipts`) and photos and PDFs dropped there become drafts to review; handled files move to a `processed` folder (or `failed`) and are deleted after two weeks. Set the **Mail server (IMAP)** settings and PDF and image attachments of unread emails are imported the same way (the emails are marked as read; only attachments are used, at most 10 per email, and emails over 30 MB are skipped). The mail server's certificate is checked. With *Use SSL for mail* off, the connection is encrypted with STARTTLS; a server that offers neither is only used when *Allow mail login without encryption* is on. *Only import mail from* limits imports to some addresses or domains (`@example.com`); other emails are marked as read and skipped. An attachment already imported is not imported again. When a home already has *Receipts waiting at most* receipts being read or reviewed (200 by default), the folder and the mailbox wait: emails stay unread until some receipts are reviewed. Files in the folder are read only when they are ordinary files (links are left alone), and only real photos (JPEG, PNG, GIF, WebP, up to 40 million pixels) or PDFs are kept, whatever their names say. If you have more than one home, name the home imported receipts go to. Imported receipts are read by the model in the background and wait under *To review*. Nothing reaches your price history until you approve it. The receipts page shows a line about it at the bottom, with *Check now* in its ⋯ menu.
 
 ## Trip planner
 

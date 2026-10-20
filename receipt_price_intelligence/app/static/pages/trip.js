@@ -46,11 +46,14 @@
     // ---------------------------------------------------------------- render
     function render(result) {
       const c = $('content');
-      c.replaceChildren(...[
-        setupCard(), itemsCard(), optionsCard(),
-        h('button', { class: 'btn btn-primary btn-block big', id: 'planBtn', type: 'button', disabled: planning, onclick: () => plan(false) }, icon('map'), planning ? 'Planning…' : 'Plan my trip'),
-        h('div', { id: 'result', class: 'stack' }),
-      ].filter(Boolean));
+      // On a wide screen: what to plan on the left, the plan on the right (it stays in view while scrolling)
+      c.replaceChildren(h('div', { class: 'trip-grid' },
+        h('div', { class: 'stack trip-inputs' }, ...[
+          setupCard(), itemsCard(), optionsCard(),
+          h('button', { class: 'btn btn-primary btn-block big', id: 'planBtn', type: 'button', disabled: planning, onclick: () => plan(false) }, icon('map'), planning ? 'Planning…' : 'Plan my trip'),
+        ].filter(Boolean)),
+        h('div', { id: 'result', class: 'stack trip-result' },
+          h('div', { class: 'wide-only' }, UI.empty('Your trip shows here', 'Choose what to buy, then Plan my trip.')))));
       if (result) showResult(result);
     }
 
@@ -542,6 +545,7 @@
     function showResult(r) {
       ignored = new Set((r.online_ignored || []).map(([i, c]) => ignoreKey(i, c)));
       const out = [savedBanner(r)];
+      if (r.best) out.push(warnings(r));     // right above the plan they are about
       if (!r.best) {
         out.push(h('div', { class: 'empty' }, icon('map'), h('h2', {}, 'No trip to suggest'), h('p', {}, 'None of these items has a price at a store with a known location.')));
         out.push(warnings(r));
@@ -570,7 +574,6 @@
           h('div', { class: 'r' }, h('b', {}, m(p.total)), h('div', { class: 'note' }, `${m(p.items_total)} items + ${m(p.travel_cost)} driving`), h('div', { class: 'note' }, `${p.distance} ${du}`))))));
       }
       out.push(foundCard(r));
-      out.push(warnings(r));
       out.push(h('p', { class: 'note' }, `Online prices are today's prices from each store's website, used whenever one was found; otherwise the plan uses what you last paid (receipt), before tax. Driving cost uses ${r.vehicle ? r.vehicle.name : 'your manual cost'} at ${m(r.cost_per_distance)} per ${du}.`));
       $('result').replaceChildren(...out.filter(Boolean));
     }
@@ -593,7 +596,7 @@
       const svg = el('svg', { viewBox: `0 0 ${W} ${H}`, class: 'map', role: 'img', 'aria-label': 'Sketch of the route' });
       const route = line || [map.home, ...map.stops, ...(roundTrip ? [map.home] : [])];
       svg.append(el('polyline', { points: route.map((p) => `${X(p.lng).toFixed(1)},${Y(p.lat).toFixed(1)}`).join(' '), class: 'line' + (line ? '' : ' straight') }));
-      svg.append(el('circle', { cx: X(map.home.lng), cy: Y(map.home.lat), r: 9, class: 'h' }), el('text', { x: X(map.home.lng), y: Y(map.home.lat) }, 'H'));
+      svg.append(el('circle', { cx: X(map.home.lng), cy: Y(map.home.lat), r: 9, class: 'h' }), el('text', { x: X(map.home.lng), y: Y(map.home.lat), class: 'ht' }, 'H'));
       map.stops.forEach((p, i) => {
         svg.append(el('circle', { cx: X(p.lng), cy: Y(p.lat), r: 10, class: 's' }), el('text', { x: X(p.lng), y: Y(p.lat) }, String(i + 1)));
       });

@@ -8,7 +8,20 @@
     ];
     // The list holds one line per receipt (api/v1/receipt-drafts/summaries): the ones to review all, saved ones a page
     // at a time ("Show more"). While some are being read, only their status is asked for every few seconds.
-    let me = null, homes = [], homeId = null, drafts = [], tab = 'review', timer = null, tagFilter = '';
+    // The tab is in the address (#review / #saved), so a reload or Back keeps it; with no address and nothing to
+    // review, Saved opens.
+    const hashTab = () => (TABS.some((t) => '#' + t.id === location.hash) ? location.hash.slice(1) : null);
+    let me = null, homes = [], homeId = null, drafts = [], tab = hashTab() || 'review', timer = null, tagFilter = '', storeQuery = '';
+    let tabChosen = !!hashTab();
+    function setTab(id) {
+      tab = id; tabChosen = true;
+      if (window.BackNav) BackNav.replace('#' + id); else history.replaceState(history.state, '', '#' + id);
+      render();
+    }
+    window.addEventListener('hashchange', () => { const t = hashTab(); if (t && t !== tab) { tab = t; tabChosen = true; render(); } });
+    const search = h('input', { class: 'input', type: 'search', placeholder: 'Search stores', 'aria-label': 'Search saved receipts by store',
+      oninput: () => { storeQuery = search.value.trim().toLowerCase(); render(); } });
+    $('searchBox').append(icon('search'), search);
     let review = [], saved = [], savedMore = false, loadingMore = false;
     const SAVED_PAGE = 100;
 
@@ -31,7 +44,7 @@
     function renderFilters() {
       $('filters').replaceChildren(...TABS.map((t) => {
         const n = t.match ? drafts.filter(t.match).length : 0;
-        return h('button', { type: 'button', 'aria-pressed': String(tab === t.id), onclick: () => { tab = t.id; render(); } },
+        return h('button', { type: 'button', 'aria-pressed': String(tab === t.id), 'aria-current': tab === t.id ? 'true' : null, onclick: () => setTab(t.id) },
           t.label, t.id === 'review' && n ? h('span', { class: 'count' }, n) : null);
       }));
     }
@@ -58,6 +71,25 @@
       return h('div', { class: 'empty' }, icon('receipt'), h('h2', {}, title), h('p', {}, text), action || null);
     }
 
+    // Saved receipts by month (of the purchase), newest first: a sticky header with the month's count and total.
+    const monthKey = (d) => String(d.purchase_date || d.created_at || '').slice(0, 7);
+    function monthLabel(key) {
+      const m = /^(\d{4})-(\d{2})$/.exec(key);
+      return m ? new Date(+m[1], +m[2] - 1, 1).toLocaleDateString(undefined, { month: 'short', year: 'numeric' }) : 'No date';
+    }
+    function byMonth(list) {
+      const groups = new Map();
+      for (const d of list) { const k = monthKey(d); if (!groups.has(k)) groups.set(k, []); groups.get(k).push(d); }
+      const out = [];
+      for (const k of [...groups.keys()].sort().reverse()) {
+        const g = groups.get(k);
+        const total = g.reduce((s, d) => s + (d.grand_total || 0), 0);
+        out.push(h('div', { class: 'ui-group-head' }, `${monthLabel(k)} · ${g.length} receipt${g.length === 1 ? '' : 's'}`,
+          h('span', { class: 'ui-group-total' }, money(total))), ...g.map(card));
+      }
+      return out;
+    }
+
     function render() {
       renderFilters();
       const c = $('content'), stat = $('stat');
@@ -69,19 +101,22 @@
       $('tagFilters').replaceChildren(...(tab === 'saved' && tagsInUse.length ? [h('button', { type: 'button', class: 'chip-btn', 'aria-pressed': String(!tagFilter), onclick: () => { tagFilter = ''; render(); } }, 'All'),
         ...tagsInUse.map((tg) => h('button', { type: 'button', class: 'chip-btn', 'aria-pressed': String(tagFilter === tg), onclick: () => { tagFilter = tagFilter === tg ? '' : tg; render(); } }, '#' + tg))] : []));
       if (tab === 'saved' && tagFilter) shown = shown.filter((d) => tagsOf(d).includes(tagFilter));
+      $('searchBox').hidden = tab !== 'saved' || !drafts.some((d) => d.status === 'APPROVED');
+      if (tab === 'saved' && storeQuery) shown = shown.filter((d) => (d.store_name || '').toLowerCase().includes(storeQuery));
       if (tab === 'saved' && shown.length) {
         const sum = shown.reduce((s, d) => s + (d.grand_total || 0), 0);
         stat.textContent = `${shown.length}${savedMore ? '+' : ''} receipts · ${money(sum)}${savedMore ? ' (shown so far)' : ''}`;
       }
       if (!shown.length) {
         const msg = tab === 'review' ? ['Nothing to review', 'Scan a receipt and it will show up here for a quick check.']
+          : storeQuery || tagFilter ? ['No receipts match', 'Try another store name or tag.']
           : ['No saved receipts yet', 'Approved receipts appear here.'];
         return c.replaceChildren(empty(msg[0], msg[1], h('a', { class: 'btn btn-primary', href: 'capture.html' }, icon('camera'), 'Scan a receipt')));
       }
       const more = tab === 'saved' && savedMore
         ? h('button', { class: 'btn btn-sm', type: 'button', disabled: loadingMore ? true : null, onclick: loadMoreSaved }, loadingMore ? 'Loading…' : 'Show older receipts')
         : null;
-      c.replaceChildren(...shown.map(card), ...(more ? [h('div', { style: 'text-align:center;margin:12px 0' }, more)] : []));
+      c.replaceChildren(...(tab === 'saved' ? byMonth(shown) : shown.map(card)), ...(more ? [h('div', { style: 'text-align:center;margin:12px 0' }, more)] : []));
     }
 
     const summaries = (group, after) => api(`api/v1/receipt-drafts/summaries?home_id=${encodeURIComponent(homeId)}&group=${group}`
@@ -140,6 +175,7 @@
         const [r, s] = await Promise.all([summaries('review'), summaries('saved')]);
         review = r.drafts; saved = s.drafts; savedMore = s.more;
         drafts = review.concat(saved);
+        if (!tabChosen && tab === 'review' && !review.length && saved.length) tab = 'saved';
         render();
         pollReading();
       } catch (e) {
@@ -174,8 +210,11 @@
       const sources = [st.folder_ready ? (st.folder ? `folder ${st.folder}` : 'folder') : null,
         st.mailbox_ready ? (st.mailbox ? `mailbox ${st.mailbox}` : 'mailbox') : null].filter(Boolean);
       if (!sources.length) return box.replaceChildren();
-      const btn = h('button', { class: 'btn btn-sm', type: 'button' }, icon('refresh'), 'Check now');
+      const btn = h('button', { type: 'button' }, icon('refresh'), 'Check now');
+      const menu = h('details', { class: 'menu' }, h('summary', { class: 'icon-btn', 'aria-label': 'Import options', title: 'Import options' }, icon('more')),
+        h('div', { class: 'menu-list', style: 'bottom:calc(100% + 6px);top:auto' }, btn));
       btn.addEventListener('click', async () => {
+        menu.open = false;
         btn.disabled = true;
         try {
           const r = await api('api/v1/import/scan', { method: 'POST', body: {} });
@@ -184,8 +223,8 @@
         } catch (e) { toast(e.message, 'error'); }
         btn.disabled = false;
       });
-      box.replaceChildren(h('div', { class: 'banner', style: 'margin-bottom:12px' }, icon('download'),
-        h('div', { class: 'banner-body' }, h('span', { class: 'banner-text' }, `Receipts are imported from your ${sources.join(' and ')}. New ones appear under To review.`)), btn));
+      box.replaceChildren(h('div', { class: 'importrow' }, icon('download'),
+        h('span', { class: 'grow', title: 'New ones appear under To review.' }, `Imported from your ${sources.join(' and ')}`), menu));
     }
 
     init();

@@ -17,9 +17,9 @@
     const per = (u) => (u && String(u).toLowerCase() !== 'each' ? '/' + String(u).toLowerCase() : '');
 
     async function load() {
+      if (!snap) UI.loading($('content'));
       try { snap = await api(url()); } catch (e) {
-        return $('content').replaceChildren(h('div', { class: 'banner danger' }, icon('alert'), h('div', { class: 'banner-body' }, e.message),
-          h('button', { class: 'btn btn-sm', onclick: load }, 'Retry')));
+        return $('content').replaceChildren(UI.errorBox(e, load));
       }
       const home = `api/v1/homes/${encodeURIComponent(ctx.homeId)}`;
       let webStatus, found;
@@ -228,35 +228,61 @@
     }
 
     // ---------------------------------------------------------------- layout: a short header, then one tab at a time
-    let tab = localStorage.getItem('deals:tab') || 'foryou', showAllFeed = false;
     const TABS = [['foryou', 'For you'], ['items', 'All items'], ['online', 'Online'], ['alerts', 'Alerts']];
+    // the tab is in the address (#items, #alerts, …), so a reload or Back keeps it; else the last one used
+    const hashTab = () => { const t = location.hash.slice(1); return TABS.some(([k]) => k === t) ? t : null; };
+    let tab = hashTab() || localStorage.getItem('deals:tab') || 'foryou', showAllFeed = false;
+    window.addEventListener('hashchange', () => { const t = hashTab(); if (t && t !== tab) { tab = t; render(); } });
 
     // One list of the best things to act on, from every source; each item once, biggest saving first.
     function feed() {
       const out = [], seen = new Set();
       const push = (x) => { if (x.item && seen.has(x.item) && x.kind !== 'refund') return; seen.add(x.item); out.push(x); };
-      for (const o of overcharged) push({ kind: 'refund', item: o.item, rank: 1000 + o.extra, pill: ['Ask for a refund', 'warn'],
+      for (const o of overcharged) push({ kind: 'refund', item: o.item, itemId: o.item_id, receiptId: o.receipt_id, rank: 1000 + o.extra, pill: ['Ask for a refund', 'warn'],
         title: `${o.item} at ${o.store}`, line: `Paid ${cost(o.paid)}${per(o.unit)} on ${fmtDay(o.date)}; the store posted ${cost(o.posted)}`, value: `+${money(o.extra)}`, url: o.source_url });
-      for (const r of snap && snap.switch_store || []) push({ kind: 'switch', item: r.item_name, rank: 500 + (r.est_monthly_savings || 0) * 10 + r.saving_pct, pill: ['Cheaper store', 'ok'],
+      for (const r of snap && snap.switch_store || []) push({ kind: 'switch', item: r.item_name, itemId: r.item_id, rank: 500 + (r.est_monthly_savings || 0) * 10 + r.saving_pct, pill: ['Cheaper store', 'ok'],
         title: r.item_name, line: `${r.to.label.split(' · ')[0]} ${priceText(r.to.price, r.unit)} instead of ${r.from.label.split(' · ')[0]} ${priceText(r.from.price, r.unit)}`,
         value: r.est_monthly_savings ? `${money(r.est_monthly_savings)}/mo` : `${r.saving_pct}% less` });
-      for (const w of waysToSave) push({ kind: w.kind, item: w.item, rank: 300 + w.percent, pill: [w.kind === 'pack' ? 'Bigger pack' : 'Cheaper store', 'ok'],
+      for (const w of waysToSave) push({ kind: w.kind, item: w.item, itemId: w.item_id, rank: 300 + w.percent, pill: [w.kind === 'pack' ? 'Bigger pack' : 'Cheaper store', 'ok'],
         title: w.item, line: w.kind === 'store'
           ? `${w.better.store}${w.better.size ? ' (' + w.better.size + ')' : ''} ${cost(w.better.price)}${per(w.unit)} instead of ${w.now.store} ${cost(w.now.price)}${per(w.unit)}`
           : `The ${w.better.size} size: ${cost(w.better.price)}${per(w.unit)} instead of ${cost(w.now.price)}${per(w.unit)} (${w.now.size})`,
         value: `${w.percent}% less` });
-      for (const d of webDeals) if (d.saving_pct > 0) push({ kind: 'deal', item: d.item_name || d.product, rank: 200 + d.saving_pct, pill: ['Deal', 'ok'],
+      for (const d of webDeals) if (d.saving_pct > 0) push({ kind: 'deal', item: d.item_name || d.product, itemId: d.item_id, rank: 200 + d.saving_pct, pill: ['Deal', 'ok'],
         title: d.item_name || d.product, line: `${priceText(d.price, d.unit)} at ${d.chain}${d.valid_to ? ' until ' + fmtDay(d.valid_to) : ''}`, value: `${d.saving_pct.toFixed(0)}% less`, url: d.source_url });
-      for (const a of snap && snap.price_alerts || []) if (a.type !== 'PRICE_UP') push({ kind: 'drop', item: a.item_name, rank: 100 + Math.abs(a.change_pct), pill: ['Price drop', 'ok'],
+      for (const a of snap && snap.price_alerts || []) if (a.type !== 'PRICE_UP') push({ kind: 'drop', item: a.item_name, itemId: a.item_id, rank: 100 + Math.abs(a.change_pct), pill: ['Price drop', 'ok'],
         title: a.item_name, line: `${priceText(a.price, a.unit)} at ${a.store}, usually ${priceText(a.usual_price, a.unit)}`, value: `↓ ${Math.abs(a.change_pct).toFixed(0)}%` });
       return out.sort((a, b) => b.rank - a.rank);
+    }
+    // Each suggestion ends with the thing to do about it: put it on the list (a cheaper store, pack or deal), set a
+    // price target (a price drop: be told the next time), or open the receipt (paid more than the store posted).
+    const listed = new Set();
+    async function addToList(itemId, name, btn) {
+      btn.disabled = true;
+      try {
+        await api(`api/v1/homes/${encodeURIComponent(ctx.homeId)}/list`, { method: 'POST', body: { item_id: itemId } });
+        listed.add(itemId); toast(`${name} added to the list`, 'success');
+        btn.replaceWith(h('span', { class: 'note' }, 'on the list'));
+      } catch (e) { toast(e.message, 'error'); btn.disabled = false; }
+    }
+    function feedAction(x) {
+      if (x.kind === 'refund') {
+        return x.receiptId ? h('a', { class: 'btn btn-sm', href: 'review.html?id=' + encodeURIComponent(x.receiptId) }, 'Open receipt')
+          : x.url ? h('a', { class: 'btn btn-sm', href: x.url, target: '_blank', rel: 'noopener' }, 'Open page') : null;
+      }
+      if (!x.itemId) return null;
+      if (x.kind === 'drop') return h('button', { class: 'btn btn-sm', type: 'button', disabled: !pricedItems.length, onclick: () => targetDialog(x.itemId) }, 'Set target');
+      if (listed.has(x.itemId)) return h('span', { class: 'note' }, 'on the list');
+      const b = h('button', { class: 'btn btn-sm', type: 'button', 'aria-label': `Add ${x.item} to the list` }, icon('plus'), 'Add to list');
+      b.addEventListener('click', () => addToList(x.itemId, x.item, b));
+      return b;
     }
     function feedRow(x) {
       return h('div', { class: 'frow' },
         h('div', { class: 'grow' },
           h('div', { class: 'ftop' }, h('span', { class: 'fname' }, x.title), h('span', { class: 'pill ' + x.pill[1] }, x.pill[0])),
           h('div', { class: 'meta' }, x.line, x.url ? [' · ', h('a', { href: x.url, target: '_blank', rel: 'noopener' }, 'page')] : null)),
-        h('div', { class: 'fval' }, x.value));
+        h('div', { class: 'fend' }, h('div', { class: 'fval' }, x.value), feedAction(x)));
     }
     function forYouTab() {
       const items = feed();
@@ -302,7 +328,11 @@
     function header() {
       const s = snap && snap.summary;
       const refundTotal = overcharged.reduce((n, o) => n + o.extra, 0);
-      const go = (t) => () => { tab = t; localStorage.setItem('deals:tab', t); render(); };
+      const go = (t) => () => {
+        tab = t; localStorage.setItem('deals:tab', t);
+        if (window.BackNav) BackNav.replace('#' + t); else history.replaceState(history.state, '', '#' + t);
+        render();
+      };
       const kpi = (label, value, target, cls) => h('button', { class: 'kpi ' + (cls || ''), type: 'button', onclick: go(target) }, h('span', { class: 'value' }, value), h('span', { class: 'label' }, label));
       const alertCount = alertList.length + targets.filter((t) => t.current && t.mode === 'BELOW' && t.current.price <= t.target_price + 1e-9).length;
       return [
@@ -316,7 +346,7 @@
           refundTotal ? kpi('paid over posted prices', money(refundTotal), 'foryou', 'warnk') : kpi('alerts', String(alertCount), 'alerts')) : null,
         h('div', { class: 'tabs', role: 'tablist' }, ...TABS.map(([k, label]) => {
           const n = k === 'foryou' ? feed().length : k === 'alerts' ? alertCount : 0;
-          return h('button', { type: 'button', role: 'tab', 'aria-selected': String(tab === k), class: 'tab' + (tab === k ? ' on' : ''), onclick: go(k) },
+          return h('button', { type: 'button', role: 'tab', 'aria-selected': String(tab === k), 'aria-current': tab === k ? 'page' : null, class: 'tab' + (tab === k ? ' on' : ''), onclick: go(k) },
             label, n ? h('span', { class: 'count' }, String(n)) : null);
         })),
       ];

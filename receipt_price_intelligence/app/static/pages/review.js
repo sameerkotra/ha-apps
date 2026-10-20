@@ -99,7 +99,7 @@
       const sub = draft ? [header.purchase_date ? fmtDate(header.purchase_date) : null,
         items.length && draft.status !== 'PROCESSING' ? `${items.length} items` : null, homeName || null].filter(Boolean).join(' · ') : '';
       const kids = [
-        h('a', { class: 'back', href: 'index.html', 'aria-label': 'All receipts' }, icon('back'), 'Receipts'),
+        RPI.backButton('Receipts', 'index.html'),
         h('div', { class: 'grow' }, h('h1', {}, title), sub ? h('div', { class: 'sub' }, sub) : null),
       ];
       if (draft) {
@@ -133,11 +133,15 @@
         draft.status === 'APPROVED' ? 'The photo isn’t kept after a receipt is saved. Only its details are stored.' : 'No photo attached'));
       let current = 0;
       const main = h('img', { class: 'viewer-img', alt: 'Receipt photo — tap to enlarge', src: imgUrl(imgs[0]), onclick: () => openLightbox(current, imgs) });
-      const thumbs = imgs.length > 1 ? h('div', { class: 'thumbs' }, imgs.map((im, i) =>
-        h('button', { type: 'button', 'aria-label': `Page ${i + 1}`, 'aria-current': String(i === 0), onclick: (e) => {
+      // Below 960px the photo is a strip of thumbnails (tap one to enlarge), so the check and the items come first;
+      // wider, the big photo sits beside the editor and the thumbnails switch pages.
+      const narrow = () => window.matchMedia && window.matchMedia('(max-width: 959px)').matches;
+      const thumbs = h('div', { class: 'thumbs' + (imgs.length > 1 ? '' : ' single') }, imgs.map((im, i) =>
+        h('button', { type: 'button', 'aria-label': narrow() ? `Enlarge page ${i + 1}` : `Page ${i + 1}`, 'aria-current': String(i === 0), onclick: (e) => {
+          if (narrow()) { openLightbox(i, imgs); return; }
           current = i; main.src = imgUrl(im);
           thumbs.querySelectorAll('button').forEach((b, j) => b.setAttribute('aria-current', String(j === i)));
-        } }, h('img', { src: imgUrl(im) + '?size=thumb', alt: '', loading: 'lazy' })))) : null;
+        } }, h('img', { src: imgUrl(im) + '?size=thumb', alt: '', loading: 'lazy' }))));
       return h('div', { class: 'card' }, main, thumbs,
         h('div', { class: 'viewer-cap' }, h('span', {}, (imgs.length > 1 ? `${imgs.length} pages` : 'Original photo') + (editable ? ' · deleted when you save' : '')), h('span', {}, 'Tap to enlarge')));
     }
@@ -444,8 +448,7 @@
         onlyUnnamed = !onlyUnnamed; renderItems(); } });
       itemsBodyEl = h('div', {});
       const itemsCard = h('div', { class: 'card' },
-        h('div', { class: 'card-head items-head' }, h('span', { class: 'card-title', id: 'itemsTitle' }), flagChipEl, unnamedChipEl,
-          editable ? h('button', { class: 'btn btn-sm', type: 'button', style: 'margin-left:auto', onclick: addItem }, icon('plus'), 'Add item') : null),
+        h('div', { class: 'card-head items-head' }, h('span', { class: 'card-title', id: 'itemsTitle' }), flagChipEl, unnamedChipEl),
         h('div', { class: 'card-body flush' }, itemsBodyEl,
           editable ? h('div', { class: 'item-add' }, h('button', { class: 'btn btn-sm', type: 'button', onclick: addItem }, icon('plus'), 'Add item')) : null));
 
@@ -463,11 +466,6 @@
           trow('Fees & deposits', 'fee_total'),
           trow('Total', 'grand_total', 'grand')));
 
-      // Not satisfied? Send a correction and read again
-      const rereadCard = editable && (draft.images || []).length ? h('div', { class: 'card' }, h('div', { class: 'card-body row wrap' },
-        h('div', { class: 'grow', style: 'min-width:200px' }, h('strong', {}, 'Not happy with how it was read?'),
-          h('div', { class: 'small muted' }, extraction.meta && extraction.meta.correction ? 'Your last note is kept, so you can add to it.' : 'Add a note about what it got wrong and the receipt is read again.')),
-        h('button', { class: 'btn', type: 'button', onclick: reread }, icon('refresh'), 'Add a note & read again'))) : null;
 
       // Extraction details
       const meta = extraction.meta || {};
@@ -485,7 +483,7 @@
             h('ul', { class: 'small', style: 'margin-left:18px' }, warns.map((w) => h('li', {}, w.message)))) : null,
           h('pre', { class: 'code' }, JSON.stringify(extraction, null, 2))));
 
-      ed.replaceChildren(...[notice, rereadBanner, reconEl, headerCard, itemsCard, totalsCard, rereadCard, detailsCard].filter(Boolean));
+      ed.replaceChildren(...[notice, rereadBanner, reconEl, headerCard, itemsCard, totalsCard, detailsCard].filter(Boolean));
       renderItems();
       refreshDerived();
     }
@@ -620,7 +618,12 @@
           reconEl.replaceChildren(h('div', { class: 'banner ' + kind }, icon(bad.length ? 'alert' : checks.length ? 'check' : 'info'),
             h('div', { class: 'banner-body recon' }, h('strong', {}, head),
               checks.map((c) => h('div', { class: 'line banner-text' }, h('span', { style: 'color:var(--' + (c.ok ? 'accent' : 'warn') + ')' }, icon(c.ok ? 'check' : 'alert')), c.text)),
-              flagged ? h('div', { class: 'banner-text muted small' }, `${flagged} line${flagged > 1 ? 's' : ''} flagged below.`) : null)));
+              flagged ? h('div', { class: 'banner-text muted small' }, `${flagged} line${flagged > 1 ? 's' : ''} flagged below.`) : null,
+              // Not satisfied? Send a correction and read again (always in the ⋯ menu too)
+              bad.length && editable && (draft.images || []).length ? h('div', { class: 'recon-reread' },
+                h('span', { class: 'banner-text' }, h('strong', {}, 'Not happy with how it was read? '),
+                  extraction.meta && extraction.meta.correction ? 'Your last note is kept, so you can add to it.' : 'Add a note about what it got wrong and the receipt is read again.'),
+                h('button', { class: 'btn btn-sm', type: 'button', onclick: reread }, icon('refresh'), 'Add a note & read again')) : null)));
         } else reconEl.replaceChildren();
       }
       const title = document.getElementById('itemsTitle');

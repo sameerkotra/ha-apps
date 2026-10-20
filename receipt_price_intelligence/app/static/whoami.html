@@ -6,11 +6,13 @@
   <title>How the app sees you</title>
   <script src="static/common/theme-boot.js"></script>
   <link rel="stylesheet" href="static/common/themes.css">
+  <link rel="stylesheet" href="static/common/settings.css">
   <link rel="stylesheet" href="static/app.css">
 </head>
-<body>
+<body class="pg-whoami">
   <div class="page narrow">
     <div class="topbar">
+      <span id="backLink"></span>
       <div class="grow"><h1>How the app sees you</h1><div class="sub">What Home Assistant sent, and whether it is on admin_users</div></div>
     </div>
     <div id="content" class="stack" aria-live="polite"></div>

@@ -1,7 +1,7 @@
 // import.html: this page's own script (moved out of the page so the Content-Security-Policy can forbid inline scripts).
     const { h, icon, api, toast } = RPI;
     const $ = (id) => document.getElementById(id);
-    $('backLink').append(icon('back'), 'Receipts');
+    $('backLink').replaceWith(RPI.backButton('Receipts', 'index.html'));
 
     const MAX_FILES = 30, BATCH = 6;
     let ctx = null, files = [], busy = false, results = new Map();
@@ -60,10 +60,13 @@
       const c = $('content');
       c.replaceChildren(...[
         drop,
+        files.length ? h('div', { class: 'files-head' }, h('strong', {}, `${files.length} file${files.length === 1 ? '' : 's'}`),
+          ` · ${size(files.reduce((t, f) => t + f.size, 0))}`, done ? null : h('span', { class: 'muted' }, ` · up to ${MAX_FILES}`)) : null,
         files.length ? h('div', { class: 'files' }, ...rows) : null,
         failures.length ? h('div', { class: 'banner warn' }, icon('alert'), h('div', { class: 'banner-body' }, h('ul', { class: 'small', style: 'margin-left:16px' },
           failures.map((f) => h('li', {}, `${f.name}: ${results.get(f).error}`))))) : null,
-        files.length && !done ? h('button', { class: 'btn btn-primary btn-block', type: 'button', disabled: busy, onclick: upload }, icon('upload'), busy ? 'Uploading…' : `Upload ${files.length} file${files.length === 1 ? '' : 's'}`) : null,
+        // stays on screen however long the list of files is (like Scan's Read button)
+        files.length && !done ? h('div', { class: 'stickyaction' }, h('button', { class: 'btn btn-primary btn-block', type: 'button', disabled: busy, onclick: upload }, icon('upload'), busy ? 'Uploading…' : `Upload ${files.length} file${files.length === 1 ? '' : 's'}`)) : null,
         done ? h('a', { class: 'btn btn-primary btn-block', href: 'index.html' }, 'Go to receipts to review them') : null,
         h('p', { class: 'small muted' }, 'The model reads them one after another. You can leave this page; they appear under To review as they finish, and nothing is added to your history until you approve each one.'),
       ].filter(Boolean));

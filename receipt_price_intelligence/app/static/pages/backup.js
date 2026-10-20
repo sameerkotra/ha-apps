@@ -35,14 +35,16 @@
       chosen = null;
 
       c.replaceChildren(
-        card('What is stored',
-          h('dl', { class: 'counts' }, LABELS.map(([k, l]) => h('div', {}, h('dt', {}, l), h('dd', {}, String(info.counts[k] ?? 0))))),
+        // what is stored: a small strip of figures, then Export, then Restore (apart, in the danger zone)
+        h('div', {},
+          h('div', { class: 'summary-strip', 'aria-label': 'What is stored' }, LABELS.map(([k, l]) => h('div', { class: 'kpi' },
+            h('div', { class: 'kpi-label' }, l), h('div', { class: 'kpi-value' }, String(info.counts[k] ?? 0))))),
           h('p', { class: 'small muted' }, `Database size ${size(info.database_bytes)}.`)),
         card('Export',
           h('p', {}, 'Download everything as a single file: every home’s receipts, prices, items, stores and people. Receipt photos are not part of it, because they are deleted once a receipt is saved.'),
           h('div', {}, h('a', { class: 'btn btn-primary', href: RPI.url('api/v1/admin/backup/export'), download: '' }, icon('download'), 'Download backup')),
           h('p', { class: 'small muted' }, 'The file contains personal financial information. Keep it somewhere private.')),
-        card('Restore',
+        h('section', { class: 'danger-zone stack' }, h('h2', {}, 'Restore'),
           h('p', {}, 'Replace everything in the app with the contents of an exported file. Files from older versions are upgraded automatically.'),
           h('div', { class: 'banner warn' }, icon('alert'), h('div', { class: 'banner-body' }, h('span', { class: 'banner-text' },
             'All current homes, receipts and prices are replaced. A copy of the current data is kept first. App settings come from the file if it has them; otherwise the current ones are kept. Administrators still come from admin_users.'))),

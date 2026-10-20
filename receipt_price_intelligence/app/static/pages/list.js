@@ -5,7 +5,7 @@
     let ctx = null, data = null, known = [], view = localStorage.getItem('list:view') || 'store', typed = '', hl = -1;
     let pickOpen = false, pickQuery = '', picked = new Set(), busy = false;
     let useOnline = localStorage.getItem('list:online') !== 'no';
-    let restock = [], drops = [];
+    let restock = [], drops = [], helpOpen = false;
     const base = () => `api/v1/homes/${encodeURIComponent(ctx.homeId)}/list`;
     // $3.29, or $3.199 for a price posted to a tenth of a cent (fuel)
     const money = (n) => (n != null && Math.round(n * 100) !== Math.round(n * 1000) / 10
@@ -15,13 +15,15 @@
     const SRC = { online: 'online', deal: 'deal', receipt: 'receipt' };
 
     async function load() {
+      if (!data) UI.loading($('content'));
       try {
         [data, known] = await Promise.all([api(base() + (useOnline ? '' : '?online=false')), api(base() + '/browse')]);
         const home = `api/v1/homes/${encodeURIComponent(ctx.homeId)}`;
         [restock, drops] = await Promise.all([api(home + '/restock').catch(() => []), api(home + '/price-drops').catch(() => [])]);
         render();
       } catch (e) {
-        $('content').replaceChildren(h('div', { class: 'banner danger' }, icon('alert'), h('div', { class: 'banner-body' }, e.message)));
+        if (data) toast(e.message, 'error');
+        else $('content').replaceChildren(UI.errorBox(e, load));
       }
     }
     const act = async (fn, okText) => { try { await fn(); if (okText) toast(okText, 'success'); await load(); } catch (e) { toast(e.message, 'error'); } };
@@ -77,11 +79,15 @@
           }
           else if (e.key === 'Escape') { typed = ''; paintSuggest(); }
         } });
-      return h('div', { class: 'card' }, h('div', { class: 'card-body stack' },
-        h('div', { class: 'addbar' }, input,
+      // one row: the field, "?" (how adding works, folded away) and Add; picking from your items under it
+      const help = h('div', { class: 'note', id: 'addHelp', hidden: !helpOpen }, 'Type anything: it becomes the item you already have when it clearly is one ("2 milk" adds two), or a new item. When you buy a new item, give its receipt line that name and the list shows where it is cheapest.');
+      const q = h('button', { class: 'icon-btn helpq', type: 'button', 'aria-label': 'How adding works', 'aria-expanded': String(helpOpen), 'aria-controls': 'addHelp',
+        onclick: () => { helpOpen = !helpOpen; help.hidden = !helpOpen; q.setAttribute('aria-expanded', String(helpOpen)); } }, '?');
+      return h('div', { class: 'card' }, h('div', { class: 'card-body stack addcard' },
+        h('div', { class: 'addbar' }, input, q,
           h('button', { class: 'btn btn-primary', type: 'button', disabled: !typed.trim(), id: 'addBtn', onclick: () => addFrom({ kind: 'text', text: typed.trim() }) }, icon('plus'), 'Add'),
           h('div', { id: 'suggestBox' }, list.length ? suggestBox(list) : null)),
-        h('div', { class: 'note' }, 'Type anything: it becomes the item you already have when it clearly is one ("2 milk" adds two), or a new item. When you buy a new item, give its receipt line that name and the list shows where it is cheapest.'),
+        help,
         pickCard()));
     }
     function suggestBox(list) {
@@ -153,7 +159,8 @@
       const open = data.items.filter((i) => !i.checked), done = data.items.filter((i) => i.checked);
       const byId = Object.fromEntries(data.items.map((i) => [i.id, i]));
       const body = [];
-      if (!open.length) body.push(h('p', { class: 'note' }, done.length ? 'Everything is bought.' : 'The list is empty. Add items above.'));
+      if (!open.length) body.push(done.length ? UI.empty('Everything is bought', 'Clear the bought items below, or add what you need next.')
+        : UI.empty('The list is empty', 'Type an item above, or pick from the items you buy.', { label: 'Pick from your items', class: 'btn', onclick: () => { pickOpen = true; render(); const f = document.querySelector('.addcard details input'); if (f) f.focus(); } }));
       else if (view === 'store') {
         for (const g of data.by_store) {
           body.push(h('div', { class: 'grp-h' }, h('h3', {}, g.store ? `Cheapest at ${g.store}` : 'No price yet'),
@@ -161,16 +168,22 @@
           body.push(h('div', {}, ...g.items.map((id) => byId[id]).filter((it) => it && !it.checked).map(itemRow)));
         }
       } else body.push(h('div', {}, ...open.map(itemRow)));
+      // the summary strip: 12 items · 3 stores · about $54 · Plan trip
+      const stores = (data.by_store || []).filter((g) => g.store && g.items.some((id) => byId[id] && !byId[id].checked));
+      const about = (data.by_store || []).reduce((t, g) => t + (g.total || 0), 0);
+      const sum = [`${open.length} item${open.length === 1 ? '' : 's'}`, stores.length ? `${stores.length} store${stores.length === 1 ? '' : 's'}` : null,
+        about ? `about ${money(about)}` : null].filter(Boolean).join(' · ');
       return h('div', { class: 'card' }, h('div', { class: 'card-body stack' },
-        h('div', { class: 'row wrap', style: 'gap:8px;justify-content:space-between;align-items:center' },
-          h('strong', {}, `To buy (${open.length})`),
-          h('div', { class: 'tabs' }, ...[['store', 'By cheapest store'], ['all', 'All']].map(([k, l]) =>
-            h('button', { class: 'btn btn-sm', type: 'button', 'aria-pressed': String(view === k), onclick: () => { view = k; localStorage.setItem('list:view', k); render(); } }, l)))),
-        h('label', { class: 'small', style: 'display:flex;gap:6px;align-items:center' },
-          h('input', { type: 'checkbox', checked: useOnline ? true : null, onchange: (e) => { useOnline = e.target.checked; localStorage.setItem('list:online', useOnline ? 'yes' : 'no'); load(); } }),
-          'Use online prices (untick to compare your receipt prices only)'),
+        h('div', { class: 'lsum' }, h('strong', {}, sum),
+          open.some((i) => i.item_id) ? h('button', { class: 'btn btn-sm', type: 'button', onclick: planTrip }, icon('map'), 'Plan trip') : null),
+        lookoutChips(),
+        open.length ? h('div', { class: 'row wrap', style: 'gap:8px 14px;justify-content:space-between;align-items:center' },
+          h('div', { class: 'tabs', role: 'group', 'aria-label': 'Group the list' }, ...[['store', 'By cheapest store'], ['all', 'All']].map(([k, l]) =>
+            h('button', { class: 'btn btn-sm', type: 'button', 'aria-pressed': String(view === k), onclick: () => { view = k; localStorage.setItem('list:view', k); render(); } }, l))),
+          h('label', { class: 'small', style: 'display:flex;gap:6px;align-items:center' },
+            h('input', { type: 'checkbox', checked: useOnline ? true : null, onchange: (e) => { useOnline = e.target.checked; localStorage.setItem('list:online', useOnline ? 'yes' : 'no'); load(); } }),
+            'Use online prices', h('span', { class: 'faint' }, '(untick for receipt prices only)'))) : null,
         ...body,
-        open.some((i) => i.item_id) ? h('div', {}, h('button', { class: 'btn', type: 'button', onclick: planTrip }, icon('map'), 'Plan a trip with these')) : null,
         done.length ? h('details', {}, h('summary', { style: 'cursor:pointer' }, `Bought (${done.length})`),
           h('div', {}, ...done.map(itemRow)),
           h('button', { class: 'btn btn-sm btn-ghost', type: 'button', onclick: () => act(() => api(base() + '/clear-checked', { method: 'POST' }), 'Bought items cleared') }, icon('trash'), 'Clear bought items')) : null));
@@ -216,10 +229,10 @@
       const soon = restock.filter((r) => r.status !== 'later');
       if (!soon.length) return null;
       const missing = soon.filter((r) => !r.on_list);
-      return h('div', { class: 'card' }, h('div', { class: 'card-body stack' },
+      return h('div', { class: 'card', id: 'restockCard' }, h('div', { class: 'card-body stack' },
         h('div', { class: 'row wrap', style: 'gap:8px;justify-content:space-between;align-items:center' },
           h('strong', {}, `Due to restock (${soon.length})`),
-          missing.length > 1 ? h('button', { class: 'btn btn-sm', type: 'button', onclick: () => act(() => api(base() + '/many', { method: 'POST', body: { item_ids: missing.map((r) => r.item_id) } }), `${missing.length} items added`) }, icon('plus'), `Add all ${missing.length}`) : null),
+          missing.length > 1 ? h('button', { class: 'btn btn-sm', type: 'button', onclick: addAllDue }, icon('plus'), `Add all ${missing.length}`) : null),
         h('div', { class: 'note', style: 'margin:0' }, 'From how often you buy them.'),
         ...soon.map((r) => h('div', { class: 'litem' },
           h('div', { class: 'body' }, h('div', { class: 'nm' }, r.name),
@@ -227,18 +240,40 @@
           r.on_list ? h('span', { class: 'note' }, 'on the list')
             : h('button', { class: 'btn btn-sm', type: 'button', onclick: () => act(() => api(base(), { method: 'POST', body: { item_id: r.item_id } }), `${r.name} added`) }, icon('plus'), 'Add')))));
     }
+    const dueMissing = () => restock.filter((r) => r.status !== 'later' && !r.on_list);
+    function addAllDue() {
+      const missing = dueMissing();
+      return act(() => api(base() + '/many', { method: 'POST', body: { item_ids: missing.map((r) => r.item_id) } }), `${missing.length} item${missing.length === 1 ? '' : 's'} added`);
+    }
+    // One line above the list: "3 due · Add all", "2 cheaper than usual", and the way to Best prices (where every
+    // suggestion lives). The cards themselves are under the list.
+    function lookoutChips() {
+      const soon = restock.filter((r) => r.status !== 'later'), missing = dueMissing();
+      const jump = (id) => () => { const el = $(id); if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' }); };
+      const chips = [];
+      if (soon.length) chips.push(h('span', { class: 'lchip' }, h('button', { class: 'linkbtn', type: 'button', onclick: jump('restockCard') }, `${soon.length} due`),
+        missing.length ? [' · ', h('button', { class: 'linkbtn', type: 'button', onclick: addAllDue }, missing.length === 1 ? 'Add it' : `Add all ${missing.length}`)] : null));
+      if (drops.length) chips.push(h('span', { class: 'lchip' }, h('button', { class: 'linkbtn', type: 'button', onclick: jump('dropsCard') }, `${drops.length} cheaper than usual`)));
+      chips.push(h('a', { class: 'lchip', href: 'deals.html' }, 'More ways to save →'));
+      return h('div', { class: 'lchips' }, ...chips);
+    }
     function dropsCard() {
       if (!drops.length) return null;
-      return h('div', { class: 'card' }, h('div', { class: 'card-body stack' },
+      return h('div', { class: 'card', id: 'dropsCard' }, h('div', { class: 'card-body stack' },
         h('strong', {}, `Cheaper than usual now (${drops.length})`),
-        ...drops.map((d) => h('div', { class: 'litem' }, h('div', { class: 'body' }, h('div', { class: 'nm' }, d.name),
-          h('div', { class: 'where' }, h('b', {}, `${money(d.price)}${unitOf(d.unit)}`), ` at ${d.store}`, h('span', { class: 'src ' + d.price_source }, SRC[d.price_source]),
-            ` · usually ${money(d.usual)} · `, h('b', {}, `${d.percent}% less`),
-            d.source_url ? h('a', { href: d.source_url, target: '_blank', rel: 'noopener', class: 'note', style: 'margin-left:6px' }, 'page') : null))))));
+        ...drops.map((d) => {
+          const listed = !d.item_id || data.items.some((i) => i.item_id === d.item_id && !i.checked);
+          return h('div', { class: 'litem' }, h('div', { class: 'body' }, h('div', { class: 'nm' }, d.name),
+            h('div', { class: 'where' }, h('b', {}, `${money(d.price)}${unitOf(d.unit)}`), ` at ${d.store}`, h('span', { class: 'src ' + d.price_source }, SRC[d.price_source]),
+              ` · usually ${money(d.usual)} · `, h('b', {}, `${d.percent}% less`),
+              d.source_url ? h('a', { href: d.source_url, target: '_blank', rel: 'noopener', class: 'note', style: 'margin-left:6px' }, 'page') : null)),
+          listed ? h('span', { class: 'note' }, 'on the list')
+            : h('button', { class: 'btn btn-sm', type: 'button', onclick: () => act(() => api(base(), { method: 'POST', body: { item_id: d.item_id } }), `${d.name} added`) }, icon('plus'), 'Add'));
+        })));
     }
 
     function render() {
-      $('content').replaceChildren(...[addCard(), dropsCard(), listCard(), restockCard(), haCard()].filter(Boolean));
+      $('content').replaceChildren(...[addCard(), listCard(), dropsCard(), restockCard(), haCard()].filter(Boolean));
     }
 
     (async () => {

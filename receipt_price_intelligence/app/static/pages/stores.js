@@ -6,6 +6,9 @@
     let siteSuggestions = [], sitesBusy = null, storeDiscounts = {};
 
     const isAdmin = () => ctx && ctx.me.is_admin;
+    // the directory: chains folded to one row each (open ones remembered while on the page), sorted and filtered
+    const openChains = new Set();
+    let sortBy = UI.lsGet('stores:sort') === 'name' ? 'name' : 'spend', filterText = '';
 
     // ---------------------------------------------------------------- data
     async function load() {
@@ -26,8 +29,7 @@
         // hours suggestions also come from the nearby-store search (OpenStreetMap), with no search server
         for (const x of (Array.isArray(hours) ? hours : [])) suggestions[x.location_id] = x;
       } catch (e) {
-        return c.replaceChildren(h('div', { class: 'banner danger' }, icon('alert'), h('div', { class: 'banner-body' }, e.message),
-          h('button', { class: 'btn btn-sm', onclick: load }, 'Retry')));
+        return c.replaceChildren(UI.errorBox(e, load));
       }
       render();
     }
@@ -44,11 +46,17 @@
       $('sitesBox').replaceChildren(...sitesCard());
       $('webBox').replaceChildren(...webCard());
       const c = $('content');
+      $('dirTools').hidden = dir.chains.length < 2;
       if (!dir.chains.length) {
         return c.replaceChildren(h('div', { class: 'empty' }, icon('store'), h('h2', {}, 'No stores yet'),
           h('p', {}, 'Stores appear here when you approve a receipt.'), h('a', { class: 'btn btn-primary', href: 'capture.html' }, icon('camera'), 'Scan a receipt')));
       }
-      c.replaceChildren(...[...dir.chains.map(chainCard),
+      paintDirTools();
+      const q = filterText.trim().toLowerCase();
+      const matches = (ch) => !q || [ch.name, ...(ch.aliases || []), ...ch.locations.flatMap((l) => [l.name, l.store_number, addressText(l.address)])]
+        .some((t) => t && String(t).toLowerCase().includes(q));
+      const shown = dir.chains.filter(matches).sort((a, b) => (sortBy === 'name' ? a.name.localeCompare(b.name) : (b.spend || 0) - (a.spend || 0) || a.name.localeCompare(b.name)));
+      c.replaceChildren(...[...(shown.length ? shown.map(chainCard) : [UI.empty('No stores match', 'Try another name or address.')]),
         isAdmin() ? null : h('p', { class: 'note' }, 'Anyone can fix names and addresses. Merging and deleting stores is for administrators.')].filter(Boolean));
     }
 
@@ -85,13 +93,33 @@
     }
     document.addEventListener('click', (e) => { document.querySelectorAll('details.menu[open]').forEach((m) => { if (!m.contains(e.target)) m.open = false; }); });
 
+    // The sort and filter row above the directory
+    let dirToolsBuilt = false;
+    function paintDirTools() {
+      if (dirToolsBuilt) return;
+      dirToolsBuilt = true;
+      const filter = h('input', { class: 'input', type: 'search', placeholder: 'Filter stores', 'aria-label': 'Filter stores by name or address', value: filterText });
+      filter.addEventListener('input', UI.debounce(() => { filterText = filter.value; render(); }, 150));
+      const sort = h('div', { class: 'seg', role: 'group', 'aria-label': 'Sort stores' }, ...[['spend', 'Spend'], ['name', 'Name']].map(([k, label]) => {
+        const b = h('button', { type: 'button', 'aria-pressed': String(sortBy === k) }, label);
+        b.addEventListener('click', () => { sortBy = k; UI.lsSet('stores:sort', k); sort.querySelectorAll('button').forEach((x) => x.setAttribute('aria-pressed', String(x === b))); render(); });
+        return b;
+      }));
+      $('dirTools').replaceChildren(h('div', { class: 'search' }, icon('search'), filter), sort);
+    }
+
     function chainCard(chain) {
       const meta = [`${chain.locations.length} location${chain.locations.length === 1 ? '' : 's'}`, `${chain.receipt_count} receipt${chain.receipt_count === 1 ? '' : 's'}`,
         chain.receipt_count ? money(chain.spend) : null].filter(Boolean).join(' · ');
-      return h('div', { class: 'card chain' },
+      // open: chosen, or a filter is narrowing the list, or a location has suggested opening hours to look at
+      const open = openChains.has(chain.id) || (!!filterText.trim() && dir.chains.length > 1) || chain.locations.some((l) => suggestions[l.id] && !['DISMISSED', 'APPLIED'].includes(suggestions[l.id].status));
+      const toggle = h('button', { class: 'icon-btn expand', type: 'button', 'aria-expanded': String(open), 'aria-label': `${open ? 'Hide' : 'Show'} ${chain.name}'s locations and details`,
+        onclick: () => { if (openChains.has(chain.id)) openChains.delete(chain.id); else openChains.add(chain.id); render(); } }, icon('chevron'));
+      return h('div', { class: 'card chain' + (open ? ' open' : '') },
         h('div', { class: 'chain-head' },
           h('div', { class: 'avatar' }, (chain.name[0] || '?').toUpperCase()),
-          h('div', { class: 'main' }, h('div', { class: 'name' }, chain.name), h('div', { class: 'meta' }, meta)),
+          h('button', { class: 'main chain-toggle', type: 'button', onclick: () => toggle.click() }, h('div', { class: 'name' }, chain.name), h('div', { class: 'meta' }, meta)),
+          toggle,
           h('button', { class: 'icon-btn', type: 'button', 'aria-label': `Rename ${chain.name}`, onclick: () => renameChain(chain) }, icon('edit')),
           menu(
             ['Add a location', () => locationForm(chain, null)],
@@ -99,13 +127,17 @@
             ['Discounts…', () => discountsDialog(chain)],
             isAdmin() && dir.chains.length > 1 ? ['Merge into another store…', () => mergeChain(chain)] : null,
             isAdmin() && chain.deletable ? ['Delete store', () => deleteChain(chain), 'danger'] : null)),
+        ...(open ? chainDetails(chain) : []));
+    }
+    function chainDetails(chain) {
+      return [
         chain.aliases.length ? h('div', { class: 'aliases' }, 'Also printed as: ' + chain.aliases.join(', ')) : null,
         (storeDiscounts[chain.id] || []).length ? h('div', { class: 'aliases' }, 'Discounts: ' + storeDiscounts[chain.id].map(discountText).join(' · ')) : null,
         chain.website || chain.search_url || chain.deals_url ? h('div', { class: 'aliases' }, 'Web: ',
           ...[[chain.website, chain.website ? hostOf(chain.website) : ''], [chain.search_url, 'product search'], [chain.deals_url, 'weekly ad']]
             .filter(([u]) => u).flatMap(([u, label], i) => [i ? ' · ' : null, h('a', { href: u.replace('{query}', 'milk'), target: '_blank', rel: 'noopener', style: 'text-decoration:underline' }, label)])) : null,
         ...chain.locations.map((loc) => locationRow(chain, loc)),
-        chain.locations.length ? null : h('div', { class: 'chain-foot small muted' }, 'No locations yet.'));
+        chain.locations.length ? null : h('div', { class: 'chain-foot small muted' }, 'No locations yet.')];
     }
 
     function locationRow(chain, loc) {

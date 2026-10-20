@@ -10,7 +10,7 @@
     let uploading = false;
     let homeId = null;         // the home this receipt is added to
 
-    $('backLink').append(icon('back'), 'Receipts');
+    $('backLink').replaceWith(RPI.backButton('Receipts', 'index.html'));
     $('pickBtn').prepend(icon('image'), h('span', { id: 'pickLabel' }, 'Choose photos or PDF'));
     $('cameraBtn').append(icon('camera'), 'Use camera');
     $('closeCamera').append(icon('x'), 'Close camera');
@@ -203,7 +203,7 @@
         stopCamera();
         if (notes.length) sessionStorage.setItem('capture:note:' + draftId, notes.join(' '));
         uploading = false; pages = [];
-        RPI.go('review.html?id=' + encodeURIComponent(draftId));
+        RPI.go('review.html?id=' + encodeURIComponent(draftId), { replace: true });
       } catch (e) {
         uploading = false;
         ui.fail(e.message, upload);

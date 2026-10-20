@@ -3,7 +3,7 @@
     const $ = (id) => document.getElementById(id);
     $('adminTabs').replaceWith(RPI.adminTabs('debug'));
 
-    let ctx = null, setup = null, opts = null, tab = 'try', tool = 'search', result = null, busy = false;
+    let ctx = null, setup = null, opts = null, tab = location.hash === '#log' ? 'log' : 'try', tool = 'search', result = null, busy = false;
     let logRows = [], logFilter = '', autoTimer = null;
     let preset = null, presetBusy = null, presetLimit = '5';
     const form = { query: 'Kroger store hours', site: '', limit: '5', url: '', location: '', item: '', chain: '', dealChain: '', useCache: true };
@@ -274,7 +274,10 @@
       if (tab === 'log') render();
     }
     function logView() {
+      const errors = logRows.filter((e) => !(e.status && e.status < 400 && !e.error)).length;
       return h('div', { class: 'card' }, h('div', { class: 'card-body stack' },
+        h('div', { class: 'logsum' }, h('strong', {}, `${logRows.length} request${logRows.length === 1 ? '' : 's'}`),
+          ' · ', h('span', { class: errors ? 'st-bad' : 'muted' }, `${errors} error${errors === 1 ? '' : 's'}`)),
         h('div', { class: 'row wrap', style: 'gap:8px;align-items:center' },
           h('select', { class: 'select', style: 'width:auto', onchange: (e) => { logFilter = e.target.value; loadLog(); } },
             ...[['', 'All services'], ['tavily', 'Tavily'], ['parallel', 'Parallel'], ['searxng', 'SearXNG'], ['custom', 'Search server'], ['page', 'Pages'], ['model', 'Model'], ['cache', 'Saved results']]
@@ -296,12 +299,15 @@
       if (!ctx) return;
       if (!ctx.me.is_admin) { c.replaceChildren(h('div', { class: 'banner warn' }, icon('alert'), h('div', { class: 'banner-body' }, 'Only administrators can use this page.'))); return; }
       c.replaceChildren(
-        setupCard(),
-        h('div', { class: 'tabs' }, ...[['try', 'Try it'], ['log', 'Recent requests']].map(([k, label]) =>
-          h('button', { class: 'btn', type: 'button', 'aria-pressed': String(tab === k), onclick: () => {
+        // Try it / Recent requests first, then the setup they use
+        h('div', { class: 'seg', role: 'group', 'aria-label': 'Web debug' }, ...[['try', 'Try it'], ['log', 'Recent requests']].map(([k, label]) =>
+          h('button', { type: 'button', 'aria-pressed': String(tab === k), 'aria-current': tab === k ? 'page' : null, onclick: () => {
             // the automatic refresh belongs to the Recent requests tab: it stops when you leave it
             if (k !== 'log' && autoTimer) { clearInterval(autoTimer); autoTimer = null; }
-            tab = k; render(); if (k === 'log') loadLog(); } }, label))),
+            tab = k;
+            if (window.BackNav) BackNav.replace('#' + k); else history.replaceState(history.state, '', '#' + k);
+            render(); if (k === 'log') loadLog(); } }, label))),
+        setupCard(),
         ...(tab === 'try' ? [presetCard(), presetView(), toolForm(), resultView()] : [logView()]));
     }
 
@@ -314,8 +320,9 @@
           if (site && !form.site) form.query = `${site.name} store hours`;
         }
         render();
+        if (tab === 'log') loadLog();
       } catch (e) {
-        $('content').replaceChildren(h('div', { class: 'banner danger' }, icon('alert'), h('div', { class: 'banner-body' }, e.message)));
+        $('content').replaceChildren(UI.errorBox(e, init));
       }
     }
     init();

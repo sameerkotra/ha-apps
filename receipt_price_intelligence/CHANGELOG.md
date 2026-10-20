@@ -1,5 +1,19 @@
 # Changelog
 
+## 1.4.0
+
+- **A tidier phone menu**: the bottom bar is now List, Receipts, Prices, Trip and **More**; More holds Insights, Stores, Notify, Admin, **Me** and the theme (Me and the theme couldn't be reached on a phone before). On a computer the sidebar is unchanged.
+- **Back retraces your steps across pages**: Back from a receipt, Scan or Upload goes to where you opened it (else Receipts), from Backup or Web debug to Admin; the ← at the top of those pages does the same.
+- **Shopping list**: a one-line add box (the help is behind **?**), the list straight under it with a summary (*12 items · 3 stores · about $54 · Plan trip*), and *due to restock* and *cheaper than usual* as one line of chips, their cards below the list.
+- **Receipts**: Saved opens when there is nothing to review, saved receipts are grouped by month with each month's total, and there is a store search; the import note is one line at the bottom (*Check now* is in its ⋯ menu).
+- **Review**: on a phone the photo is a strip of thumbnails (tap to enlarge), so the check and the lines come first; *Not happy with how it was read?* now sits in the check when the totals don't add up (and stays in the ⋯ menu).
+- **Insights**: *Export* moved to the ⋯ menu; Savings starts with the store scorecard and groups suggestions by the store to buy at (*Costco: 5 items, about $18/mo*) with **Add to list**; the Overview shows *Saved with discounts* and the top three stores.
+- **Best prices**: each *For you* suggestion ends with what to do: **Add to list**, **Set target** or **Open receipt**. The List and Insights link to it.
+- **Stores**: the stores come first, sorted by spend or name, with a filter; each store is one row (name · locations · spend) that opens to its locations; nearby stores, websites and hours are under **Tools**.
+- **Trip**: warnings sit right above the best plan, and on a wide screen the plan shows beside the options.
+- **Admin**: Backup shows the counts as a small strip, then Export, then Restore set apart; Web debug puts *Try it / Recent requests* first and counts requests and errors; all admin pages are the same width.
+- **Me**: *Let the Household Assistant answer for me* is now a switch at the top.
+
 ## 1.3.5
 
 - **Back goes to the page you came from.** The phone's back gesture (and the browser's Back) now steps back through the pages you opened in the app, instead of jumping straight to the start page; dialogs still close first, and Back on the start page still leaves the app.

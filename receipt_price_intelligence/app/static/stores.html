@@ -7,27 +7,8 @@
   <script src="static/common/theme-boot.js"></script>
   <link rel="stylesheet" href="static/common/themes.css">
   <link rel="stylesheet" href="static/app.css">
-  <style>
-    .chain { overflow: visible; }
-    .chain-head { display: flex; align-items: center; gap: 12px; padding: 14px 14px 12px; }
-    .chain-head .main { flex: 1; min-width: 0; }
-    .chain-head .name { font-weight: 700; font-size: 1.05rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    .chain-head .meta { color: var(--muted); font-size: .85rem; }
-    .aliases { padding: 0 14px 10px; font-size: .78rem; color: var(--faint); }
-    .loc { display: flex; align-items: center; gap: 10px; padding: 11px 14px; border-top: 1px solid var(--line); }
-    .loc .main { flex: 1; min-width: 0; }
-    .loc .title { font-weight: 600; }
-    .loc .addr { color: var(--muted); font-size: .85rem; }
-    .loc .addr.none { color: var(--faint); font-style: italic; }
-    .loc .stat { text-align: right; font-size: .82rem; color: var(--muted); white-space: nowrap; }
-    .loc .stat b { display: block; color: var(--text); font-variant-numeric: tabular-nums; font-size: .95rem; }
-    .chain-foot { padding: 8px 14px 12px; border-top: 1px solid var(--line); }
-    .menu-list { z-index: 50; }
-    .dupes { display: grid; gap: 10px; margin-bottom: 14px; }
-    .note { font-size: .82rem; color: var(--muted); }
-  </style>
 </head>
-<body>
+<body class="pg-stores">
   <div class="page mid">
     <div class="topbar">
       <div class="grow">
@@ -36,11 +17,18 @@
       </div>
       <span id="homeSwitch"></span>
     </div>
-    <div id="nearbyBox"></div>
-    <div id="sitesBox"></div>
-    <div id="webBox"></div>
     <div id="dupes" class="dupes"></div>
+    <div id="dirTools" class="dirtools" hidden></div>
     <div id="content" class="stack" aria-live="polite"></div>
+    <!-- Nearby stores, websites and opening hours: tools used now and then, folded under the directory -->
+    <details class="tools" id="toolsCard">
+      <summary>Tools <span class="muted small">nearby stores · websites · opening hours</span></summary>
+      <div class="stack tools-body">
+        <div id="nearbyBox"></div>
+        <div id="sitesBox"></div>
+        <div id="webBox"></div>
+      </div>
+    </details>
   </div>
 
   <script src="static/common/backnav.js"></script>

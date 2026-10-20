@@ -8,7 +8,7 @@ import unittest
 from common_tests import packaging_core as pk
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-VERSION = "1.3.4"
+VERSION = "1.4.0"
 
 
 def read(*parts):

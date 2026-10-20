@@ -4,11 +4,21 @@
 
     const TABS = [['overview', 'Overview'], ['stores', 'Stores'], ['categories', 'Categories'], ['items', 'Items'], ['prices', 'Prices'], ['savings', 'Savings']];
     const RANGES = [['30d', '30 days'], ['90d', '90 days'], ['12m', '12 months'], ['all', 'All time']];
-    let ctx = null, tab = 'overview', range = '90d', token = 0, itemQuery = '', itemSort = 'spend', priceQuery = '';
+    // the tab is in the address (#stores, #savings, …): a reload or Back keeps it
+    const hashTab = () => { const t = location.hash.slice(1); return TABS.some(([id]) => id === t) ? t : null; };
+    let ctx = null, tab = hashTab() || 'overview', range = '90d', token = 0, itemQuery = '', itemSort = 'spend', priceQuery = '';
     let savingsCount = null;
 
-    $('exportBtn').append(icon('download'), 'Export');
-    $('exportBtn').addEventListener('click', () => exportDialog());
+    $('pageMenuBtn').append(icon('more'));
+    $('exportBtn').append(icon('download'), 'Export to a spreadsheet');
+    $('exportBtn').addEventListener('click', () => { $('pageMenu').open = false; exportDialog(); });
+    document.addEventListener('click', (e) => { const m = $('pageMenu'); if (m.open && !m.contains(e.target)) m.open = false; });
+    function setTab(id) {
+      tab = id;
+      if (window.BackNav) BackNav.replace('#' + id); else history.replaceState(history.state, '', '#' + id);
+      renderControls(); show();
+    }
+    window.addEventListener('hashchange', () => { const t = hashTab(); if (t && t !== tab) { tab = t; renderControls(); show(); } });
     const base = () => `api/v1/homes/${encodeURIComponent(ctx.homeId)}/analysis`;
 
     // ---------------------------------------------------------------- helpers
@@ -32,7 +42,7 @@
     // ---------------------------------------------------------------- shell
     function renderControls() {
       $('tabs').replaceChildren(...TABS.map(([id, label]) => h('button', { type: 'button', role: 'tab', 'aria-pressed': String(tab === id),
-        onclick: () => { tab = id; renderControls(); show(); } }, label,
+        'aria-selected': String(tab === id), 'aria-current': tab === id ? 'page' : null, onclick: () => setTab(id) }, label,
         id === 'savings' && savingsCount ? h('span', { class: 'count' }, savingsCount) : null)));
       const ranges = $('ranges');
       ranges.hidden = tab === 'savings';
@@ -50,7 +60,7 @@
         c.replaceChildren(...view.filter(Boolean));
       } catch (e) {
         if (mine !== token) return;
-        c.replaceChildren(h('div', { class: 'banner danger' }, icon('alert'), h('div', { class: 'banner-body' }, e.message), h('button', { class: 'btn btn-sm', onclick: show }, 'Retry')));
+        c.replaceChildren(UI.errorBox(e, show));
       }
     }
 
@@ -68,20 +78,24 @@
       return [
         h('div', { class: 'kpis' },
           kpi('Spent', money(t.spend), change), kpi('Shopping trips', String(t.trips), null),
-          kpi('Average basket', money(t.avg_basket), null), kpi('Items · Stores', `${t.distinct_items} · ${t.stores}`, 'distinct items · stores')),
+          kpi('Average basket', money(t.avg_basket), null),
+          disc && disc.total_saved > 0 ? kpi('Saved with discounts', money(disc.total_saved), `${disc.rate_pct}% off those items`)
+            : kpi('Items bought', String(t.distinct_items), `at ${t.stores} store${t.stores === 1 ? '' : 's'}`)),
         rec && rec.est_monthly_savings > 0 ? h('div', { class: 'banner ok' }, icon('check'),
           h('div', { class: 'banner-body' }, h('strong', {}, `You could save about ${money(rec.est_monthly_savings)} a month. `),
             h('span', { class: 'banner-text' }, `${rec.switch_store.length} item${rec.switch_store.length === 1 ? ' is' : 's are'} cheaper at another store.`)),
-          h('button', { class: 'btn btn-sm', onclick: () => { tab = 'savings'; renderControls(); show(); } }, 'See how')) : null,
+          h('button', { class: 'btn btn-sm', onclick: () => setTab('savings') }, 'See how')) : null,
         card('Spend by month', h('div', { class: 'card-body' }, h('div', { class: 'bars', role: 'img', 'aria-label': 'Spend by month' },
           ov.by_month.map((m) => h('div', { class: 'bar-col', title: `${monthLabel(m.month)}: ${money(m.spend)} across ${m.trips} trips` },
             h('div', { class: 'bar-val' }, m.spend ? shortMoney(m.spend) : ''),
             h('div', { class: 'bar-stick', style: `height:${m.spend ? Math.max(m.spend / max * 100, 3) : 0}%` }),
             h('div', { class: 'bar-lab' }, monthLabel(m.month))))))),
-        card('Where the money goes', h('div', { class: 'card-body flush' }, ov.top_stores.map((s) => h('div', { class: 'rowline' },
+        // the top three here; every store, with its locations, on the Stores tab
+        card('Where the money goes', h('div', { class: 'card-body flush' }, ov.top_stores.slice(0, 3).map((s) => h('div', { class: 'rowline' },
           h('div', { class: 'top' }, h('span', { class: 'name' }, s.name), h('span', { class: 'amt' }, money(s.spend))),
           h('div', { class: 'bar-track' }, h('div', { class: 'bar-fill', style: `width:${s.share}%` })),
-          h('div', { class: 'meta' }, `${s.share}% · ${s.trips} trip${s.trips === 1 ? '' : 's'} · avg ${money(s.avg_basket)}`))))),
+          h('div', { class: 'meta' }, `${s.share}% · ${s.trips} trip${s.trips === 1 ? '' : 's'} · avg ${money(s.avg_basket)}`))),
+          h('button', { class: 'rowline seeall', type: 'button', onclick: () => setTab('stores') }, h('div', { class: 'top' }, h('span', { class: 'name' }, 'All stores →'))))),
         disc && disc.total_saved > 0 ? card('Saved with sales and coupons', h('div', { class: 'card-body flush' },
           h('div', { class: 'rowline' }, h('div', { class: 'top' }, h('span', { class: 'name' }, `${money(disc.total_saved)} saved`), h('span', { class: 'pill ok' }, `${disc.rate_pct}% off those items`)),
             h('div', { class: 'meta' }, `${disc.lines} discounted line${disc.lines === 1 ? '' : 's'} on ${disc.receipts} receipt${disc.receipts === 1 ? '' : 's'}${disc.share_of_spend_pct != null ? ` · ${disc.share_of_spend_pct}% of what you would have spent` : ''}`)),
@@ -108,14 +122,14 @@
       const r = await api(`${base()}/stores?range=${range}`);
       if (!r.stores.length) return [empty('No receipts in this period', 'Approve a receipt, or choose a longer period.')];
       return [
-        h('div', { class: 'small muted' }, `${money(r.totals.spend)} across ${r.totals.trips} trips`),
+        h('div', { class: 'small muted row wrap', style: 'justify-content:space-between' }, h('span', {}, `${money(r.totals.spend)} across ${r.totals.trips} trips`),
+          h('a', { href: 'stores.html', style: 'text-decoration:underline' }, 'Addresses, hours and duplicates: Stores page')),
         ...r.stores.map((s) => h('details', { class: 'card' },
           h('summary', { class: 'rowline', style: 'cursor:pointer;list-style:none' },
             h('div', { class: 'top' }, h('span', { class: 'name' }, s.name), h('span', { class: 'amt' }, money(s.spend))),
             h('div', { class: 'bar-track' }, h('div', { class: 'bar-fill', style: `width:${s.share}%` })),
             h('div', { class: 'meta' }, `${s.share}% of spending · ${s.trips} trip${s.trips === 1 ? '' : 's'} · avg basket ${money(s.avg_basket)} · last visit ${fmtDate(s.last_visit)}`)),
           ...(s.locations.length > 1 ? s.locations.map((l) => h('div', { class: 'srow' }, h('div', { class: 'grow small' }, l.label), h('div', { class: 'small muted' }, `${l.trips} trip${l.trips === 1 ? '' : 's'}`), h('div', { class: 'amt' }, money(l.spend)))) : []))),
-        h('div', { class: 'small muted' }, h('a', { href: 'stores.html', style: 'text-decoration:underline' }, 'Fix names or merge duplicate stores')),
       ];
     }
 
@@ -287,7 +301,8 @@
       const out = [];
       const nothing = !savingsCount && !r.store_scorecard.length;
 
-      out.push(h('div', { class: 'small muted' }, `Based on your last ${r.window_days} days of receipts. Savings are estimates from what you actually paid.`));
+      out.push(h('div', { class: 'small muted' }, `Based on your last ${r.window_days} days of receipts. Savings are estimates from what you actually paid. `,
+        h('a', { href: 'deals.html', style: 'text-decoration:underline' }, 'Every suggestion, with online prices: Best prices →')));
       if (r.est_monthly_savings > 0) {
         out.push(h('div', { class: 'banner ok' }, icon('check'), h('div', { class: 'banner-body' },
           h('strong', {}, `About ${money(r.est_monthly_savings)} a month`), h('span', { class: 'banner-text' }, ' if you bought these at the cheaper store.'))));
@@ -297,16 +312,44 @@
         return out;
       }
 
+      if (r.store_scorecard.length) {
+        out.push(h('div', { class: 'sect' }, 'Store scorecard'));
+        out.push(card(null, h('table', { class: 'tbl' },
+          h('thead', {}, h('tr', {}, h('th', {}, 'Store'), h('th', { class: 'r' }, 'Cheapest on'), h('th', { class: 'r' }, 'Avg. premium'))),
+          h('tbody', {}, r.store_scorecard.map((s) => h('tr', {}, h('td', {}, s.name), h('td', { class: 'r' }, `${s.cheapest_count} of ${s.items_compared}`), h('td', { class: 'r' }, s.avg_premium_pct ? `+${s.avg_premium_pct}%` : '—')))))));
+        out.push(h('p', { class: 'small muted' }, 'Only items you have bought at two or more stores are compared, in the same unit.'));
+      }
       if (r.switch_store.length) {
+        // grouped by the store to buy at: "Costco: 5 items, about $18/mo", and one tap puts them on the list
         out.push(h('div', { class: 'sect' }, 'Cheaper elsewhere'));
+        const groups = new Map();
         for (const s of r.switch_store) {
-          out.push(h('div', { class: 'card rec' },
-            h('div', { class: 'headline' }, h('button', { type: 'button', style: 'background:none;border:0;padding:0;font:inherit;color:inherit;cursor:pointer;text-align:left', onclick: () => openItem(s.item_id) }, s.item_name)),
-            h('div', {}, 'Buy at ', h('strong', {}, s.to.label), ` for ${priceText(s.to.price, s.unit)}`, ` — ${s.saving_pct}% less than `, h('strong', {}, s.from.label), ` (${priceText(s.from.price, s.unit)})`),
-            h('div', { class: 'small muted row wrap' },
-              s.est_monthly_savings ? h('span', {}, 'Saves about ', h('span', { class: 'money' }, money(s.est_monthly_savings)), '/month') : null,
-              confidence(s.confidence), h('span', {}, s.confidence >= 0.66 ? 'Solid evidence' : s.confidence >= 0.33 ? 'Some evidence' : 'Early hint')),
-            h('div', { class: 'small muted' }, `You bought it ${s.from.receipts}× at ${s.from.label.split(' · ')[0]}. The lower price was seen ${fmtDate(s.to.date)}.`)));
+          const key = s.to.label.split(' · ')[0];
+          if (!groups.has(key)) groups.set(key, []);
+          groups.get(key).push(s);
+        }
+        const ordered = [...groups.entries()].map(([store, list]) => ({ store, list, monthly: list.reduce((t, s) => t + (s.est_monthly_savings || 0), 0) }))
+          .sort((a, b) => b.monthly - a.monthly || b.list.length - a.list.length);
+        for (const g of ordered) {
+          const add = h('button', { class: 'btn btn-sm', type: 'button' }, icon('plus'), 'Add to list');
+          add.addEventListener('click', async () => {
+            add.disabled = true;
+            try {
+              await api(`api/v1/homes/${encodeURIComponent(ctx.homeId)}/list/many`, { method: 'POST', body: { item_ids: g.list.map((s) => s.item_id) } });
+              toast(`${g.list.length} item${g.list.length === 1 ? '' : 's'} added to the list`, 'success');
+              add.replaceChildren(icon('check'), 'On the list');
+            } catch (e) { toast(e.message, 'error'); add.disabled = false; }
+          });
+          out.push(h('div', { class: 'card' },
+            h('div', { class: 'card-head savehead' }, h('span', { class: 'grow' }, h('strong', {}, g.store), `: ${g.list.length} item${g.list.length === 1 ? '' : 's'}`,
+              g.monthly ? `, about ${money(g.monthly)}/mo` : ''), add),
+            ...g.list.map((s) => h('div', { class: 'rec' },
+              h('div', { class: 'headline' }, h('button', { type: 'button', style: 'background:none;border:0;padding:0;font:inherit;color:inherit;cursor:pointer;text-align:left', onclick: () => openItem(s.item_id) }, s.item_name)),
+              h('div', {}, `${priceText(s.to.price, s.unit)} at ${s.to.label}`, ` — ${s.saving_pct}% less than `, h('strong', {}, s.from.label), ` (${priceText(s.from.price, s.unit)})`),
+              h('div', { class: 'small muted row wrap' },
+                s.est_monthly_savings ? h('span', {}, 'Saves about ', h('span', { class: 'money' }, money(s.est_monthly_savings)), '/month') : null,
+                confidence(s.confidence), h('span', {}, s.confidence >= 0.66 ? 'Solid evidence' : s.confidence >= 0.33 ? 'Some evidence' : 'Early hint')),
+              h('div', { class: 'small muted' }, `You bought it ${s.from.receipts}× at ${s.from.label.split(' · ')[0]}. The lower price was seen ${fmtDate(s.to.date)}.`)))));
         }
       }
       if (r.price_alerts.length) {
@@ -323,13 +366,6 @@
         out.push(card(null, h('div', { class: 'card-body flush' }, r.restock.map((s) => h('button', { class: 'rowline', type: 'button', onclick: () => openItem(s.item_id) },
           h('div', { class: 'top' }, h('span', { class: 'name' }, s.item_name), h('span', { class: 'pill ' + (s.status === 'overdue' ? 'warn' : '') }, s.status === 'overdue' ? 'Overdue' : 'Due')),
           h('div', { class: 'meta' }, `You usually buy it every ${Math.round(s.avg_interval_days)} days. It's been ${s.days_since_last}.`))))));
-      }
-      if (r.store_scorecard.length) {
-        out.push(h('div', { class: 'sect' }, 'Store scorecard'));
-        out.push(card(null, h('table', { class: 'tbl' },
-          h('thead', {}, h('tr', {}, h('th', {}, 'Store'), h('th', { class: 'r' }, 'Cheapest on'), h('th', { class: 'r' }, 'Avg. premium'))),
-          h('tbody', {}, r.store_scorecard.map((s) => h('tr', {}, h('td', {}, s.name), h('td', { class: 'r' }, `${s.cheapest_count} of ${s.items_compared}`), h('td', { class: 'r' }, s.avg_premium_pct ? `+${s.avg_premium_pct}%` : '—')))))));
-        out.push(h('p', { class: 'small muted' }, 'Only items you have bought at two or more stores are compared, in the same unit.'));
       }
       return out;
     }
