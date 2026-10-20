@@ -852,7 +852,6 @@ async function viewSources(id) {
     const s = await api(`api/sources/${id}`);
     return h("div", null,
       h("div", { class: "page-head" }, h("h2", null, `📎 ${s.title}`), h("div", { class: "person-actions" },
-        h("button", { type: "button", class: "btn-ghost", onclick: () => go("sources") }, "← All sources"),
         h("button", { type: "button", class: "btn-secondary", onclick: () => sourceModal(s) }, "✎ Edit"),
         h("button", { type: "button", class: "btn-ghost", onclick: async () => {
           if (!await confirmDialog("Delete source", `Delete “${s.title}”? Its ${plural(s.citationsList.length, "citation")} stop showing. You can undo it from History.`, "Delete", true)) return;
@@ -870,13 +869,31 @@ async function viewSources(id) {
             h("span", { class: "hint" }, " — " + [evLabel(c.what) || c.what, c.page, c.quality !== null ? QUALITY[c.quality] : null].filter(Boolean).join(" · "))))) : h("div", { class: "hint" }, "Nothing cites it yet.")));
   }
   const r = await api("api/sources");
+  const q = h("input", { type: "search", placeholder: "Search titles, authors, notes…", "aria-label": "Search sources" });
+  const sort = h("select", { "aria-label": "Sort" }, h("option", { value: "title" }, "Sort: title"), h("option", { value: "cited" }, "Sort: most cited"));
+  sort.value = lsGet("sourceSort") === "cited" ? "cited" : "title";
+  const list = h("div", { class: "card" });
+  const draw = () => {
+    const n = q.value.trim().toLowerCase();
+    const items = r.items.filter((x) => !n || [x.title, x.author, x.repository, x.note].filter(Boolean).join(" ").toLowerCase().includes(n));
+    if (sort.value === "cited") items.sort((a, b) => (b.citations || 0) - (a.citations || 0));
+    mount(list, items.length ? items.map((x) => h("div", { class: "person-row", role: "button", tabindex: "0", onclick: () => go(`sources/${x.id}`),
+      onkeydown: (e) => { if (e.key === "Enter") go(`sources/${x.id}`); } },
+      h("div", { class: "grow" }, h("div", { class: "nm" }, x.title), h("div", { class: "sub" }, [SOURCE_KINDS[x.kind], x.author, x.date, plural(x.citations, "citation")].filter(Boolean).join(" · ")))))
+      : h("div", { class: "empty" }, "Nothing matches."));
+  };
+  q.addEventListener("input", debounce(draw, 150));
+  sort.addEventListener("change", () => { lsSet("sourceSort", sort.value); draw(); });
+  draw();
   return h("div", null,
     h("div", { class: "page-head" }, h("h2", null, "Sources ", h("span", { class: "hint" }, plural(r.items.length, "source"))),
       h("button", { type: "button", class: "btn-primary", onclick: () => sourceModal(null) }, "+ Source")),
-    h("p", { class: "hint" }, "Where the information came from: certificates, documents, books, websites, or what someone told you. Add them to facts with the 📎 buttons on a person's page."),
-    h("div", { class: "card" }, r.items.length ? r.items.map((x) => h("div", { class: "person-row", role: "button", tabindex: "0", onclick: () => go(`sources/${x.id}`) },
-      h("div", { class: "grow" }, h("div", { class: "nm" }, x.title), h("div", { class: "sub" }, [SOURCE_KINDS[x.kind], x.author, x.date, plural(x.citations, "citation")].filter(Boolean).join(" · ")))))
-      : h("div", { class: "empty" }, "No sources yet.")));
+    r.items.length ? [
+      h("details", { class: "about" }, h("summary", null, "What are sources?"),
+        h("p", null, "Where the information came from: certificates, documents, books, websites, or what someone told you. Add them to facts with the 📎 buttons on a person's page.")),
+      h("div", { class: "toolbar" }, q, sort), list]
+      : UI.empty("No sources yet", "Certificates, documents, books, websites, or what someone told you. Add them to facts with the 📎 buttons on a person's page.",
+        { label: "+ Source", onclick: () => sourceModal(null) }));
 }
 
 // ---------- contacts & address book (§13.11) ----------
@@ -931,6 +948,7 @@ async function viewContacts() {
 async function viewDuplicates(args) {
   if (args[0] === "merge") return viewMerge(args[1], args[2]);
   const r = await api("api/duplicates");
+  r.items.sort((x, y) => y.score - x.score);          // most likely first
   return h("div", null,
     h("div", { class: "page-head" }, h("h2", null, "Possible duplicates ", h("span", { class: "hint" }, plural(r.total, "pair")))),
     h("p", { class: "hint" }, "People who may have been entered twice — similar names (Lakshmi / Laxmi, Venkat / Venkata), close birth years, the same parents. Compare them, then merge or say they're different people."),
@@ -942,7 +960,7 @@ async function viewDuplicates(args) {
         h("button", { type: "button", class: "btn-ghost btn-small", onclick: async () => {
           try { await api("api/duplicates/dismiss", { method: "POST", body: { a: it.a, b: it.b } }); toast("Remembered — they won't be suggested again"); rerender(); } catch (x) { fail(x); }
         } }, "Not the same person")))))
-      : h("div", { class: "card" }, h("div", { class: "empty" }, "No likely duplicates. 🎉")));
+      : UI.empty("No likely duplicates 🎉", "Nobody looks like they were entered twice."));
 }
 async function viewMerge(aId, bId) {
   const c = await api(`api/duplicates/compare?a=${encodeURIComponent(aId)}&b=${encodeURIComponent(bId)}`);
@@ -987,26 +1005,62 @@ async function viewMerge(aId, bId) {
         } }, "Merge")));
   };
   draw();
-  return h("div", null, h("div", { class: "page-head" }, h("h2", null, "Compare & merge"),
-    h("button", { type: "button", class: "btn-ghost", onclick: () => go("duplicates") }, "← Duplicates")), box);
+  return h("div", null, h("div", { class: "page-head" }, h("h2", null, "Compare & merge")), box);
 }
 
-// ---------- the "More" page: tools that don't need a sidebar slot ----------
+// ---------- the "More" page: everything that isn't in the phone's bottom bar ----------
+/* Grouped tiles. A module that is switched off shows to admins as a greyed "Off · turn on" tile (linking to
+   App settings); others don't see it. Unsorted and Duplicates show how many are waiting. */
 function viewMore() {
-  const tile = (icon, title, text, route) => h("button", { type: "button", class: "more-tile", onclick: () => go(route) }, h("span", { class: "more-icon" }, icon), h("strong", null, title), h("span", { class: "hint" }, text));
-  return h("div", null, h("h2", { class: "page-title" }, "More"),
-    h("div", { class: "more-grid" },
+  const admin = !!(state.me && state.me.isAdmin);
+  const badges = {};
+  const tile = (icon, title, text, route, opts = {}) => {
+    const on = !opts.feature || feat(opts.feature);
+    if (!on && !admin) return null;
+    const badge = on && opts.badge ? (badges[opts.badge] = h("span", { class: "count-badge", hidden: true })) : null;
+    return h("button", { type: "button", class: "more-tile" + (on ? "" : " off"), onclick: () => go(on ? route : "admin/settings"),
+      title: on ? null : `${FEATURE_NAMES[opts.feature] || "This"} is turned off. Turn it on in Admin → App settings → Features.` },
+      h("span", { class: "more-icon" }, icon), h("strong", null, title),
+      on ? h("span", { class: "hint" }, text) : h("span", { class: "tile-off" }, "Off · turn on"), badge);
+  };
+  const sec = (title, ...tiles) => {
+    const t = tiles.filter(Boolean);
+    return t.length ? h("section", { class: "more-sec" }, h("h3", null, title), h("div", { class: "more-grid" }, ...t)) : null;
+  };
+  const theme = HouseholdTheme.bindSelect(h("select", { "aria-label": "Theme" }));
+  const page = h("div", null, h("h2", { class: "page-title" }, "More"),
+    sec("Find",
       tile("🔗", "How are they related?", "Pick any two people to see what they are to each other", "relate"),
       tile("🧭", "Find relatives", feat("kin_names") ? "First cousins, all my Babais, descendants of…" : "First cousins, all my uncles, descendants of…", "people/relatives"),
-      feat("sources") ? tile("📎", "Sources", "Certificates, documents and interviews behind the facts", "sources") : null,
-      feat("contacts") ? tile("📇", "Address book", "Phone numbers and addresses, and a vCard for your phone", "contacts") : null,
-      feat("tithi") ? tile("🪔", "Tithi dates", "This year's shraddha and janma tithi dates, to print for the priest", "tithis") : null,
-      feat("duplicates") ? tile("👯", "Duplicates", "People who may have been entered twice — merge them", "duplicates") : null,
-      feat("quiz") ? tile("🧩", "Who is this?", "A photo quiz for kids and everyone", "quiz") : null,
-      feat("printing") ? tile("🖼️", "Wall chart", "Print a big chart, or tile it across A4 sheets", "print/chart") : null,
-      feat("printing") ? tile("📖", "Family book", "A printable book with a page for each person", "print/book") : null,
-      feat("inbox") ? tile("📥", "Unsorted photos", "Photos dropped into the inbox folder, waiting to be sorted", "photos/unsorted") : null,
-      feat("map") ? tile("🗺️", "Map", "Where the family was born, married and lived", "map") : null));
+      tile("📇", "Address book", "Phone numbers and addresses, and a vCard for your phone", "contacts", { feature: "contacts" }),
+      tile("🗺️", "Map", "Where the family was born, married and lived", "map", { feature: "map" })),
+    sec("Tidy up",
+      tile("👯", "Duplicates", "People who may have been entered twice — merge them", "duplicates", { feature: "duplicates", badge: "duplicates" }),
+      tile("📎", "Sources", "Certificates, documents and interviews behind the facts", "sources", { feature: "sources" }),
+      tile("📥", "Unsorted photos", "Photos dropped into the inbox folder, waiting to be sorted", "photos/unsorted", { feature: "inbox", badge: "unsorted" })),
+    sec("Print & play",
+      tile("🖼️", "Wall chart", "Print a big chart, or tile it across A4 sheets", "print/chart", { feature: "printing" }),
+      tile("📖", "Family book", "A printable book with a page for each person", "print/book", { feature: "printing" }),
+      tile("🪔", "Tithi dates", "This year's shraddha and janma tithi dates, to print for the priest", "tithis", { feature: "tithi" }),
+      tile("🧩", "Who is this?", "A photo quiz for kids and everyone", "quiz", { feature: "quiz" })),
+    sec("Tools",
+      tile("📤", "Export", "A website, a GEDCOM file or a copy to share with family", "export", { feature: "export" }),
+      tile("🕘", "History", "Every change, who made it, and Undo", "history")),
+    sec("You & settings",
+      tile("👤", "You", "How the app sees you: your login, admin, reminders", "whoami"),
+      tile("⚙️", "My settings", "This is me, dates, names, reminders", "settings"),
+      tile("🏠", "Family setup", "Custom fields, milestones, relationship words", "settings/family"),
+      h("label", { class: "more-tile theme-tile" }, h("span", { class: "more-icon" }, "🎨"), h("strong", null, "Theme"), theme)),
+    admin ? sec("Admin",
+      tile("🛡️", "App settings", "Features, photo folder, reminders, defaults", "admin/settings"),
+      tile("👥", "Users", "Who can use Family Tree, their phones", "admin/users"),
+      tile("💾", "Storage", "Photo storage and space used", "admin/storage"),
+      tile("📥", "Import", "A GEDCOM file or another Family Tree", "admin/import"),
+      tile("🗑", "Trash", "Restore deleted people, families and photos", "admin/trash")) : null);
+  const show = (key, n) => { const b = badges[key]; if (b && n) { b.hidden = false; b.textContent = n > 99 ? "99+" : String(n); b.title = `${n} waiting`; } };
+  if (badges.unsorted) api("api/inbox/status").then((st) => show("unsorted", st.unsorted)).catch(() => {});
+  if (badges.duplicates) api("api/duplicates").then((r) => show("duplicates", r.total)).catch(() => {});
+  return page;
 }
 
 
@@ -1124,7 +1178,7 @@ async function viewQuiz() {
       h("p", { class: "hint" }, "Uses profile photos and faces tagged in photos; people without one are left out. People who are often missed come up more often."),
       h("div", { class: "actions" }, play)),
     game,
-    h("div", { class: "card" }, h("h3", null, "Kids mode"),
+    h("details", { class: "card kids-card" }, h("summary", null, h("strong", null, "🔒 Kids mode"), h("span", { class: "hint" }, " — lock this device to the quiz")),
       h("p", { class: "hint" }, "Locks this device to the quiz (the server refuses everything else) so a child can play on your login without changing the tree."),
       h("div", { class: "field wide" }, "Games they can switch between", h("div", { class: "chips" }, ...kmodes.map(([k, cb]) => h("label", { class: "check-row" }, cb, QUIZ_MODES[k])))),
       h("div", { class: "form-row" }, field("Time limit", limit)),
@@ -1267,13 +1321,127 @@ function trackMap(map) { liveMaps.push(map); return map; }
 function removeMaps() { for (const m of liveMaps.splice(0)) { try { m.remove(); } catch (e) { /* already gone */ } } }
 function rerender() { route(); }
 function setNav(name) {
+  const moreish = ["more", "relate", "sources", "contacts", "duplicates", "quiz", "print", "tithis", "map", "whoami"];
   document.querySelectorAll(".side-nav .tab-btn").forEach((b) => {
     const r = b.dataset.route;
-    b.classList.toggle("active", r === name || (name === "person" && r === "people") || (name === "kin" && r === "settings") ||
-      (["more", "relate", "sources", "contacts", "duplicates", "quiz", "print"].includes(name) && r === "more") ||
-      (name === "admin" && r.startsWith("admin/")));
+    const on = r === name || (name === "person" && r === "people") || (name === "kin" && r === "settings") ||
+      (moreish.includes(name) && r === "more") || (name === "admin" && r.startsWith("admin/"));
+    b.classList.toggle("active", on);
+    if (on) b.setAttribute("aria-current", "page"); else b.removeAttribute("aria-current");
   });
+  // on phones Export, History, Settings and Admin live under More: light up More for them
+  const phone = window.matchMedia && window.matchMedia("(max-width: 760px)").matches;
+  if (phone && ["export", "history", "settings", "kin", "admin"].includes(name)) {
+    const more = document.querySelector('.side-nav .tab-btn[data-route="more"]');
+    if (more) { more.classList.add("active"); more.setAttribute("aria-current", "page"); }
+  }
 }
+
+/* The slim page header: ‹ back (with where it leads), the page's title, and the user chip (You, theme, settings). */
+const ROUTE_TITLES = { tree: "Tree", people: "People", upcoming: "Upcoming", photos: "Photos", more: "More", export: "Export",
+  history: "History", settings: "My settings", kin: "Relationship words", map: "Map", sources: "Sources", contacts: "Address book",
+  relate: "How are they related?", tithis: "Tithi dates", quiz: "Who is this?", duplicates: "Duplicates", whoami: "You",
+  admin: "Admin", person: "Person" };
+function routeTitle(name, args) {
+  if (name === "people" && args[0] === "relatives") return "Relatives";
+  if (name === "photos" && args[0] === "unsorted") return "Unsorted photos";
+  if (name === "settings" && args[0] === "family") return "Family setup";
+  if (name === "print") return args[0] === "book" ? "Family book" : "Wall chart";
+  if (name === "duplicates" && args[0] === "merge") return "Compare & merge";
+  if (name === "sources" && args[0]) return "Source";
+  return ROUTE_TITLES[name] || "Family Tree";
+}
+/* Where Back goes from a page reached directly (a link, a reload): its parent page. */
+function parentRoute(hash) {
+  const [name, a0] = String(hash || "").replace(/^#\/?/, "").split("/").filter(Boolean);
+  if (!name || name === "tree" || (name === "people" && !a0) || name === "upcoming" || name === "more") return null;
+  if (name === "person" || name === "people") return "#/people";
+  if (name === "photos") return a0 ? "#/photos" : null;
+  if (name === "duplicates") return a0 ? "#/duplicates" : "#/more";
+  if (name === "sources") return a0 ? "#/sources" : "#/more";
+  if (name === "kin") return "#/settings/family";
+  if (name === "settings") return a0 ? "#/settings" : "#/more";
+  if (name === "admin") return a0 && a0 !== "settings" ? "#/admin/settings" : "#/more";
+  return "#/more";              // export, history, map, relate, contacts, tithis, quiz, print, whoami
+}
+/* The phone's bottom-bar tabs (and the start page): going to one starts a new back trail. */
+function isTabRoute(hash) { return ["", "#", "#/", "#/tree", "#/people", "#/upcoming", "#/photos", "#/more"].includes(String(hash || "")); }
+function parentLabel(hash) {
+  const p = parentRoute(hash);
+  if (!p) return "Tree";
+  const [name, ...args] = p.replace(/^#\/?/, "").split("/");
+  if (name === "settings" && !args.length) return "Settings";
+  if (name === "admin") return "Admin";
+  return routeTitle(name, args);
+}
+function setHeadTitle(text) { const t = $("#headTitle"); if (t) { t.textContent = text; t.title = text; } document.title = text && text !== "Family Tree" ? `${text} · Family Tree` : "Family Tree"; }
+function updateHead() {
+  const { name, args } = currentRoute();
+  setHeadTitle(name === "tree" ? state.treeTitle || "Family Tree" : routeTitle(name, args));
+  const back = $("#headBack");
+  if (!back) return;
+  const home = atStartPage();
+  back.hidden = home;
+  if (!home) {
+    const label = parentLabel(location.hash);
+    back.querySelector(".head-back-label").textContent = label;
+    back.title = "Back";
+    back.setAttribute("aria-label", `Back (to ${label})`);
+  }
+}
+function headBack() {
+  if (!BackNav.back()) { const p = parentRoute(location.hash); if (p) BackNav.replace(p); else BackNav.go("#/"); }
+}
+
+/* A ⋯ / overflow menu: a button and a small popup list. items: [{label, onclick, danger, disabled} | "-" | a node],
+   or a function returning them (read when the menu opens). Back and Escape close it. */
+function attachMenu(btn, wrap, items) {
+  const pop = h("div", { class: "menu-pop", role: "menu", hidden: true });
+  wrap.appendChild(pop);
+  const outside = (e) => { if (!wrap.contains(e.target)) close(); };
+  const key = (e) => { if (e.key === "Escape") { close(); btn.focus(); } };
+  function close() {
+    pop.hidden = true;
+    btn.setAttribute("aria-expanded", "false");
+    document.removeEventListener("click", outside, true);
+    document.removeEventListener("keydown", key);
+  }
+  pop._close = close;
+  btn.addEventListener("click", () => {
+    if (!pop.hidden) { close(); return; }
+    const list = (typeof items === "function" ? items() : items).filter(Boolean);
+    mount(pop, ...list.map((it) => it instanceof Node ? it : it === "-" ? h("div", { class: "menu-sep", role: "separator" })
+      : h("button", { type: "button", role: "menuitem", class: it.danger ? "danger" : null, disabled: it.disabled || null,
+        onclick: () => { close(); it.onclick(); } }, it.label)));
+    pop.hidden = false;
+    btn.setAttribute("aria-expanded", "true");
+    setTimeout(() => document.addEventListener("click", outside, true), 0);
+    document.addEventListener("keydown", key);
+    const first = pop.querySelector("button:not(:disabled), select");
+    if (first) first.focus();
+  });
+  return pop;
+}
+function popMenu(label, items, opts = {}) {
+  const btn = h("button", { type: "button", class: opts.class || "btn-ghost", "aria-haspopup": "menu", "aria-expanded": "false",
+    title: opts.title || null, "aria-label": opts.ariaLabel || null }, label);
+  const wrap = h("span", { class: "menu-wrap" + (opts.left ? " left" : "") }, btn);
+  attachMenu(btn, wrap, items);
+  return wrap;
+}
+/* The header's user chip: You, theme, my settings, family setup, Admin. */
+function userMenuItems() {
+  const theme = HouseholdTheme.bindSelect(h("select", { "aria-label": "Theme" }));     // kept in step with the sidebar's
+  return [
+    { label: "👤 You — how the app sees you", onclick: () => go("whoami") },
+    { label: "⚙️ My settings", onclick: () => go("settings") },
+    { label: "🏠 Family setup", onclick: () => go("settings/family") },
+    state.me && state.me.isAdmin ? { label: "🛡️ Admin", onclick: () => go("admin/settings") } : null,
+    "-",
+    h("label", { class: "menu-field" }, "Theme", theme),
+  ];
+}
+
 /* Pages that belong to a module with a switch (Features). */
 const ROUTE_FEATURES = { map: "map", sources: "sources", contacts: "contacts", tithis: "tithi", quiz: "quiz", print: "printing",
   duplicates: "duplicates", kin: "kin_names", export: "export" };
@@ -1289,6 +1457,7 @@ function featureOffView(key) {
 async function route() {
   if (state.kids) return;              // kids mode: only the quiz screen
   const seq = ++renderSeq;
+  document.querySelectorAll(".menu-pop:not([hidden])").forEach((m) => m._close && m._close());
   removeMaps();
   const { name, args } = currentRoute();
   const view = $("#view");
@@ -1297,7 +1466,8 @@ async function route() {
   // the Trash page moved into Admin: old links land on its tab
   if (name === "trash") { BackNav.go("#/admin/trash"); return; }
   setNav(name);
-  if (name !== "tree") mount(view, spinner());
+  updateHead();
+  if (name !== "tree") UI.loading(view);
   try {
     let content;
     const needs = ROUTE_FEATURES[name] || (name === "photos" && args[0] === "unsorted" ? "inbox" : null);
@@ -1309,7 +1479,7 @@ async function route() {
     else if (name === "photos") content = args[0] === "unsorted" ? await viewUnsorted() : await viewPhotos();
     else if (name === "upcoming") content = await viewUpcoming();
     else if (name === "export") content = await viewExport();
-    else if (name === "settings") content = await viewSettings();
+    else if (name === "settings") content = await viewSettings(args[0] === "family" ? "family" : "mine");
     else if (name === "kin") content = await viewKinTerms(args[0] || state.user.kinLangEffective);
     else if (name === "map") content = await viewMap(args[0] || null);
     else if (name === "sources") content = await viewSources(args[0] || null);
@@ -1325,7 +1495,7 @@ async function route() {
     else content = h("div", { class: "empty" }, "Page not found.");
     if (seq === renderSeq) mount(view, content);
   } catch (e) {
-    if (seq === renderSeq) mount(view, h("div", { class: "card fatal" }, h("h3", null, "Couldn't load this page"), h("div", null, e.message)));
+    if (seq === renderSeq) mount(view, UI.errorBox(`Couldn't load this page. ${e.message}`, rerender));
   }
 }
 
@@ -1352,6 +1522,8 @@ async function renderTree(focusId, seq) {
   state.lastTreeFocus = data.focus;
   if (!focus) state.homeFocus = data.focus;   // who the start page (no address) centres on
   const focusNode = data.descendants.p;
+  state.treeTitle = focusNode.name;
+  updateHead();
   const sel = (label, value, max, on) => h("label", null, label, (() => {
     const s = h("select", { "aria-label": label }, ...Array.from({ length: max + 1 }, (_, i) => h("option", { value: String(i) }, String(i))));
     s.value = String(value);
@@ -1362,20 +1534,15 @@ async function renderTree(focusId, seq) {
   jump.el.classList.add("tree-search");
   const canvas = h("div", { class: "tree-canvas" });
   let chart = null;
-  const toolbar = h("div", { class: "tree-toolbar" },
-    h("span", { class: "title", title: focusNode.name }, focusNode.name),
-    h("button", { type: "button", class: "btn-secondary btn-small", onclick: () => go(`person/${data.focus}`) }, "Open"),
-    data.meId && data.meId !== data.focus ? h("button", { type: "button", class: "btn-ghost btn-small", onclick: () => go(`tree/${data.meId}`) }, "Me") : null,
-    jump.el,
-    h("span", { class: "spacer" }),
-    mode === "chart" ? sel("Up", t.up, 10, (v) => { t.up = v; lsSet("treeUp", v); rerender(); }) : null,
-    mode === "chart" ? sel("Down", t.down, 10, (v) => { t.down = v; lsSet("treeDown", v); rerender(); }) : null,
-    h("label", null, (() => { const c = h("input", { type: "checkbox", checked: t.siblings }); c.addEventListener("change", () => { t.siblings = c.checked; lsSet("treeSiblings", c.checked ? "1" : "0"); rerender(); }); return c; })(), "Siblings"),
-    mode === "chart" && feat("sides") ? sideControls(data.meId ? null : focusNode.name) : null,
-    modeSwitch(mode),
-    h("button", { type: "button", class: "btn-ghost btn-small", title: "Add a couple and their children at once", onclick: () => quickFamilyModal() }, "+ Family"),
-    mode === "chart" ? h("button", { type: "button", class: "btn-ghost btn-small", title: "Print or save as PDF",
-      onclick: async () => { if (chart) await chart.loadImages(); window.print(); } }, "🖨") : null);
+  const toolbar = treeToolbar(
+    [h("span", { class: "title", title: focusNode.name }, focusNode.name), jump.el, modeSwitch(mode)],
+    [h("button", { type: "button", class: "btn-secondary btn-small", onclick: () => go(`person/${data.focus}`) }, "Open"),
+      data.meId && data.meId !== data.focus ? h("button", { type: "button", class: "btn-ghost btn-small", onclick: () => go(`tree/${data.meId}`) }, "Me") : null,
+      mode === "chart" ? sel("Up", t.up, 10, (v) => { t.up = v; lsSet("treeUp", v); rerender(); }) : null,
+      mode === "chart" ? sel("Down", t.down, 10, (v) => { t.down = v; lsSet("treeDown", v); rerender(); }) : null,
+      h("label", null, (() => { const c = h("input", { type: "checkbox", checked: t.siblings }); c.addEventListener("change", () => { t.siblings = c.checked; lsSet("treeSiblings", c.checked ? "1" : "0"); rerender(); }); return c; })(), "Siblings"),
+      mode === "chart" && feat("sides") ? sideControls(data.meId ? null : focusNode.name) : null],
+    mode === "chart" ? async () => { if (chart) await chart.loadImages(); window.print(); } : null);
   mount(view, h("div", { class: "tree-wrap" }, toolbar, canvas));
   const anchorFor = (id) => ({ id, name: id === data.focus ? focusNode.name : "this person", surname: id === data.focus ? focusNode.surname : "" });
   const onGhost = (g) => {
@@ -1398,6 +1565,19 @@ async function renderTree(focusId, seq) {
     h("button", { type: "button", "aria-label": "Fit the whole chart", title: "Fit", onclick: () => chart.fit() }, "⤢"),
     h("button", { type: "button", "aria-label": "Centre on the focus person", title: "Centre", onclick: () => chart.center() }, "◎")));
   canvas.appendChild(h("div", { class: "hint", style: "position:absolute;left:14px;right:64px;bottom:12px;pointer-events:none" }, "Tap a card to open · double-tap to centre · drag and pinch to move"));
+}
+
+/* The tree's toolbar. Phones show the search, the mode switch and "⚙ View", which opens the rest (Up/Down,
+   siblings, sides, + Family, print) as a small panel; wider screens show everything in one row. */
+function treeToolbar(main, opts, printFn) {
+  const panel = h("div", { class: "tree-opts", id: "treeOpts", role: "group", "aria-label": "View options" }, ...opts.filter(Boolean),
+    h("button", { type: "button", class: "btn-ghost btn-small", title: "Add a couple and their children at once", onclick: () => quickFamilyModal() }, "+ Family"),
+    printFn ? h("button", { type: "button", class: "btn-ghost btn-small", title: "Print this view or save it as a PDF", onclick: printFn }, "🖨 Print") : null,
+    feat("printing") ? h("button", { type: "button", class: "btn-ghost btn-small", title: "A big chart or a book with a page for each person", onclick: () => go("print/chart") }, "🖼 Wall chart & book") : null);
+  const viewBtn = h("button", { type: "button", class: "btn-ghost btn-small tree-view-btn", "aria-expanded": "false", "aria-controls": "treeOpts",
+    onclick: () => { const open = panel.classList.toggle("open"); viewBtn.setAttribute("aria-expanded", String(open)); } }, "⚙ View");
+  panel._close = () => { panel.classList.remove("open"); viewBtn.setAttribute("aria-expanded", "false"); };
+  return h("div", { class: "tree-toolbar" }, ...main, h("span", { class: "spacer" }), viewBtn, panel);
 }
 
 function modeSwitch(mode) {
@@ -1456,16 +1636,14 @@ async function renderWholeTree(seq, focusId) {
   } });
   jump.el.classList.add("tree-search");
   const groups = new Set(data.people.map((p) => p.comp)).size;
-  const toolbar = h("div", { class: "tree-toolbar" },
-    h("span", { class: "title" }, "Whole family"),
-    h("span", { class: "hint" }, plural(data.people.length, "person") + (groups > 1 ? ` · ${groups} separate groups` : "")),
-    data.meId ? h("button", { type: "button", class: "btn-ghost btn-small", onclick: () => chart.centerOnId(data.meId, 1) }, "Me") : null,
-    jump.el,
-    h("span", { class: "spacer" }),
-    data.meId && feat("sides") ? sideControls(null) : null,
-    modeSwitch("all"),
-    h("button", { type: "button", class: "btn-ghost btn-small", title: "Add a couple and their children at once", onclick: () => quickFamilyModal() }, "+ Family"),
-    h("button", { type: "button", class: "btn-ghost btn-small", title: "Print or save as PDF", onclick: () => window.print() }, "🖨"));
+  state.treeTitle = "Whole family";
+  updateHead();
+  const toolbar = treeToolbar(
+    [h("span", { class: "title" }, "Whole family"), jump.el, modeSwitch("all")],
+    [h("span", { class: "hint" }, plural(data.people.length, "person") + (groups > 1 ? ` · ${groups} separate groups` : "")),
+      data.meId ? h("button", { type: "button", class: "btn-ghost btn-small", onclick: () => chart.centerOnId(data.meId, 1) }, "Me") : null,
+      data.meId && feat("sides") ? sideControls(null) : null],
+    () => window.print());
   mount(view, h("div", { class: "tree-wrap" }, toolbar, canvas));
   if (data.truncated) toast(`Showing ${data.people.length} of ${data.total} people — use Chart to see the rest around someone.`);
   chart = window.FamilyChart.render(canvas, data, {
@@ -1573,7 +1751,27 @@ async function viewPeople() {
   const sort = h("select", { "aria-label": "Sort" }, h("option", { value: "name" }, "Sort: surname"), h("option", { value: "birth" }, "Sort: birth date"), h("option", { value: "changed" }, "Sort: recently changed"));
   const list = h("div", { class: "card", style: "padding:6px 14px" });
   const countEl = h("span", { class: "hint" });
-  let page = 1;
+  // search and sort stay in view; the rest sit behind "Filters (n)", with a chip for each one that's set
+  const filterSels = [living, surname, photo, bell, sideSel, cfSel].filter(Boolean);
+  const panel = h("div", { class: "filter-panel", id: "peopleFilters", hidden: true }, living, surname, photo, bell, sideSel, cfSel, cfVal);
+  const filterBtn = h("button", { type: "button", class: "btn-ghost", "aria-expanded": "false", "aria-controls": "peopleFilters",
+    onclick: () => { panel.hidden = !panel.hidden; filterBtn.setAttribute("aria-expanded", String(!panel.hidden)); } }, "Filters");
+  const chips = h("div", { class: "filter-chips" });
+  const drawChips = () => {
+    const active = filterSels.filter((s) => !s.hidden && s.value);
+    filterBtn.textContent = active.length ? `Filters (${active.length})` : "Filters";
+    const text = (s) => (s === cfSel && cfVal.value ? `${s.selectedOptions[0].textContent}: ${cfVal.value}` : s.selectedOptions[0].textContent);
+    mount(chips, ...active.map((s) => h("span", { class: "chip big" }, text(s),
+      h("button", { type: "button", class: "icon-btn", "aria-label": `Clear ${s.getAttribute("aria-label")}`, onclick: () => {
+        s.value = "";
+        if (s === cfSel) { clear(cfVal); cfVal.hidden = true; }
+        reload();
+      } }, "✕"))),
+    active.length > 1 ? h("button", { type: "button", class: "link-btn", onclick: () => {
+      filterSels.forEach((s) => { s.value = ""; }); clear(cfVal); cfVal.hidden = true; reload();
+    } }, "Clear all") : null);
+  };
+  let page = 1, lastGroup = null;
   try {
     const names = await api("api/surnames");
     names.forEach((s) => surname.appendChild(h("option", { value: s.surname }, `${s.surname} (${s.count})`)));
@@ -1588,11 +1786,19 @@ async function viewPeople() {
     if (sideSel && sideSel.value) params.set("side", sideSel.value);
     if (cfSel.value) { params.set("field", cfSel.value); if (cfVal.value) params.set("value", cfVal.value); }
     const r = await api(`api/people?${params}`);
-    if (!append) clear(list);
+    if (!append) { clear(list); lastGroup = null; }
     const old = list.querySelector(".more-btn");
     if (old) old.remove();
-    if (!r.items.length && !append) list.appendChild(h("div", { class: "empty" }, "Nobody matches."));
+    if (!r.items.length && !append) {
+      const filtered = q.value.trim() || filterSels.some((s) => !s.hidden && s.value);
+      list.appendChild(filtered ? h("div", { class: "empty" }, "Nobody matches.")
+        : UI.empty("Nobody in the tree yet", "Add the first person, or a whole family at once.", { label: "+ Person", onclick: () => newPersonModal() }));
+    }
     for (const p of r.items) {
+      if (sort.value === "name") {        // A–Z by surname: a header for each surname
+        const g = (p.surname || "").trim() || "No surname";
+        if (g.toLowerCase() !== lastGroup) { lastGroup = g.toLowerCase(); list.appendChild(h("div", { class: "ui-group-head" }, g)); }
+      }
       const aka = [p.birthSurname ? `née ${p.birthSurname}` : null, p.nickname ? `“${p.nickname}”` : null].filter(Boolean).join(" · ");
       list.appendChild(h("div", { class: "person-row", role: "button", tabindex: "0", onclick: () => go(`person/${p.id}`),
         onkeydown: (e) => { if (e.key === "Enter") go(`person/${p.id}`); } },
@@ -1607,21 +1813,27 @@ async function viewPeople() {
         h("button", { type: "button", class: "btn-ghost", onclick: () => { page++; load(true).catch(fail); } }, "Show more")));
     }
   };
-  const reload = () => { page = 1; load(false).catch(fail); };
+  const reload = () => { page = 1; drawChips(); load(false).catch(fail); };
   q.addEventListener("input", debounce(reload, 250));
   [living, surname, photo, bell, sideSel, cfSel, cfVal, sort].filter(Boolean).forEach((s) => s.addEventListener("change", reload));
+  drawChips();
   await load(false);
   return h("div", null,
     h("div", { class: "page-head" }, h("h2", null, "People ", countEl),
       h("div", { class: "person-actions" }, peopleModeSwitch("names"),
-        h("button", { type: "button", class: "btn-ghost", onclick: () => quickFamilyModal() }, "+ Family"),
-        h("button", { type: "button", class: "btn-primary", onclick: () => newPersonModal() }, "+ Person"))),
-    h("div", { class: "toolbar" }, q, living, surname, photo, bell, sideSel, cfSel, cfVal, sort),
+        h("button", { type: "button", class: "btn-primary", onclick: () => newPersonModal() }, "+ Person"),
+        popMenu("⋯", () => [
+          { label: "👪 + Family — a couple and their children", onclick: () => quickFamilyModal() },
+          feat("duplicates") ? { label: "👯 Find duplicates", onclick: () => go("duplicates") } : null,
+          { label: "🔗 How are two people related?", onclick: () => go("relate") },
+        ], { ariaLabel: "More ways to add and tidy", title: "+ Family, Find duplicates" }))),
+    h("div", { class: "toolbar" }, q, sort, filterBtn),
+    panel, chips,
     list);
 }
 
 function peopleModeSwitch(mode) {
-  return segmented([["names", "By name"], ["relatives", "Relatives"]], mode, (k) => go(k === "relatives" ? "people/relatives" : "people")).el;
+  return segmented([["names", "By name"], ["relatives", "Relatives"]], mode, (k) => BackNav.replace(k === "relatives" ? "#/people/relatives" : "#/people")).el;
 }
 
 const REL_CHOICES = [["relatives", "Everyone related"], ["blood", "Blood relatives"], ["parents", "Parents"], ["grandparents", "Grandparents"],
@@ -1655,7 +1867,7 @@ async function viewRelatives() {
   const list = h("div", { class: "card", style: "padding:6px 14px" });
   const countEl = h("span", { class: "hint" });
   let lastIds = [];
-  const exportBtn = h("button", { type: "button", class: "btn-secondary", disabled: true, onclick: () => {
+  const exportBtn = h("button", { type: "button", class: "btn-ghost btn-small", disabled: true, title: "Opens Export with exactly these people picked", onclick: () => {
     let draft = null;
     try { draft = JSON.parse(sessionStorageGet("exportDraft") || "null"); } catch (e) { draft = null; }
     draft = draft || {};
@@ -1711,15 +1923,14 @@ async function viewRelatives() {
   drawTerm();
   await run();
   return h("div", null,
-    h("div", { class: "page-head" }, h("h2", null, "Relatives ", countEl), h("div", { class: "person-actions" }, peopleModeSwitch("relatives"))),
+    h("div", { class: "page-head" }, h("h2", null, "Relatives"), h("div", { class: "person-actions" }, peopleModeSwitch("relatives"))),
     h("div", { class: "card" },
       h("div", { class: "form-row" }, h("div", { class: "field wide" }, "Find", h("div", { class: "notify-add form-row" }, phrase,
         h("button", { type: "button", class: "btn-primary btn-small", onclick: understand }, "Find")))),
       understood,
       h("div", { class: "rel-picker" }, rel, termBox, h("span", { class: "hint" }, "of"), of.el),
       h("div", { class: "toolbar", style: "margin:8px 0 0" }, side, living, gender, gen)),
-    feat("export") ? h("div", { class: "actions", style: "justify-content:flex-start;margin:0 0 8px" }, exportBtn,
-      h("span", { class: "hint" }, "Opens Export with exactly these people picked.")) : null,
+    h("div", { class: "results-head" }, countEl, h("span", { class: "spacer" }), feat("export") ? exportBtn : null),
     list);
 }
 
@@ -1740,9 +1951,10 @@ function newPersonModal() {
 async function viewPerson(id, tab) {
   const p = await api(`api/people/${id}`);
   const rel = p.relationshipToMe;
+  { const cr = currentRoute(); if (cr.name === "person" && cr.args[0] === id) setHeadTitle(shownName(p)); }
   const dates = [];
   const at = (ev) => ev.time ? ` at ${fmtTime(ev.time)}` : "";
-  if (p.birth) dates.push(`Born ${p.birth.dateDisplay || "—"}${at(p.birth)}${p.birth.place ? " in " + p.birth.place : ""}`);
+  if (p.birth) dates.push(`Born ${p.birth.dateDisplay || "—"}${at(p.birth)}`);
   if (p.death || p.deceased) dates.push(p.death ? `Died ${p.death.dateDisplay || "(date unknown)"}${at(p.death)}${p.death.place ? " in " + p.death.place : ""}` : "Deceased");
   let ageText = null;
   if (p.age !== null && p.age !== undefined) ageText = p.living ? `age ${p.age}` : `aged ${p.age}`;
@@ -1750,16 +1962,36 @@ async function viewPerson(id, tab) {
   const aka = [p.birthSurname ? `née ${p.birthSurname}` : null, p.nickname ? `“${p.nickname}”` : null,
     ...(p.otherNames || []).map((n) => `${NAME_TYPES[n.type] || "Also"}: ${n.name}`)].filter(Boolean).join(" · ");
   const mine = state.user.mePersonId === p.id;
+  const del = async () => {
+    if (!await confirmDialog("Delete person", `Move ${p.name} to the trash? Their relationships are kept. ${restoreHint("them")}`, "Delete", true)) return;
+    try { const res = await api(`api/people/${p.id}`, { method: "DELETE" }); saved(res, "Moved to trash"); go("people"); } catch (x) { fail(x); }
+  };
+  // Edit and Tree stay in view; reminders, "This is me" and Delete are in ⋯
   const actions = h("div", { class: "person-actions" },
     h("button", { type: "button", class: "btn-primary btn-small", onclick: () => editPersonModal(p) }, "✎ Edit"),
     h("button", { type: "button", class: "btn-secondary btn-small", onclick: () => go(`tree/${p.id}`) }, "🌳 Tree"),
-    feat("reminders") ? bellButton(p) : null,
-    !p.claimedBy && !state.user.mePersonId ? h("button", { type: "button", class: "btn-ghost btn-small", onclick: () => claimMe(p.id) }, "This is me") : null,
-    mine ? h("button", { type: "button", class: "btn-ghost btn-small", onclick: () => claimMe(null) }, "This isn't me") : null,
-    h("button", { type: "button", class: "btn-ghost btn-small", onclick: async () => {
-      if (!await confirmDialog("Delete person", `Move ${p.name} to the trash? Their relationships are kept. ${restoreHint("them")}`, "Delete", true)) return;
-      try { const res = await api(`api/people/${p.id}`, { method: "DELETE" }); saved(res, "Moved to trash"); go("people"); } catch (x) { fail(x); }
-    } }, "🗑 Delete"));
+    popMenu("⋯", () => [
+      feat("reminders") ? { label: p.remind ? "🔕 Turn reminders off" : "🔔 Turn reminders on", onclick: () => toggleRemind(p) } : null,
+      !p.claimedBy && !state.user.mePersonId ? { label: "🙋 This is me", onclick: () => claimMe(p.id) } : null,
+      mine ? { label: "This isn't me", onclick: () => claimMe(null) } : null,
+      { label: `🔗 How is ${(p.givenNames || p.name).split(" ")[0]} related to someone?`, onclick: () => go(`relate/${p.id}`) },
+      "-",
+      { label: "🗑 Delete…", danger: true, onclick: del },
+    ], { class: "btn-ghost btn-small", ariaLabel: "More actions", title: "Reminders, This is me, Delete" }));
+  // quick facts under the name: age, birthplace, partner
+  const partnerFam = p.families.find((f) => f.partner && !f.ended) || p.families.find((f) => f.partner);
+  const quick = [ageText ? h("span", { class: "chip" }, "🎂 " + ageText) : null,
+    p.birth && p.birth.place ? h("span", { class: "chip" }, "📍 " + p.birth.place) : null,
+    partnerFam ? h("button", { type: "button", class: "chip chip-link", title: `Open ${partnerFam.partner.name}`, onclick: () => go(`person/${partnerFam.partner.id}`) },
+      "💍 " + shownName(partnerFam.partner)) : null].filter(Boolean);
+  // one relationship line, and "How are we related?"
+  const relLine = rel && rel.kind !== "self" ? h("div", { class: "relbox" },
+    h("span", { class: "rel-label" }, rel.kind === "none" ? "Not related to you" : `Your ${rel.label}`),
+    rel.term ? h("span", { class: "rel-meaning", title: rel.note || "" }, `— your ${rel.meaning}`) : null,
+    h("button", { type: "button", class: "link-btn", onclick: () => (rel.path && rel.path.length > 1 ? pathModal(p, rel) : go(`relate/${p.id}`)) }, "How are we related?"))
+    : !state.user.mePersonId ? h("div", { class: "relbox" },
+      h("button", { type: "button", class: "link-btn", onclick: () => go(`relate/${p.id}`) }, "How related?"),
+      h("span", { class: "hint" }, "Choose “This is me” (⋯ on your own page) to see how everyone is related to you.")) : null;
   const head = h("div", { class: "card" },
     h("div", { class: "person-head" },
       h("button", { type: "button", class: "avatar-btn", title: "Change photo", "aria-label": "Change photo", onclick: () => photoModal(p) }, avatar(p, "big")),
@@ -1768,27 +2000,22 @@ async function viewPerson(id, tab) {
         state.user.nameDisplay === "both" && p.nameLocal ? h("div", { class: "name-local big" }, p.nameLocal)
           : state.user.nameDisplay === "script" && p.nameLocal ? h("div", { class: "name-local big" }, p.name) : null,
         aka ? h("div", { class: "aka" }, aka) : null,
-        h("div", { class: "dates" }, [...dates, ageText].filter(Boolean).join(" · ") || h("span", { class: "hint" }, "No dates yet")),
+        quick.length ? h("div", { class: "quick-facts" }, ...quick) : null,
+        h("div", { class: "dates" }, dates.join(" · ") || h("span", { class: "hint" }, "No dates yet")),
+        relLine,
         h("div", { class: "relbox" },
           mine ? h("span", { class: "chip accent" }, "This is you") : null,
+          feat("reminders") && p.remind ? h("span", { class: "chip accent", title: "Birthdays and other days go into everyone's reminders. Switch it in ⋯." }, "🔔 Reminders on") : null,
           p.neverExport ? h("span", { class: "chip warn", title: "Never included in exports" }, "🚫 Kept out of exports") : null,
           p.claimedBy && !mine ? h("span", { class: "chip" }, `${p.claimedBy.name} in Home Assistant`) : null,
-          citeButton(p, { personId: p.id }, p.name),
-          rel && rel.kind !== "self" ? h("span", { class: "rel-label" }, rel.kind === "none" ? "Not related to you" : `Your ${rel.label}`) : null,
-          rel && rel.term ? h("span", { class: "rel-meaning", title: rel.note || "" }, `— your ${rel.meaning}`) : null,
-          rel && rel.ageUnknown && rel.kinKey && state.user.kinLangEffective !== "en"
-            ? h("span", { class: "hint" }, "Add a birth date or the birth order to tell elder from younger.") : null,
-          rel && rel.term && /(^|\.)[PXCE]/.test(rel.kinKey || "")
-            ? h("span", { class: "hint" }, "Someone on the way has no gender set — add it (Edit) to show one word instead of two.") : null,
-          rel && rel.path && rel.path.length > 1 ? h("button", { type: "button", class: "link-btn", onclick: () => pathModal(p, rel) }, "How are we related?") : null,
-          h("button", { type: "button", class: "link-btn", onclick: () => go(`relate/${p.id}`) }, "🔗 Related to someone else?"),
-          !state.user.mePersonId ? h("span", { class: "hint" }, "Set “This is me” to see how everyone is related to you.") : null)),
+          citeButton(p, { personId: p.id }, p.name))),
       actions),
     p.warnings.length ? h("div", { class: "warnings" }, ...p.warnings.map((w) => h("div", null, "⚠ " + w))) : null);
   const nMedia = (p.photoCount || 0) + (p.documentCount || 0);
   const tabs = h("div", { class: "tabs", role: "tablist" }, ...[["overview", "Overview"], ["timeline", "Timeline"],
-    ["photos", "Photos & documents" + (nMedia ? ` (${nMedia})` : "")], ["stories", "Stories" + (p.storyCount ? ` (${p.storyCount})` : "")], ["history", "History"]].map(([k, l]) =>
-    h("button", { type: "button", role: "tab", class: k === tab ? "active" : "", "aria-selected": String(k === tab), onclick: () => go(`person/${p.id}/${k}`) }, l)));
+    ["photos", "Media" + (nMedia ? ` (${nMedia})` : "")], ["stories", "Stories" + (p.storyCount ? ` (${p.storyCount})` : "")], ["history", "History"]].map(([k, l]) =>
+    h("button", { type: "button", role: "tab", class: k === tab ? "active" : "", "aria-selected": String(k === tab), "aria-current": k === tab ? "page" : null,
+      title: k === "photos" ? "Photos & documents" : null, onclick: () => BackNav.replace(`#/person/${p.id}/${k}`) }, l)));
   let body;
   if (tab === "timeline") body = await personTimeline(p);
   else if (tab === "photos") body = await personPhotos(p);
@@ -1799,18 +2026,13 @@ async function viewPerson(id, tab) {
 }
 
 /* The person's 🔔 switch (§9): shared by the household, saved at once, undoable. */
-function bellButton(p) {
+async function toggleRemind(p) {
   const on = !!p.remind;
-  return h("button", { type: "button", class: "btn-ghost btn-small bell-btn" + (on ? " on" : ""), "aria-pressed": String(on),
-    title: on ? `Birthdays and other days for ${p.name} go into the reminders of everyone who has reminders on. Tap to turn off.`
-      : `Nobody is reminded about ${p.name}. Tap to include them in reminders.`,
-    onclick: async () => {
-      try {
-        const res = await api(`api/people/${p.id}`, { method: "PATCH", body: { remind: !on } });
-        saved(res, !on ? `Reminders on for ${p.name}` : `Reminders off for ${p.name}`);
-        rerender();
-      } catch (x) { fail(x); }
-    } }, on ? "🔔 Reminders on" : "🔕 Reminders off");
+  try {
+    const res = await api(`api/people/${p.id}`, { method: "PATCH", body: { remind: !on } });
+    saved(res, !on ? `Reminders on for ${p.name}` : `Reminders off for ${p.name}`);
+    rerender();
+  } catch (x) { fail(x); }
 }
 
 async function claimMe(pid) {
@@ -1829,8 +2051,16 @@ function pathModal(p, rel) {
     steps.push(h("div", { class: "step" }, h("button", { type: "button", class: "link-btn", onclick: () => { m.close(); go(`person/${s.id}`); } }, i === 0 ? `${s.name} (you)` : s.name)));
   });
   const m = openModal(`How ${p.name} is related to you`, h("div", null,
-    h("p", null, h("strong", null, `${p.name} is your ${rel.label}.`)), h("div", { class: "path" }, ...steps),
-    h("div", { class: "actions" }, h("button", { type: "button", class: "btn-primary", onclick: () => m.close() }, "Close"))));
+    h("p", null, h("strong", null, `${p.name} is your ${rel.label}.`),
+      rel.term ? h("span", { class: "rel-meaning", title: rel.note || "" }, ` — your ${rel.meaning}`) : null),
+    h("div", { class: "path" }, ...steps),
+    rel.ageUnknown && rel.kinKey && state.user.kinLangEffective !== "en"
+      ? h("p", { class: "hint" }, "Add a birth date or the birth order to tell elder from younger.") : null,
+    rel.term && /(^|\.)[PXCE]/.test(rel.kinKey || "")
+      ? h("p", { class: "hint" }, "Someone on the way has no gender set — add it (Edit) to show one word instead of two.") : null,
+    h("div", { class: "actions" },
+      h("button", { type: "button", class: "btn-ghost", onclick: () => { m.close(); go(`relate/${p.id}`); } }, "🔗 Compare with someone else"),
+      h("button", { type: "button", class: "btn-primary", onclick: () => m.close() }, "Close"))));
 }
 
 // ---------- how two people are related (any two, not just "me") ----------
@@ -1962,7 +2192,7 @@ function personOverview(p) {
       h("div", { class: "kv-label" }, c.label), h("div", { class: "kv-value" }, c.display,
         citeButton(p, { personId: p.id }, c.label))))) : h("div", { class: "hint" }, "Nothing filled in yet.")) : null;
   const contact = p.living && feat("contacts") ? contactsCard(p) : null;
-  return h("div", null, details, events, feat("tithi") ? tithiCard(p) : null, contact, parents, families, siblings, bio);
+  return h("div", null, parents, families, siblings, events, feat("tithi") ? tithiCard(p) : null, details, contact, bio);
 }
 
 // ---------- tithi (§13.12) ----------
@@ -2057,17 +2287,30 @@ async function viewTithis(yearArg) {
   const year = +yearArg || new Date().getFullYear();
   const r = await api(`api/tithi/dates?year=${year}`);
   const nav = h("div", { class: "toolbar", style: "margin:0" },
-    h("button", { type: "button", class: "btn-ghost btn-small", onclick: () => go(`tithis/${year - 1}`) }, `← ${year - 1}`),
-    h("button", { type: "button", class: "btn-ghost btn-small", onclick: () => go(`tithis/${year + 1}`) }, `${year + 1} →`),
+    h("button", { type: "button", class: "btn-ghost btn-small", onclick: () => BackNav.replace(`#/tithis/${year - 1}`) }, `← ${year - 1}`),
+    h("button", { type: "button", class: "btn-ghost btn-small", onclick: () => BackNav.replace(`#/tithis/${year + 1}`) }, `${year + 1} →`),
     h("button", { type: "button", class: "btn-secondary btn-small", onclick: () => window.print() }, "🖨 Print"));
   return h("div", null, h("div", { class: "page-head" }, h("h2", null, `Tithi dates ${year}`), nav),
     h("p", { class: "hint" }, `Worked out for ${r.location.known ? "Home Assistant's home location" : "Hyderabad (Home Assistant's location isn't known)"}, ${r.timezone}, by the ${r.rule === "sunrise" ? "sunrise" : "aparahna (afternoon)"} rule. Corrected dates are marked ✎.`),
     h("div", { class: "card" }, r.items.length ? h("table", { class: "table" },
       h("thead", null, h("tr", null, h("th", null, "Date"), h("th", null, "Person"), h("th", null, "Tithi"))),
-      h("tbody", null, ...r.items.map((it) => h("tr", null,
-        h("td", null, it.date ? fmtDay(it.date) : "—", it.overridden ? " ✎" : ""),
-        h("td", null, h("a", { href: `#/person/${it.person.id}` }, it.person.name), it.type === "birth" ? h("span", { class: "hint" }, " · janma tithi") : null),
-        h("td", null, it.label)))))
+      h("tbody", null, ...(() => {
+        const d0 = new Date(), pad = (n) => String(n).padStart(2, "0");
+        const today = `${d0.getFullYear()}-${pad(d0.getMonth() + 1)}-${pad(d0.getDate())}`;
+        const next = r.items.find((it) => it.date && it.date >= today);
+        const rows = [];
+        let month = null;
+        for (const it of r.items) {
+          const m = it.date ? new Date(it.date + "T12:00:00").toLocaleDateString(undefined, { month: "long", year: "numeric" }) : "No date";
+          if (m !== month) { month = m; rows.push(h("tr", { class: "month-row" }, h("th", { colspan: "3", scope: "colgroup" }, m))); }
+          const isNext = it === next;
+          rows.push(h("tr", { class: isNext ? "next-row" : null, "aria-current": isNext ? "date" : null },
+            h("td", null, it.date ? fmtDay(it.date) : "—", it.overridden ? " ✎" : "", isNext ? h("span", { class: "chip accent", style: "margin-left:6px" }, "next") : null),
+            h("td", null, h("a", { href: `#/person/${it.person.id}` }, it.person.name), it.type === "birth" ? h("span", { class: "hint" }, " · janma tithi") : null),
+            h("td", null, it.label)));
+        }
+        return rows;
+      })()))
       : h("div", { class: "empty" }, "No tithis kept yet. Open a person who has died and set their tithi under Tithi.")));
 }
 
@@ -2090,7 +2333,7 @@ let leafletReady = null, sanscriptReady = null;
 function loadSanscript() {
   if (window.Sanscript) return Promise.resolve(window.Sanscript);
   if (!sanscriptReady) sanscriptReady = new Promise((resolve, reject) => {
-    document.head.appendChild(h("script", { src: "vendor/sanscript/sanscript.js?v=1.3.3",
+    document.head.appendChild(h("script", { src: "vendor/sanscript/sanscript.js?v=2.7.0",
       onload: () => resolve(window.Sanscript), onerror: () => { sanscriptReady = null; reject(new Error("Couldn't load the transliteration helper.")); } }));
   });
   return sanscriptReady;
@@ -2099,8 +2342,8 @@ function loadLeaflet() {
   if (window.L) return Promise.resolve(window.L);
   if (!leafletReady) {
     leafletReady = new Promise((resolve, reject) => {
-      document.head.appendChild(h("link", { rel: "stylesheet", href: "vendor/leaflet/leaflet.css?v=1.9.4" }));
-      document.head.appendChild(h("script", { src: "vendor/leaflet/leaflet.js?v=1.9.4",
+      document.head.appendChild(h("link", { rel: "stylesheet", href: "vendor/leaflet/leaflet.css?v=2.7.0" }));
+      document.head.appendChild(h("script", { src: "vendor/leaflet/leaflet.js?v=2.7.0",
         onload: () => resolve(window.L), onerror: () => { leafletReady = null; reject(new Error("Couldn't load the map.")); } }));
     });
   }
@@ -2290,9 +2533,18 @@ function personMiniMap(p) {
 }
 
 // ---------- history ----------
+function dayLabel(iso) {
+  const d = new Date(iso);
+  if (isNaN(d)) return "";
+  const day = (x) => `${x.getFullYear()}-${x.getMonth()}-${x.getDate()}`;
+  const now = new Date(), yest = new Date(now.getTime() - 86400000);
+  if (day(d) === day(now)) return "Today";
+  if (day(d) === day(yest)) return "Yesterday";
+  return d.toLocaleDateString(undefined, { weekday: "short", day: "numeric", month: "long", year: d.getFullYear() === now.getFullYear() ? undefined : "numeric" });
+}
 async function historyList(filters = {}) {
-  const box = h("div", { class: "card" });
-  let page = 1;
+  const box = h("div", { class: "card hist-list" });
+  let page = 1, lastDay = null;
   const load = async () => {
     const params = new URLSearchParams({ page: String(page), page_size: "40" });
     if (filters.personId) params.set("personId", filters.personId);
@@ -2301,8 +2553,12 @@ async function historyList(filters = {}) {
     if (page === 1) clear(box);
     const old = box.querySelector(".more-btn");
     if (old) old.remove();
-    if (!r.items.length && page === 1) box.appendChild(h("div", { class: "empty" }, "No changes yet."));
-    for (const it of r.items) box.appendChild(historyRow(it));
+    if (!r.items.length && page === 1) box.appendChild(h("div", { class: "empty" }, filters.personId || filters.userId ? "No changes match." : "No changes yet."));
+    for (const it of r.items) {
+      const day = dayLabel(it.at);
+      if (day !== lastDay) { lastDay = day; box.appendChild(h("div", { class: "ui-group-head" }, day)); }
+      box.appendChild(historyRow(it));
+    }
     if (r.page * r.pageSize < r.total) box.appendChild(h("div", { class: "actions more-btn", style: "justify-content:center" },
       h("button", { type: "button", class: "btn-ghost", onclick: () => { page++; load().catch(fail); } }, "Show older")));
     return r;
@@ -2343,13 +2599,25 @@ function historyRow(it) {
 }
 
 async function viewHistory() {
-  const filter = { userId: sessionStorageGet("histUser") || "" };
-  const box = await historyList(filter.userId ? { userId: filter.userId } : {});
-  const who = h("select", { "aria-label": "Changed by" }, h("option", { value: "" }, "Everyone"), ...(box._users || []).map((u) => h("option", { value: u.id }, u.name)));
-  who.value = filter.userId;
+  const userId = sessionStorageGet("histUser") || "";
+  let person = null;
+  try { person = JSON.parse(sessionStorageGet("histPerson") || "null"); } catch (e) { person = null; }
+  const filters = {};
+  if (userId) filters.userId = userId;
+  if (person && person.id) filters.personId = person.id;
+  const box = await historyList(filters);
+  const who = h("select", { "aria-label": "Changed by" }, h("option", { value: "" }, "By anyone"), ...(box._users || []).map((u) => h("option", { value: u.id }, u.name)));
+  who.value = userId;
   who.addEventListener("change", () => { sessionStorageSet("histUser", who.value); rerender(); });
-  return h("div", null, h("div", { class: "page-head" }, h("h2", null, "History"), who),
-    h("p", { class: "hint" }, "Every change, who made it and when. Undo works as long as nothing it touched was changed again afterwards."), box);
+  const about = personPicker({ placeholder: "About anyone", initial: person && person.id ? person : null, onChange: (p) => {
+    sessionStorageSet("histPerson", JSON.stringify(p ? { id: p.id, name: p.name, years: p.years || null } : null));
+    rerender();
+  } });
+  about.el.classList.add("tree-search");
+  return h("div", null, h("div", { class: "page-head" }, h("h2", null, "History")),
+    h("div", { class: "toolbar" }, who, about.el),
+    h("details", { class: "about" }, h("summary", null, "Every change, who made it and when"),
+      h("p", null, "Undo works as long as nothing it touched was changed again afterwards.")), box);
 }
 function sessionStorageGet(k) { try { return sessionStorage.getItem(k); } catch (e) { return null; } }
 function sessionStorageSet(k, v) { try { sessionStorage.setItem(k, v); } catch (e) { /* ignore */ } }
@@ -2372,12 +2640,19 @@ async function viewTrash() {
     try { const res = await api("api/trash", { method: "DELETE" }); toast(`Deleted ${res.purged.people} people, ${res.purged.families} families, ${res.purged.sources || 0} sources, ${res.purged.media} photos` + (res.purged.skipped ? ` (${res.purged.skipped} couldn't be removed yet; see the log)` : "")); rerender(); } catch (e) { fail(e); }
   } }, "Empty trash") : null;
   return h("div", null, h("div", { class: "page-head" },
-    h("p", { class: "hint", style: "margin:0;flex:1;min-width:200px" }, `Deleted people, families, sources and photos stay here for ${plural(r.trashDays, "day")} (see App settings), then they're removed for good. Only admins see the trash; everyone can still undo a delete from History.`), empty),
-    list);
+    h("h3", { style: "margin:0" }, r.items.length ? `Trash · ${plural(r.items.length, "item")}` : "Trash"), empty),
+    list,
+    h("p", { class: "hint" }, `Deleted people, families, sources and photos stay here for ${plural(r.trashDays, "day")} (see App settings), then they're removed for good. Only admins see the trash; everyone can still undo a delete from History.`));
 }
 
 // ---------- settings ----------
-async function viewSettings() {
+/* Two tabs: "My settings" (only you: this is me, theme, dates, names, reminders) and "Family setup" (shared by the
+   household: custom fields, milestones, relationship words). How the app sees you is on its own page (You). */
+async function viewSettings(which) {
+  const tabs = h("div", { class: "tabs", role: "tablist" }, ...[["mine", "My settings", "#/settings"], ["family", "Family setup", "#/settings/family"]].map(([k, l, href]) =>
+    h("button", { type: "button", role: "tab", class: k === which ? "active" : "", "aria-selected": String(k === which), "aria-current": k === which ? "page" : null,
+      onclick: () => BackNav.replace(href) }, l)));
+  if (which === "family") return familySetup(tabs);
   const meCard = h("div", { class: "card" }, h("h3", null, "This is me"));
   const drawMe = () => {
     const current = state.user.mePersonId;
@@ -2399,17 +2674,34 @@ async function viewSettings() {
   const order = h("select", { "aria-label": "Typed date order" }, h("option", { value: "dmy" }, "Day / Month / Year (12/03/1950 = 12 March)"), h("option", { value: "mdy" }, "Month / Day / Year (03/12/1950 = 12 March)"));
   order.value = dateOrder();
   order.addEventListener("change", () => { lsSet("dateOrder", order.value); toast("Saved"); });
-  return h("div", null, h("h2", { class: "page-title" }, "Settings"), meCard,
-    feat("kin_names") || feat("script_names") ? kinLangCard() : null,
-    feat("reminders") ? await remindersCard() : null,
-    state.me.isAdmin && feat("custom_fields") ? await customFieldsCard() : null,
-    feat("milestones") ? await milestonesCard() : null,
-    feat("quiz") ? await kidPinCard() : null,
-    state.user.assistant ? assistantCard() : null,
+  return h("div", null, h("h2", { class: "page-title" }, "Settings"), tabs, meCard,
     h("div", { class: "card" }, h("h3", null, "Display"),
       h("div", { class: "form-row" }, field("Theme", theme), field("When typing dates like 12/03/1950", order)),
       h("div", { class: "hint" }, "Both are remembered in this browser.")),
-    await whoamiCard());
+    feat("kin_names") || feat("script_names") ? kinLangCard() : null,
+    feat("reminders") ? await remindersCard() : null,
+    state.user.assistant ? assistantCard() : null,
+    feat("quiz") ? await kidPinCard() : null,
+    h("p", { class: "hint" }, "Your login, admin rights and phones: ", h("a", { href: "#/whoami" }, "You — how the app sees you"), "."));
+}
+
+/* Settings → Family setup: what the household shares. */
+async function familySetup(tabs) {
+  const words = feat("kin_names") ? h("div", { class: "card" }, h("h3", null, "Relationship words"),
+    h("p", { class: "hint" }, "The Telugu and Hindi word for each relationship. Change any word to the one your family uses — it changes for everyone, and it's in History with an Undo."),
+    h("div", { class: "person-actions" },
+      h("button", { type: "button", class: "btn-secondary btn-small", onclick: () => go("kin/te") }, "Telugu words"),
+      h("button", { type: "button", class: "btn-secondary btn-small", onclick: () => go("kin/hi") }, "Hindi words"))) : null;
+  const cards = [
+    state.me.isAdmin && feat("custom_fields") ? await customFieldsCard() : null,
+    feat("milestones") ? await milestonesCard() : null,
+    words,
+  ].filter(Boolean);
+  return h("div", null, h("h2", { class: "page-title" }, "Settings"), tabs,
+    cards.length ? cards : UI.empty("Nothing to set up here", state.me.isAdmin
+      ? "Custom fields, milestones and relationship words are modules: turn them on in Admin → App settings → Features."
+      : "Custom fields, milestones and relationship words appear here when an admin turns them on."),
+    !state.me.isAdmin && feat("custom_fields") ? h("p", { class: "hint" }, "Custom fields are set up by an admin.") : null);
 }
 
 /* Settings → the Household Assistant: "Let the Household Assistant answer for me". */
@@ -2461,7 +2753,7 @@ function kinLangCard() {
     })())),
     kinOn && lang !== "en" ? h("p", { class: "hint" }, "Does your family say it differently? ",
       h("button", { type: "button", class: "link-btn", onclick: () => go(`kin/${lang}`) }, `Edit the ${KIN_LANGS[lang].split(" ")[0]} words`),
-      " — changes are shared with everyone and kept in History.") : null);
+      " in Family setup — changes are shared with everyone and kept in History.") : null);
 }
 
 /* Settings → Relationship names → the family's own words (§13.1). */
@@ -2515,8 +2807,7 @@ async function viewKinTerms(lang) {
   return h("div", null,
     h("div", { class: "page-head" }, h("h2", null, `${r.language} relationship names`),
       h("div", { class: "toolbar", style: "margin:0" },
-        segmented([["te", "Telugu"], ["hi", "Hindi"]], lang, (k) => go(`kin/${k}`)).el,
-        h("button", { type: "button", class: "btn-ghost", onclick: () => go("settings") }, "← Settings"))),
+        segmented([["te", "Telugu"], ["hi", "Hindi"]], lang, (k) => BackNav.replace(`#/kin/${k}`)).el)),
     h("p", { class: "hint" }, "The words shown for each relationship. Change any word to the one your family uses — it changes for everyone, and it's in History with an Undo. ",
       "“Reset” goes back to the default. Elder and younger come from birth dates, or the order of children in a family."),
     h("div", { class: "toolbar" }, filter), list,
@@ -2716,7 +3007,8 @@ async function viewAdmin(tab) {
   }
   if (!ADMIN_TABS.some(([k]) => k === tab)) return h("div", { class: "empty" }, "Page not found.");
   const tabs = h("div", { class: "tabs", role: "tablist" }, ...ADMIN_TABS.map(([k, l]) =>
-    h("button", { type: "button", role: "tab", class: k === tab ? "active" : "", "aria-selected": String(k === tab), onclick: () => go(`admin/${k}`) }, l)));
+    h("button", { type: "button", role: "tab", class: k === tab ? "active" : "", "aria-selected": String(k === tab), "aria-current": k === tab ? "page" : null,
+      onclick: () => BackNav.replace(`#/admin/${k}`) }, l)));
   let body;
   if (tab === "users") body = await viewAdminUsers();
   else if (tab === "storage") body = await viewAdminStorage();
@@ -2825,11 +3117,13 @@ async function viewAdminUsers() {
   PeoplePage.render(box, {
     people: users,
     intro: [
-      "Everyone with a Home Assistant login is listed and can use Family Tree unless you turn their access off. Turned-off users see nothing and get no reminders.",
-      feat("reminders") ? "📱 Phones come from Home Assistant: Settings → People → (the person) → Track device, picking their phone with the Home Assistant Companion app. " +
-        "Set a phone up there once and every household app uses it. Add an extra notify service below (“Also”) only for something else — a speaker, a second service. " +
-        "Each person still turns their own reminders on in Settings." : null,
-    ].filter(Boolean),
+      "Everyone with a Home Assistant login can use Family Tree unless you turn their access off.",
+      h("details", { class: "about" }, h("summary", null, "How phones and access work"),
+        h("p", null, "Turned-off users see nothing and get no reminders."),
+        feat("reminders") ? h("p", null, "📱 Phones come from Home Assistant: Settings → People → (the person) → Track device, picking their phone with the Home Assistant Companion app. " +
+          "Set a phone up there once and every household app uses it. Add an extra notify service below (“Also”) only for something else — a speaker, a second service. " +
+          "Each person still turns their own reminders on in My settings.") : null),
+    ],
     checkAgain: feat("reminders") ? async () => {
       try { await api("api/admin/users?refresh=1"); toast("Read from Home Assistant"); rerender(); } catch (e) { fail(e); }
     } : null,
@@ -3434,7 +3728,6 @@ async function viewUnsorted() {
   return h("div", null,
     h("div", { class: "page-head" }, h("h2", null, "Unsorted ", h("span", { class: "hint" }, plural(items.length, "file"))),
       h("div", { class: "person-actions" },
-        h("button", { type: "button", class: "btn-ghost", onclick: () => go("photos") }, "← All photos"),
         st.enabled ? h("button", { type: "button", class: "btn-secondary", onclick: async () => {
           try { const res = await api("api/inbox/scan", { method: "POST" });
             toast(`${plural(res.imported, "new file")}${res.waiting ? `, ${res.waiting} still copying` : ""}${res.rejected || res.duplicates ? `, ${res.rejected + res.duplicates} set aside in _rejected` : ""}`); rerender(); }
@@ -3457,7 +3750,8 @@ async function viewPhotos() {
   const grid = h("div", { class: "media-grid" });
   const countEl = h("span", { class: "hint" });
   const more = h("div", { class: "actions", style: "justify-content:center" });
-  let page = 1, items = [];
+  let page = 1, items = [], lastYear = null;
+  const uploadHelp = `Drop photos or PDFs anywhere on this page${state.user && state.user.maxUploadMb ? ` (up to ${state.user.maxUploadMb} MB each)` : ""}. Location and camera details are removed from photos when they're saved.`;
   const load = async (append) => {
     const params = new URLSearchParams({ page: String(page), page_size: "60", sort: sort.value });
     if (kind.value) params.set("kind", kind.value);
@@ -3465,11 +3759,21 @@ async function viewPhotos() {
     if (q.value.trim()) params.set("q", q.value.trim());
     if (unlinked.checked) params.set("unlinked", "true");
     const r = await api(`api/media?${params}`);
-    if (!append) { items = []; clear(grid); }
+    if (!append) { items = []; clear(grid); lastYear = null; }
     const start = items.length;
     items.push(...r.items);
-    r.items.forEach((m, k) => grid.appendChild(mediaThumb(m, { onclick: () => mediaModal(items, start + k) })));
-    if (!items.length) grid.appendChild(h("div", { class: "empty", style: "grid-column:1/-1" }, "No photos or documents yet. Drop files here or use Upload."));
+    r.items.forEach((m, k) => {
+      if (sort.value === "date") {      // a header for each year
+        const y = m.date && m.date.y ? String(m.date.y) : "No date";
+        if (y !== lastYear) { lastYear = y; grid.appendChild(h("div", { class: "ui-group-head" }, y)); }
+      }
+      grid.appendChild(mediaThumb(m, { onclick: () => mediaModal(items, start + k) }));
+    });
+    if (!items.length) {
+      const filtered = kind.value || person || q.value.trim() || unlinked.checked;
+      grid.appendChild(filtered ? h("div", { class: "empty", style: "grid-column:1/-1" }, "Nothing matches.")
+        : h("div", { style: "grid-column:1/-1" }, UI.empty("No photos or documents yet", uploadHelp, uploadButton("⬆ Upload", {}, rerender))));
+    }
     countEl.textContent = plural(r.total, r.total === 1 ? "file" : "file");
     mount(more, r.page * r.pageSize < r.total ? h("button", { type: "button", class: "btn-ghost", onclick: () => { page++; load(true).catch(fail); } }, "Show more") : null);
   };
@@ -3481,9 +3785,9 @@ async function viewPhotos() {
   const unsortedBtn = feat("inbox") ? h("button", { type: "button", class: "btn-ghost", onclick: () => go("photos/unsorted") }, "📥 Unsorted") : null;
   if (unsortedBtn) api("api/inbox/status").then((st) => { unsortedBtn.textContent = `📥 Unsorted${st.unsorted ? ` (${st.unsorted})` : ""}`; }).catch(() => {});
   const wrap = h("div", { class: "dropzone" },
-    h("div", { class: "page-head" }, h("h2", null, "Photos & documents ", countEl), h("div", { class: "person-actions" }, unsortedBtn, uploadButton("⬆ Upload", {}, rerender))),
+    h("div", { class: "page-head" }, h("h2", null, "Photos & documents ", countEl), h("div", { class: "person-actions" }, unsortedBtn,
+      (() => { const up = uploadButton("⬆ Upload", {}, rerender); up.title = uploadHelp; return up; })())),
     h("div", { class: "toolbar" }, q, kind, who.el, sort, h("label", { class: "check-row" }, unlinked, "Not linked to anyone")),
-    h("p", { class: "hint" }, `Drop photos or PDFs anywhere on this page${state.user && state.user.maxUploadMb ? ` (up to ${state.user.maxUploadMb} MB each)` : ""}. Location and camera details are removed from photos when they're saved.`),
     grid, more);
   return dropZone(wrap, {}, rerender);
 }
@@ -3595,13 +3899,19 @@ async function viewUpcoming() {
           h("div", { class: "sub" }, [rel, when(it.daysAway)].filter(Boolean).join(" · "))),
         feat("reminders") ? upcomingBell(it) : null);
     })));
+  // "Next up": the next one to three days, at the top
+  const next = r.items.slice(0, 3).map((it) => h("button", { type: "button", class: "next-card" + (it.daysAway === 0 ? " today" : ""), onclick: () => go(`person/${it.people[0].id}`) },
+    h("div", { class: "up-avatars" }, ...it.people.map((p) => avatar(p, "sm"))),
+    h("div", { class: "grow" }, h("div", { class: "when" }, when(it.daysAway)), h("div", { class: "nm" }, `${icon[it.kind]} ${it.title}`))));
   return h("div", null,
-    h("div", { class: "page-head" }, h("h2", null, "Upcoming"), h("div", { class: "toolbar", style: "margin:0" }, scopeSel, daysSel,
-      h("label", { class: "check-row" }, remBox, "Remembrance days"), feat("tithi") ? h("label", { class: "check-row" }, tithiBox, "🪔 Tithi days") : null)),
+    h("h2", { class: "page-title" }, "Upcoming"),
+    h("div", { class: "filter-row" }, scopeSel, daysSel,
+      h("label", { class: "check-row" }, remBox, "Remembrance days"), feat("tithi") ? h("label", { class: "check-row" }, tithiBox, "🪔 Tithi days") : null),
+    next.length ? h("section", { class: "next-up", "aria-label": "Next up" }, ...next) : null,
     !r.meSet ? h("p", { class: "hint" }, "Showing everyone. Set “This is me” in Settings to narrow this to your close family and see relationships.") : null,
     r.items.length && feat("reminders") ? h("p", { class: "hint" }, "🔔 = included in reminders (tap a bell to switch). Your own reminders are in ",
       h("button", { type: "button", class: "link-btn", onclick: () => go("settings") }, "Settings"), ".") : null,
-    rows.length ? rows : h("div", { class: "card" }, h("div", { class: "empty" }, "Nothing coming up. Birthdays need at least a day and a month to show here.")));
+    rows.length ? rows : UI.empty("Nothing coming up", "Birthdays need at least a day and a month to show here."));
 }
 
 // ---------- export (§13.6) ----------
@@ -3905,18 +4215,17 @@ async function viewExport() {
   // ----- presets -----
   const presetSel = h("select", { "aria-label": "Saved choices" });
   const drawPresets = () => {
-    mount(presetSel, h("option", { value: "" }, presets.length ? "Saved choices…" : "No saved choices yet"),
+    mount(presetSel, h("option", { value: "" }, presets.length ? "Choose a saved setup…" : "No saved setups yet"),
       ...presets.map((p) => h("option", { value: p.id }, p.name + (p.createdBy ? ` (${p.createdBy})` : ""))));
     const cur = presets.find((p) => p.name === presetName);
     presetSel.value = cur ? cur.id : "";
-    delBtn.disabled = !cur;
   };
-  const delBtn = h("button", { type: "button", class: "btn-ghost btn-small", onclick: async () => {
+  const deletePreset = async () => {
     const cur = presets.find((p) => p.id === presetSel.value);
-    if (!cur || !await confirmDialog("Delete saved choices", `Delete “${cur.name}” for everyone?`, "Delete", true)) return;
+    if (!cur || !await confirmDialog("Delete saved setup", `Delete “${cur.name}” for everyone?`, "Delete", true)) return;
     try { await api(`api/export/presets/${cur.id}`, { method: "DELETE" }); presets = await api("api/export/presets"); presetName = ""; sessionStorageSet("exportPreset", ""); drawPresets(); toast("Deleted"); }
     catch (e) { fail(e); }
-  } }, "Delete");
+  };
   presetSel.addEventListener("change", () => {
     const cur = presets.find((p) => p.id === presetSel.value);
     if (!cur) return;
@@ -3943,15 +4252,18 @@ async function viewExport() {
       } catch (e) { fail(e); }
     };
     name.addEventListener("keydown", (e) => { if (e.key === "Enter") save(); });
-    m = openModal("Save these choices", h("div", null,
+    m = openModal("Save this setup", h("div", null,
       field("Name", name, "wide"),
-      h("p", { class: "hint" }, "Saved choices are shared with everyone in the family. Using the same name replaces them."),
+      h("p", { class: "hint" }, "Saved setups are shared with everyone in the family. Using the same name replaces it."),
       h("div", { class: "actions" }, h("button", { type: "button", class: "btn-ghost", onclick: () => m.close() }, "Cancel"),
         h("button", { type: "button", class: "btn-primary", onclick: save }, "Save"))));
-  } }, "Save choices…");
-  const resetBtn = h("button", { type: "button", class: "link-btn", onclick: () => {
-    o = exportDefaults(); presetName = ""; sessionStorageSet("exportPreset", ""); rebuild(); changed(); drawPresets();
-  } }, "Reset to defaults");
+  } }, "Save setup…");
+  const resetChoices = () => { o = exportDefaults(); presetName = ""; sessionStorageSet("exportPreset", ""); rebuild(); changed(); drawPresets(); };
+  const presetLine = h("div", { class: "preset-line" }, h("span", { class: "preset-label" }, "Saved setups"), presetSel, saveBtn,
+    popMenu("⋯", () => [
+      { label: "🗑 Delete this setup…", danger: true, disabled: !presets.some((p) => p.id === presetSel.value), onclick: deletePreset },
+      { label: "↺ Reset to defaults", onclick: resetChoices },
+    ], { class: "btn-ghost btn-small", ariaLabel: "Delete or reset", title: "Delete this setup, Reset to defaults" }));
 
   // ----- the job -----
   const drawJob = (job) => {
@@ -4100,11 +4412,10 @@ async function viewExport() {
     h("div", { class: "grow" }, statsEl, warnEl, jobEl),
     h("div", { class: "export-buttons" }, gedBtn, exportBtn));
   const page = h("div", { class: "export-page" },
-    h("div", { class: "page-head" }, h("h2", null, "Export"),
-      h("div", { class: "toolbar" }, presetSel, saveBtn, delBtn, resetBtn)),
+    h("div", { class: "page-head" }, h("h2", null, "Export")),
     h("p", { class: "hint" }, "Make a copy of the tree to share with family. Nothing leaves Home Assistant until you download it."),
     all.truncated ? h("div", { class: "warnings" }, h("div", null, `⚠ The chart shows ${all.people.length} of ${all.total} people; the export itself includes everyone you choose.`)) : null,
-    form, bar);
+    presetLine, form, bar);
   setTimeout(() => {
     drawChart();
     runPreview();
@@ -4129,7 +4440,7 @@ async function loadMe() {
 function wireChrome() {
   document.querySelectorAll(".side-nav .tab-btn").forEach((b) => b.addEventListener("click", () => {
     const r = b.dataset.route;
-    if (r === "tree") go(state.lastTreeFocus ? `tree/${state.lastTreeFocus}` : "tree"); else go(r);
+    go(r);                          // Tree: the chart around whoever it showed last (state.lastTreeFocus)
   }));
   const collapse = $("#sidebarCollapseBtn");
   const sync = () => {
@@ -4144,7 +4455,8 @@ function wireChrome() {
   });
   sync();
   HouseholdTheme.bindSelect($("#themeSelect"));
-  $("#sidebarUser").addEventListener("click", () => go("whoami"));
+  $("#headBack").addEventListener("click", headBack);
+  attachMenu($("#headUser"), $("#headUserWrap"), userMenuItems);
   const up = +lsGet("treeUp"), down = +lsGet("treeDown");
   if (lsGet("treeUp") !== null && up >= 0 && up <= 10) state.tree.up = up;
   if (lsGet("treeDown") !== null && down >= 0 && down <= 10) state.tree.down = down;
@@ -4176,11 +4488,12 @@ async function init() {
     mount(box, h("h3", null, "Can't open Family Tree"), h("div", null, e.message));
     return;
   }
-  const chip = $("#sidebarUser");
-  chip.textContent = state.me.haDisplayName + (state.me.isAdmin ? " · admin" : "");
+  const chip = $("#headUser");
+  chip.textContent = state.me.haDisplayName || "You";
+  chip.title = `${state.me.haDisplayName}${state.me.isAdmin ? " · admin" : ""} — You, theme and settings`;
   showNoAdminBanner(state.me);
   if (state.me.disabled) {
-    document.querySelectorAll(".side-nav .tab-btn").forEach((b) => { b.hidden = b.dataset.route !== "whoami"; });
+    document.querySelectorAll(".side-nav .tab-btn").forEach((b) => { b.hidden = true; });
     mount($("#view"), h("div", { class: "card fatal" }, h("h3", null, "Your access is turned off"),
       h("div", null, "An admin has turned off your access to Family Tree. Ask them to turn it back on in Family Tree → Admin → Users.")), await whoamiCard());
     return;
@@ -4219,11 +4532,15 @@ function initBackNav() {
   BackNav.init({
     atHome: atStartPage,
     goHome: () => { state.lastTreeFocus = null; BackNav.go("#/"); },
-    // dialogs (the photo viewer is one too), open search results and map popups, bottom-most first
-    openLayers: () => Array.from(document.querySelectorAll(".modal-backdrop, .picker-results:not([hidden]), .leaflet-popup"))
+    // the bottom-bar tabs start a new trail; a page reached directly goes back to its parent (person → People, …)
+    isTab: isTabRoute,
+    parentOf: parentRoute,
+    // dialogs (the photo viewer is one too), ⋯ menus, the tree's View panel, open search results and map popups, bottom-most first
+    openLayers: () => Array.from(document.querySelectorAll(".modal-backdrop, .menu-pop:not([hidden]), .tree-opts.open, .picker-results:not([hidden]), .leaflet-popup"))
       .filter((el) => el.isConnected && el.getClientRects().length),
     closeLayer: (el) => {
-      if (el.classList.contains("modal-backdrop")) {
+      if (el._close) el._close();
+      else if (el.classList.contains("modal-backdrop")) {
         const btn = el.querySelector(":scope > .modal > h3 > button.icon-btn");
         if (btn) btn.click(); else el.remove();
       } else if (el.classList.contains("picker-results")) el.hidden = true;

@@ -434,8 +434,8 @@ class FrontEnd(ApiTestCase):
             js = f.read()
         with open(os.path.join(_env.ROOT, "app", "static", "index.html"), encoding="utf-8") as f:
             html = f.read()
-        self.assertIn('data-feature="map"', html)
         self.assertIn('data-feature="export"', html)
+        self.assertIn('{ feature: "map" }', js)            # the Map tile on More (greyed "Off · turn on" for admins)
         self.assertIn("SettingsPage.render(", js)          # the Features cards: common/settings.js, from the meta
         for name in GENERAL + OFF_FOR_NEW:
             self.assertIn(f'feat("{name}")', js, name)

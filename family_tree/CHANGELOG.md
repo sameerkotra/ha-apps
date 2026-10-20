@@ -1,5 +1,17 @@
 # Changelog
 
+## 2.7.0
+
+- **Simpler phone menu**: the bar at the bottom is now Tree, People, Upcoming, Photos and More. **More** groups everything else — Find, Tidy up (with how many duplicates and unsorted photos are waiting), Print & play, Tools (Export, History), You & settings (with the theme) and Admin. The Map is no longer listed twice; on a computer Export, History, Settings and Admin sit lower in the sidebar.
+- **A header on every page**, the tree too: the page's name, **‹ Back** naming where it goes (**‹ People** on a person's page, **‹ More** on its pages) and your name, which opens You, the theme, your settings and Admin. Back from a link or a reload goes to the page's parent, and switching tabs, years or People/Relatives no longer fills up Back.
+- **Switched-off parts are easy to find**: admins see them on More as greyed **Off · turn on** tiles that open App settings.
+- **Tidier tree toolbar on phones**: the search, Chart / Everyone / Cards and **⚙ View**, which holds Up, Down, Siblings, sides, + Family and Print (now with a link to the wall chart). The tree also fits phone screens with browser bars and the home indicator better.
+- **Settings in two tabs**: **My settings** (This is me, theme, dates, names, reminders) and **Family setup** (custom fields, milestones, the Telugu and Hindi relationship words). *How the app sees you* is its own page (**You**).
+- **People**: search and sort stay in view, the rest is under **Filters (n)** with a chip for each filter in use; a heading for each surname; **+ Family** and **Find duplicates** are under **⋯**. On **Relatives**, *Export these people* sits next to the count.
+- **Person pages**: **✎ Edit** and **🌳 Tree**, with reminders, This is me and Delete under **⋯**; age, birthplace and partner as quick facts under the name; one relationship line with **How are we related?**; Overview starts with the family (parents, partners and children, siblings) before events and details; the **Media** tab; tabs scroll sideways on phones.
+- **Upcoming** opens with the next few days at the top and its choices in one row. **Photos** has a heading for each year when sorted by date. **History** has a heading for each day and can be filtered by person. **Export** keeps saved setups in one line at the top of the form.
+- **Smaller touches**: Sources can be searched and sorted by most cited; Tithi dates have month headings and the next one highlighted; the quiz's kids mode is folded away until you open it; Admin → Trash shows how many items it holds; the Users page's long explanation is folded under *How phones and access work*; a page that can't load offers **Retry**.
+
 ## 2.6.3
 
 - **Back goes to the page you came from.** The phone's back gesture (and the browser's Back) now steps back through the pages you opened in the app, instead of jumping straight to the start page; dialogs still close first, and Back on the start page still leaves the app.

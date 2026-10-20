@@ -25,12 +25,13 @@ Several parts are optional and can be switched on or off by an admin (see
 3. Open **Family Tree** from the sidebar. While nobody is an admin yet, every
    page shows a banner: *"No admin yet — add your Home Assistant user name
    (**your name**) to `admin_users` …"*. The banner shows your exact user
-   name; the **How the app sees you** page (your name at the bottom of the
-   sidebar, 👤 **You** on a phone) shows it too, with your user id.
+   name; the **How the app sees you** page (your name at the top right →
+   **You**, or **More → You**) shows it too, with your user id.
 4. In the app's **Configuration** tab add that user name under
    **Admins** (`admin_users`), **Save**, and restart the app (**Information**
    tab → **Restart**). The
-   banner goes away and you get the **🛡️ Admin** item in the sidebar. Nobody
+   banner goes away and you get **🛡️ Admin** (in the sidebar, and under
+   **More** on a phone). Nobody
    is ever made admin automatically.
 5. As admin, open **Admin → App settings**: check the photo folder, and in
    **Features** switch on the optional parts your family wants (for example
@@ -42,7 +43,21 @@ Several parts are optional and can be switched on or off by an admin (see
    marriage and all their children in one form.
 
 Everyone else in the household can start straight away: each person just
-opens Family Tree and, in **Settings → This is me**, picks their own person.
+opens Family Tree and, in **My settings → This is me**, picks their own person.
+
+## Finding your way
+
+On a phone the bar at the bottom has **Tree**, **People**, **Upcoming**,
+**Photos** and **More**. **More** holds everything else, in groups: *Find*
+(How are they related?, Find relatives, Address book, Map), *Tidy up*
+(Duplicates, Sources, Unsorted photos — with how many are waiting), *Print &
+play* (Wall chart, Family book, Tithi dates, Who is this?), *Tools* (Export,
+History), *You & settings* (You, My settings, Family setup, the theme) and,
+for admins, *Admin*. Admins also see switched-off parts there as greyed
+**Off · turn on** tiles. On a computer the sidebar has the same pages, with
+Export, History, Settings and Admin below. The bar at the top shows where you
+are, **‹ Back** (it names the page it returns to, e.g. **‹ People** on a
+person's page) and your name, which opens You, the theme and your settings.
 
 ## The tree
 
@@ -59,7 +74,10 @@ the tree, choose:
 - **Cards** — a simple view (parents, the person, partners and children), the
   default on phones.
 
-🖨 prints the chart or saves it as a PDF (always in the light Daylight theme).
+**🖨 Print** prints the chart or saves it as a PDF (always in the light
+Daylight theme); **Wall chart & book** opens the big printable chart. On a
+phone the tree shows the search, Chart / Everyone / Cards and **⚙ View**, which
+opens the other choices (Up, Down, Siblings, sides, + Family, Print).
 
 **Father's and mother's side** (a switch in Features): tick **Colour by side**
 to outline your father's side in one colour and your mother's side in
@@ -73,14 +91,18 @@ can be filtered by side too.
 ## People and families
 
 - **People** lists everyone, with search (names, maiden names, nicknames, and
-  relationship words like "cousin"), filters (living or deceased, surname, has
-  a photo, reminders on or off, side, a custom field) and sorting (surname,
-  birth date, recently changed).
-- A **person's page** has a header (photo, names, dates, age, "your first
-  cousin" and **How are we related?**), and tabs: **Overview** (details, life
-  events, parents, partners and children, siblings, biography), **Timeline**
-  (their events in date order, plus relatives' births and deaths during their
-  life), **Photos & documents**, **Stories** and **History**.
+  relationship words like "cousin"), sorting (surname — with a heading for
+  each surname —, birth date, recently changed) and **Filters** (living or
+  deceased, surname, has a photo, reminders on or off, side, a custom field);
+  each filter in use shows as a chip you can clear. **+ Person** adds someone;
+  **⋯** has **+ Family** and **Find duplicates**.
+- A **person's page** has a header (photo, names, age, birthplace and
+  partner, dates, "your first cousin" and **How are we related?**), **✎ Edit**,
+  **🌳 Tree** and **⋯** (reminders on or off, This is me, Delete), and tabs:
+  **Overview** (parents, partners and children, siblings, life events,
+  details, contact, biography), **Timeline** (their events in date order, plus
+  relatives' births and deaths during their life), **Media** (photos and
+  documents), **Stories** and **History**.
 - **✎ Edit** changes names (birth/maiden surname, nickname, other names such as
   a married or religious name), gender, birth and death, the biography and, under
   *More details*, the name order, **Keep out of all exports** and **Send
@@ -121,8 +143,8 @@ happened, shown in your own clock style). It needs the full, exact date.
 
 ## "This is me" and relationships
 
-- Link yourself to your person in **Settings → This is me** (or **This is me**
-  on your page). Each person can be claimed by one Home Assistant user.
+- Link yourself to your person in **My settings → This is me** (or **⋯ → This
+  is me** on your page). Each person can be claimed by one Home Assistant user.
 - Everyone is then named by their relationship to you: parent, grandparent
   (great-×n), sibling and half-sibling, aunt/uncle, niece/nephew, cousins
   ("second cousin once removed"), in-laws, relatives two marriages away
@@ -130,8 +152,8 @@ happened, shown in your own clock style). It needs the full, exact date.
   brother's wife's father" — beyond that just "related by marriage"). Adopted,
   step and foster links say so.
 - **How are we related?** shows the chain of people between you.
-- **More → How are they related?** (or **🔗 Related to someone else?** on any
-  page) shows what any two people are to each other, both ways, with the chain.
+- **More → How are they related?** (or **⋯ → How is … related to someone?** on
+  any person's page) shows what any two people are to each other, both ways, with the chain.
   The address (`#/relate/…`) can be bookmarked.
 - **People → Relatives** finds people by relationship: pick a relationship
   (first cousins, uncles and aunts, descendants, in-laws…) of anyone (you if
@@ -141,8 +163,8 @@ happened, shown in your own clock style). It needs the full, exact date.
 
 ## Photos, documents and stories
 
-- **Photos** in the sidebar shows everything; each person has a **Photos &
-  documents** tab. Upload several files at once with **Upload**, or drag them
+- **Photos** shows everything (with a heading for each year when sorted by
+  date); each person has a **Media** tab. Upload several files at once with **Upload**, or drag them
   onto the page. JPEG, PNG, WebP and GIF photos and PDF documents are accepted
   (up to the *Largest upload* App setting each, 20 MB by default). The type is
   checked from the file itself; HEIC photos are refused with a hint (phones
@@ -193,7 +215,7 @@ show you — names, dates, ages and how each person is related to you (close
 family once you've said "This is me", or everyone if you ask) — and nothing
 else: no photos, contact details or notes, and nothing about anyone marked
 *Keep out of all exports*. Its answer links back to Family Tree. An admin can turn this off for everyone (**App settings → Household
-Assistant**), and you can turn it off for yourself in **Settings → Household
+Assistant**), and you can turn it off for yourself in **My settings → Household
 Assistant**.
 
 The answers travel through Home Assistant's event bus, which Home Assistant's
@@ -226,7 +248,7 @@ Two switches must be on, and both start **off**:
    it with **🔔 Reminders on / 🔕 Reminders off** on her page, in Edit, or with
    the bell in Upcoming; it's an ordinary change in History. New people start
    with it off. A couple's anniversary is sent when either partner's 🔔 is on.
-2. **Your own reminders** in **Settings → Reminders**: tick **Send me
+2. **Your own reminders** in **My settings → Reminders**: tick **Send me
    reminders** and choose the **time** (08:00 by default, in Home Assistant's
    time zone; the message arrives within that hour), **how many days ahead**
    (0–14), **which days** (birthdays, anniversaries, remembrance days, and
@@ -254,12 +276,12 @@ and 80th birthdays and the 25th, 50th and 60th anniversaries, for the living
 and when the year is known. They're marked in Upcoming and, in reminders,
 come 3 months, 1 month and 1 week ahead and on the day. Admins can switch any
 off, remove them or add more (a birthday age, an anniversary, or — with the
-tithi switch on — a number of full moons since birth) in **Settings →
-Milestones**.
+tithi switch on — a number of full moons since birth) in **Settings → Family
+setup → Milestones**.
 
 ## Export a family website
 
-**Export** in the sidebar makes a zip file of web pages to share with family.
+**Export** (in the sidebar, or **More → Export** on a phone) makes a zip file of web pages to share with family.
 Unzip it and open `index.html` in any browser — it works offline, on a phone
 or from a USB stick, and loads nothing from the internet.
 
@@ -285,7 +307,8 @@ or from a USB stick, and loads nothing from the internet.
    which pages to include (tree, everyone A–Z, surnames, places).
 
 The bar at the bottom shows what the export will contain as you change things.
-**Save choices…** keeps a set of choices for everyone to reuse. **Export
+**Saved setups** at the top: **Save setup…** keeps a set of choices for everyone to reuse
+(**⋯** deletes it or resets to the defaults). **Export
 website** runs in the background; download the zip when it's ready (it's kept
 for an hour, in the photo folder's `.exports`). Tick **Keep out of all
 exports** on a person (Edit → More details) to leave them out of every export.
@@ -352,7 +375,7 @@ as PDF. Both follow the same privacy choices as Export.
 
 ## Details, sources and contacts
 
-- **Custom fields** (admins: **Settings → Custom fields**) add details such as
+- **Custom fields** (admins: **Settings → Family setup → Custom fields**) add details such as
   native village, clan, star sign or family deity — as text, a choice, a place
   or a date, for people or families. Quick-add templates are offered. They
   appear under **Details** on each person (or family) and everyone can fill
@@ -424,13 +447,14 @@ Admins can point the map at other servers (App settings).
 These four are **off** for a new install; an admin switches them on in
 Features.
 
-- **Indian relationship names**: in **Settings → Names and relationships**
+- **Indian relationship names**: in **My settings → Names and relationships**
   choose **Telugu** or **Hindi** (or the household default, set in App
   settings). Relatives are then named the family's way — "**Babai** — your
   father's younger brother", "Pinni", "Atta", "Bava", "Tauji", "Bua" — on
   person pages, tree cards, Upcoming, reminders and the quiz. Elder and younger
   come from birth dates, or the order of children in a family. Parallel and
-  cross cousins get their own words. **Edit the Telugu (or Hindi) words**
+  cross cousins get their own words. **Settings → Family setup → Telugu (or
+  Hindi) words**
   changes any word for everyone (with Undo), and a relationship with no single
   word gets one built from its parts — also for relatives three or more
   marriages away. Searching People for a relationship word
@@ -472,19 +496,19 @@ disappears; after that, the switch is yours.
 
 | Feature | New install | What it covers (and hides when off) | Internet |
 |---|---|---|---|
-| Reminders | on | 🔔 switches and bells, Settings → Reminders, phones and notify services in Admin → Users, the daily reminder run | Only through your Home Assistant's own notifications |
-| Milestones | on | 🎉 marks and extra notice in Upcoming and reminders, Settings → Milestones | no |
+| Reminders | on | 🔔 switches and bells, My settings → Reminders, phones and notify services in Admin → Users, the daily reminder run | Only through your Home Assistant's own notifications |
+| Milestones | on | 🎉 marks and extra notice in Upcoming and reminders, Settings → Family setup → Milestones | no |
 | Father's and mother's side | on | Colour by side and the side filters in the tree, People and Relatives | no |
 | Face tagging | on | Boxes around faces, using a box as a profile photo, tagged faces in the quiz (profile photos already cropped to a face keep their crop) | no |
 | Photo fixes | on | 🛠 Fix photo (photos already fixed keep their fixed look) | no |
 | Inbox folder | on | Importing files from the photo folder's `inbox/` every 2 minutes, and Photos → Unsorted | no |
-| Custom fields | on | The Details block, the People filter, fields on tree cards and in exports, Settings → Custom fields | no |
+| Custom fields | on | The Details block, the People filter, fields on tree cards and in exports, Settings → Family setup → Custom fields | no |
 | Sources | on | 📎 buttons, More → Sources, sources in exports | no |
 | Contact details | on | Contact block on person pages, More → Address book and vCard, contacts in exports, *Default phone code* | no |
 | Duplicate finder | on | More → Duplicates and merging | no |
 | Photo quiz | on | More → Who is this?, kids mode, the kids-mode PIN (a device in kids mode is released) | no |
 | Wall chart and family book | on | More → Wall chart and Family book | no |
-| Website export | on | The Export page, saved choices, *Export these people* | no |
+| Website export | on | The Export page, saved setups, *Export these people* | no |
 | Places map | **off** | 🗺️ Map, the Timeline mini-map, looking places up in the background | **yes** — each place name (only the place, no names or dates) goes to the place search server (OpenStreetMap Nominatim by default), one a second; browsers download map pictures from the tile server (OpenStreetMap by default) |
 | Indian relationship names | **off** | Telugu/Hindi relationship names, the language choices, the family's own words, Telugu/Hindi labels for ceremonies and milestones (everything shows in English) | no |
 | Names in Telugu/Hindi script | **off** | Script name fields, Suggest from English, *Show names in*, script names on cards, pages, search and vCards | no |
@@ -526,7 +550,8 @@ The app's **Configuration** tab has only one option:
 
 ## Admin
 
-Admins have a **🛡️ Admin** item in the sidebar; nobody else sees it, and its
+Admins have a **🛡️ Admin** item in the sidebar (and an *Admin* group under
+**More** on a phone); nobody else sees it, and its
 pages say "Only admins can open this page" to others. Tabs:
 
 - **App settings** — see above.
@@ -620,7 +645,8 @@ uploads wait, and a banner says so.
 ## History, undo and trash
 
 Every change is listed in **History** (and on each person's History tab) with
-who made it and when. **Undo** works as long as nothing it touched was changed
+who made it and when, under a heading for each day; filter it by who made the change
+or which person it was about. **Undo** works as long as nothing it touched was changed
 again afterwards — otherwise undo the later change first. Undoing is itself a
 change, so it can be undone too. History is kept for good unless an admin sets
 *Keep history for* (App settings); then older entries are removed by the daily
@@ -635,7 +661,7 @@ still removed.
 
 ## Themes and settings
 
-Pick a theme in the sidebar (or Settings on a phone): **Midnight** (the
+Pick a theme in the sidebar, under your name at the top right, or in **More**: **Midnight** (the
 default), **Slate**, **Daylight** or **Auto** (follows your device); it's
 remembered in each browser. If you had picked Heritage before, you now get
 Midnight; Parchment becomes Daylight. An exported website still offers its own
@@ -664,7 +690,7 @@ reminders, milestones, the kids-mode PIN and how typed dates are read.
 - **"No admin yet" banner** — add the user name it shows to `admin_users` in
   the app's Configuration tab, save, and restart the app.
 - **I'm not admin although I added myself** — open *How the app sees you*
-  (your name at the bottom of the sidebar). Use the **user name** or **user
+  (your name at the top right → **You**). Use the **user name** or **user
   id** shown there, not your display name, and restart the app after
   changing the option.
 - **"Your access is turned off"** — an admin turned it off in Admin → Users.
@@ -674,7 +700,7 @@ reminders, milestones, the kids-mode PIN and how typed dates are read.
   Check folder**.
 - **"… is turned off"** — that part of the app is switched off in Admin → App
   settings → Features.
-- **No reminders arrive** — in Settings → Reminders, check a phone is listed
+- **No reminders arrive** — in My settings → Reminders, check a phone is listed
   and **Send me a test**; make sure the person's 🔔 is on and the Reminders
   feature is on. Phones are set in Home Assistant: Settings → People → you →
   Track device.
