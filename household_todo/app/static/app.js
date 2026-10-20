@@ -19,6 +19,7 @@ const state = {
 const TABS = ["calendar", "schedule", "maintenance", "lists", "places", "settings", "admin"];
 const SECONDARY_TABS = ["places", "settings", "admin"];     // below a line in the sidebar; under ⋯ More on a phone
 const COARSE = window.matchMedia ? window.matchMedia("(pointer: coarse)") : { matches: false };
+const PHONE = window.matchMedia ? window.matchMedia("(max-width: 760px)") : { matches: false };     // the phone layout
 const PRIORITY_LABEL = { high: "High", medium: "Medium", low: "Low" };
 const ICON_PRESETS = [
   ["mdi:trash-can-outline", "🗑️", "Trash"],
@@ -30,7 +31,7 @@ const ICON_PRESETS = [
 
 // ---------- tiny DOM helpers (common/ui.js) ----------
 const { h, $, clear, mount, lsGet, lsSet } = UI;
-function spinner() { return h("div", { class: "spinner" }, "Loading…"); }
+function spinner() { return UI.loading(); }
 
 function toggleSwitch(checked, onChange, opts = {}) {
   const input = h("input", { type: "checkbox", checked: !!checked, disabled: !!opts.disabled, "aria-label": opts.label || "toggle" });
@@ -382,8 +383,18 @@ function taskRow(t, opts = {}) {
 
 // An empty card that says what to do next, with the button to do it
 function emptyCard(text, label, action) {
-  return h("div", { class: "card empty" }, h("div", null, text),
-    label ? h("button", { class: "btn-secondary btn-small", type: "button", style: "margin-top:10px", onclick: action }, label) : null);
+  return UI.empty(text, null, label ? { label, onclick: action, class: "btn-primary" } : null);
+}
+
+// ⋯: the rarer actions of a row or a page, in a small sheet. items: [label, fn, danger?] (falsy ones skipped)
+function actionMenu(title, items, label = "More actions") {
+  const btn = h("button", { class: "icon-btn menu-btn tap44", type: "button", title: label, "aria-label": label, "aria-haspopup": "dialog" }, "⋯");
+  btn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    const m = openModal(title, h("div", { class: "more-sheet" }, items.filter(Boolean).map(([text, fn, danger]) =>
+      h("button", { type: "button", class: "more-item" + (danger ? " danger" : ""), onclick: () => { m.close(); fn(); } }, text))), { sheet: true });
+  });
+  return btn;
 }
 
 // ---------------------------------------------------------------------
@@ -463,7 +474,8 @@ function placePicker(owner) {
   return { select, control, newBox, mapsLink, resolve };
 }
 
-function buildTaskForm({ task = null, list, includeTitle = false }) {
+// layout "edit": the edit dialog places the parts itself (form.parts), so no single el is built
+function buildTaskForm({ task = null, list, includeTitle = false, layout = "" }) {
   const isEdit = !!task;
   const f = {};
   f.title = h("input", { type: "text", maxlength: "200", value: task ? task.title : "", placeholder: "What needs doing?" });
@@ -503,21 +515,27 @@ function buildTaskForm({ task = null, list, includeTitle = false }) {
   f.date.addEventListener("input", syncTime);
   syncTime();
 
-  const el = h("div", { class: "task-form" },
-    includeTitle ? h("div", { class: "form-row" }, h("label", { class: "field wide" }, "Title", f.title)) : null,
-    h("div", { class: "form-row" }, h("label", { class: "field wide" }, "Notes", f.notes)),
-    h("div", { class: "form-row" }, h("label", { class: "field wide" }, "Link (optional)", f.url)),
-    h("div", { class: "form-row" },
+  // the everyday fields first (when, who, how urgent), then the checklist and notes; the rarer ones last
+  const parts = {
+    title: includeTitle ? h("div", { class: "form-row" }, h("label", { class: "field wide" }, "Title", f.title)) : null,
+    main: h("div", { class: "form-row" },
       h("label", { class: "field" }, "Due date", f.date),
       h("label", { class: "field" }, "Time", f.time),
-      h("label", { class: "field" }, "Priority", f.priority)),
-    h("div", { class: "form-row" },
-      h("label", { class: "field" }, "Type", f.type),
-      h("div", { class: "field wide" }, "Place", place.control, place.mapsLink),
       h("label", { class: "field" }, "Assign to", f.assignee),
-      h("label", { class: "field" }, "Completion", f.completion)),
-    place.newBox,
-    f.items ? h("div", { class: "form-row" }, h("label", { class: "field wide" }, "Checklist", f.items)) : null);
+      h("label", { class: "field" }, "Priority", f.priority)),
+    items: f.items ? h("div", { class: "form-row" }, h("label", { class: "field wide" }, "Checklist", f.items)) : null,
+    notes: h("div", { class: "form-row" }, h("label", { class: "field wide" }, "Notes", f.notes)),
+    more: [
+      h("div", { class: "form-row" }, h("label", { class: "field wide" }, "Link (optional)", f.url)),
+      h("div", { class: "form-row" },
+        h("label", { class: "field" }, "Type", f.type),
+        h("div", { class: "field wide" }, "Place", place.control, place.mapsLink),
+        h("label", { class: "field" }, "Completion", f.completion)),
+      place.newBox,
+    ],
+  };
+  const el = layout === "edit" ? null
+    : h("div", { class: "task-form" }, parts.title, parts.main, parts.items, parts.notes, parts.more);
 
   async function collect() {
     const body = {};
@@ -543,7 +561,7 @@ function buildTaskForm({ task = null, list, includeTitle = false }) {
     }
     return body;
   }
-  return { el, f, collect, fillAssignees };
+  return { el, f, parts, collect, fillAssignees };
 }
 
 // A live checklist editor for an existing task: every change is saved as it
@@ -604,7 +622,7 @@ function checklistEditor(task, markChanged) {
 
 function openTaskModal(task, { onSaved = () => {} } = {}) {
   const list = listContext(task);
-  const form = buildTaskForm({ task, list, includeTitle: true });
+  const form = buildTaskForm({ task, list, includeTitle: true, layout: "edit" });
   const local = JSON.parse(JSON.stringify(task));   // the checklist editor mutates its own copy
   let changed = false;
   const err = h("div", { class: "error-text" });
@@ -636,12 +654,20 @@ function openTaskModal(task, { onSaved = () => {} } = {}) {
   });
 
   const checklist = checklistEditor(local, () => { changed = true; });
-  const body = h("div", null,
-    h("div", { class: "form-row" }, h("label", { class: "field wide" }, "List", listSel)), listNote,
-    form.el,
+  // Title, who added it, when / who / priority, the checklist and notes; the rarer fields fold under "More"
+  // (its heading names the ones that are set, so nothing is hidden by surprise)
+  const setBits = [task.url && "link", task.typeId && "type", (task.placeId || task.place) && "place",
+    task.completionRequired && "required"].filter(Boolean);
+  const more = h("details", { class: "more-fields" },
+    h("summary", null, "More", setBits.length ? h("span", { class: "hint" }, " · " + setBits.join(", ")) : " — link, type, place, list"),
+    form.parts.more,
+    h("div", { class: "form-row" }, h("label", { class: "field wide" }, "List", listSel)), listNote);
+  const body = h("div", { class: "task-edit" },
+    form.parts.title, meta, form.parts.main,
     h("div", { class: "field" }, "Checklist", checklist),
+    form.parts.notes,
     taskFilesSection(task, { onChange: () => { changed = true; } }),
-    meta, err, h("div", { class: "actions" }, del, save));
+    more, err, h("div", { class: "actions" }, del, save));
   const modal = openModal("Edit task", body, { onClose: () => { if (changed) onSaved(); } });
 
   save.addEventListener("click", async () => {
@@ -724,10 +750,7 @@ function quickAddCard({ list, onAdded }) {
 // Shared bits
 // =====================================================================
 
-function errorCard(e, retry) {
-  return h("div", { class: "card fatal" }, h("div", { class: "error-text" }, e.message || String(e)),
-    retry ? h("div", { class: "actions" }, h("button", { class: "btn-secondary", type: "button", onclick: retry }, "Try again")) : null);
-}
+function errorCard(e, retry) { return UI.errorBox(e, retry); }
 function pageHead(title, ...right) {
   return h("div", { class: "page-head" }, h("h2", null, title), h("div", { class: "toolbar", style: "margin:0" }, right));
 }
@@ -741,7 +764,7 @@ function scheduleGlyph(icon) {
   return p ? p[1] : "🔁";
 }
 
-// Today: a view of the Calendar tab (was the Dashboard tab): overdue, today and the week, the workload
+// My week (#/today): a view of the Calendar tab (was the Dashboard tab): overdue, today, what's coming up, the week, the workload
 async function renderToday() {
   const root = $("#tab-calendar");
   mount(root, calHead(), spinner());
@@ -763,35 +786,43 @@ async function renderToday() {
     quickBtn.addEventListener("click", doQuick);
     quick.addEventListener("keydown", (e) => { if (e.key === "Enter") doQuick(); });
 
-    const tiles = h("div", { class: "card-grid" },
-      statTile(d.counts.overdue, "Overdue", d.counts.overdue > 0),
-      statTile(d.counts.dueToday, "Due today"),
-      statTile(d.counts.upcoming, "Next 7 days"),
-      statTile(d.counts.open, "Open tasks"));
+    // the counts as one line; each jumps to its group below (open tasks: to Lists)
+    const jump = (id) => () => { const el = document.getElementById(id); if (el) el.scrollIntoView({ behavior: "smooth", block: "start" }); };
+    const stat = (n, label, id, bad = false) => h("button", { type: "button", class: "week-stat" + (bad && n > 0 ? " over" : ""),
+      disabled: id && !n ? true : null, onclick: id ? jump(id) : () => goTab("lists") }, h("b", null, String(n)), " ", label);
+    const tiles = h("div", { class: "week-stats", role: "group", "aria-label": "This week at a glance" },
+      stat(d.counts.overdue, "overdue", "wk-overdue", true),
+      stat(d.counts.dueToday, "due today", "wk-today"),
+      stat(d.counts.upcoming, "next 7 days", "wk-upcoming"),
+      stat(d.counts.open, "open tasks", null));
 
     const coming = d.schedule.length
-      ? h("div", { class: "card" }, h("h3", null, "Coming up"),
+      ? h("div", { class: "card", id: "wk-coming" }, h("h3", null, "Coming up"),
         h("div", { class: "coming-strip" }, d.schedule.map((c) =>
           h("span", { class: "coming-pill" + (c.occursToday ? " today" : ""), title: c.name },
             scheduleGlyph(c.icon), c.private ? " 🔒" : null,
             ` ${c.name} — ${c.occursToday ? "today" : relLabel(c.nextDate)}${c.startTime ? " " + c.startTime + "–" + c.endTime : ""}`))))
       : null;
 
-    const workload = h("div", { class: "card" }, h("h3", null, "Household workload"),
+    // the household's workload: last, folded (remembered on this device)
+    const workload = h("details", { class: "card workload-fold", open: lsGet("workloadOpen") === "1" },
+      h("summary", null, h("h3", null, "Household workload")),
       h("div", { class: "workload-grid" }, w.people.map((p) => workloadCard(p)), unassignedCard(w.unassigned)),
       isAdmin() ? h("div", { class: "hint", style: "margin-top:8px" }, "Click a person to act as them (admins only).") : null);
+    workload.addEventListener("toggle", () => lsSet("workloadOpen", workload.open ? "1" : "0"));
 
-    const group = (label, cls, tasks) => tasks.length
-      ? h("div", null, h("div", { class: "group-head " + cls }, label, h("span", { class: "count-badge" }, tasks.length)),
+    const group = (label, cls, tasks, id) => tasks.length
+      ? h("div", { id }, h("div", { class: "group-head " + cls }, label, h("span", { class: "count-badge" }, tasks.length)),
         h("div", { class: "task-list" }, tasks.map((t) => taskRow(t, { onChange: again, showList: true }))))
       : null;
-    const groups = [group("Overdue", "overdue", d.overdue), group("Due today", "", d.dueToday), group("Upcoming — next 7 days", "", d.upcoming)].filter(Boolean);
+    const soon = [group("Overdue", "overdue", d.overdue, "wk-overdue"), group("Due today", "", d.dueToday, "wk-today")].filter(Boolean);
+    const later = group("Upcoming — next 7 days", "", d.upcoming, "wk-upcoming");
 
     mount(root, calHead(),
       h("div", { class: "card" }, h("div", { class: "quick-add" }, quick, quickBtn)),
       tiles,
-      groups.length ? h("div", null, groups) : emptyCard("Nothing due in the next week. 🎉", "Add a task", () => quick.focus()),
-      coming, workload);
+      soon.length || later ? null : emptyCard("Nothing due in the next week. 🎉", "Add a task", () => quick.focus()),
+      soon, coming, later, workload);
   } catch (e) { mount(root, calHead(), errorCard(e, renderToday)); }
 }
 
@@ -823,11 +854,11 @@ function unassignedCard(u) {
 // Lists tab: overview + list detail
 // =====================================================================
 
-const listUI = { openId: null };
+const listUI = { openId: null, route: null };   // openId: the list shown; route: the one in the address (#/lists/<id>)
 const doneOpen = new Set();          // lists whose "Completed ▸" is open (this visit only)
 
-// One page: every list as a card across the top (stacked on a phone), and the
-// selected list's tasks right below them.
+// A computer: the lists as cards in two labelled groups (Shared, Personal) with the selected list's tasks below.
+// A phone: two levels — the cards (#/lists), and one list on its own page (#/lists/<id>); Back returns to the cards.
 async function renderLists() {
   const root = $("#tab-lists");
   mount(root, pageHead("Lists"), spinner());
@@ -838,10 +869,26 @@ async function renderLists() {
   const shared = lists.filter((l) => l.kind === "shared");
   const personal = lists.filter((l) => l.kind === "personal");
   const ordered = [...shared, ...personal];
+  if (listUI.route && !ordered.some((l) => l.id === listUI.route)) {        // a list that's gone (or someone else's)
+    listUI.route = null;
+    setHash("#/lists");
+  }
+  if (listUI.route) listUI.openId = listUI.route;
   if (!ordered.some((l) => l.id === listUI.openId)) listUI.openId = ordered.length ? ordered[0].id : null;
+  const phone = PHONE.matches;
+  const afterDelete = () => { listUI.openId = null; listUI.route = null; setHash("#/lists"); renderLists(); syncFab(); };
 
-  const cardsBox = h("div", { class: "list-cards" });
-  const detailBox = h("div", { class: "list-detail" });
+  if (phone && listUI.route) {
+    const list = ordered.find((l) => l.id === listUI.route);
+    const back = h("button", { class: "btn-ghost back-btn", type: "button", onclick: () => { if (!(window.BackNav && BackNav.back())) goTab("lists"); } }, "‹ Lists");
+    const detailBox = h("div", { class: "list-detail" });
+    mount(root, back, detailBox);
+    renderListDetail(list, detailBox, { onRenamed: () => renderLists(), onDeleted: afterDelete });
+    return;
+  }
+
+  const cardsBox = h("div", { class: "list-groups" });
+  const detailBox = phone ? null : h("div", { class: "list-detail" });
 
   function paintCounts(fresh) {
     fresh.forEach((l) => {
@@ -857,28 +904,32 @@ async function renderLists() {
 
   function select(id) {
     listUI.openId = id;
+    if (phone) { goTab("lists", id); return; }            // the list's own page; Back comes back here
+    listUI.route = id;
     cardsBox.querySelectorAll(".list-card").forEach((c) => {
       const on = c.dataset.id === id;
       c.classList.toggle("active", on);
       c.setAttribute("aria-pressed", on ? "true" : "false");
     });
+    navTo(hashFor("lists", id), { replace: true });       // side by side, choosing a list is like a filter
     openDetail();
   }
   function openDetail() {
+    if (!detailBox) return;
     const list = ordered.find((l) => l.id === listUI.openId);
-    if (!list) { mount(detailBox, h("div", { class: "card empty" }, "No lists yet — use “+ New list” to make one.")); return; }
+    if (!list) { clear(detailBox); return; }
     renderListDetail(list, detailBox, {
       onCounts: refreshCounts,
       onRenamed: () => renderLists(),
-      onDeleted: () => { listUI.openId = null; renderLists(); },
+      onDeleted: afterDelete,
     });
   }
 
-  function group(kind, items) {
-    // display:contents keeps both groups in ONE grid while each stays its own
-    // drag-and-drop container (shared and personal lists are ordered separately)
-    const box = h("div", { class: "list-cards-group", dataset: { kind } });
-    items.forEach((l) => box.appendChild(listCard(l, items.length > 1, select)));
+  function group(kind, label, items) {
+    if (!items.length) return null;
+    // each group is its own grid and its own drag-and-drop container (shared and personal lists are ordered separately)
+    const box = h("div", { class: "list-cards", dataset: { kind } });
+    items.forEach((l) => box.appendChild(listCard(l, items.length > 1, select, !phone)));
     if (items.length > 1) {
       makeSortable(box, {
         itemSelector: ".list-card", handleSelector: ".grip", grid: true,
@@ -888,22 +939,22 @@ async function renderLists() {
         },
       });
     }
-    return box;
+    return h("section", { class: "list-group" }, h("h3", { class: "ui-group-head list-group-head" }, label), box);
   }
-  cardsBox.append(group("shared", shared), group("personal", personal));
+  cardsBox.append(...[group("shared", "Shared", shared), group("personal", "Personal · only you", personal)].filter(Boolean));
 
-  const newBtn = h("button", { class: "btn-primary", type: "button", onclick: () => newListModal() }, "+ New list");
-  mount(root, h("div", { class: "page-head" }, h("h2", null, "Lists"), newBtn), cardsBox, detailBox);
+  const newBtn = h("button", { class: "btn-primary page-add", type: "button", onclick: () => newListModal() }, "+ New list");
+  mount(root, h("div", { class: "page-head" }, h("h2", null, "Lists"), newBtn),
+    ordered.length ? cardsBox : emptyCard("No lists yet.", "+ New list", () => newListModal()), detailBox);
   openDetail();
 }
 
-function listCard(l, canDrag, onSelect) {
-  const active = l.id === listUI.openId;
-  const card = h("div", { class: "list-card" + (active ? " active" : ""), dataset: { id: l.id }, tabindex: "0", role: "button", "aria-pressed": active ? "true" : "false" },
+function listCard(l, canDrag, onSelect, showActive = true) {
+  const active = showActive && l.id === listUI.openId;
+  const card = h("div", { class: "list-card" + (active ? " active" : ""), dataset: { id: l.id }, tabindex: "0", role: "button", "aria-pressed": showActive ? (active ? "true" : "false") : null },
     h("div", { class: "lc-body" },
       h("div", { class: "lc-name" }, l.name),
       h("div", { class: "lc-meta" },
-        h("span", { class: "chip" }, l.kind === "shared" ? "Shared" : "Only me"),
         h("span", { class: "count-badge", title: "Open tasks" }, `${l.openCount} open`))),
     canDrag ? h("button", { class: "grip", type: "button", title: "Drag to reorder (or focus and press Alt+arrow keys)", "aria-label": `Reorder ${l.name}` }, "⠿") : null);
   card.addEventListener("click", (e) => { if (!e.target.closest(".grip")) onSelect(l.id); });
@@ -932,7 +983,8 @@ function newListModal() {
       const l = await api("/api/lists", { method: "POST", body: { name: name.value.trim(), kind } });
       listUI.openId = l.id;
       m.close();
-      renderLists();
+      if (state.tab !== "lists" || PHONE.matches) goTab("lists", l.id);
+      else { listUI.route = l.id; navTo(hashFor("lists", l.id), { replace: true }); renderLists(); }
     } catch (e) { err.textContent = e.message; ok.disabled = false; }
   };
   ok.addEventListener("click", go);
@@ -990,9 +1042,7 @@ async function renderListDetail(list, box, { onCounts = () => {}, onRenamed = ()
 
   const header = h("div", { class: "page-head list-detail-head" },
     h("h3", null, list.name, " ", h("span", { class: "chip" }, list.kind === "shared" ? "Shared" : "Only me")),
-    h("div", { class: "list-actions" },
-      h("button", { class: "btn-secondary btn-small", type: "button", title: "Rename this list", onclick: rename }, "✎ Rename"),
-      h("button", { class: "btn-danger btn-small", type: "button", title: "Delete this list and its tasks", onclick: del }, "🗑 Delete list")));
+    actionMenu(list.name, [["✎ Rename list", rename], ["🗑 Delete list…", del, true]], "List actions"));
 
   const toolbarBox = h("div");
   const taskArea = h("div");
@@ -1084,18 +1134,23 @@ async function renderListDetail(list, box, { onCounts = () => {}, onRenamed = ()
     const sortSel = h("select", { value: sortFor(), "aria-label": "Sort", title: "Sort", onchange: (e) => { view.sort = e.target.value; saveView(listId, view); renderToolbar(); loadTasks(); } },
       sortOpts.map(([v, l]) => h("option", { value: v }, "Sort: " + l)));
 
-    const people = state.users.filter((u) => !u.disabled || u.id === view.assignee);
-    const filters = [
-      sel("assignee", [["", "Anyone"], ["me", "Me"], ["unassigned", "Unassigned"], ...people.map((u) => [u.id, u.name])], "Assignee"),
-      sel("priority", [["", "Any priority"], ["high", "High"], ["medium", "Medium"], ["low", "Low"], ["none", "No priority"]], "Priority"),
-      sel("type", [["", "Any type"], ["none", "No type"], ...state.types.map((t) => [t.id, (t.icon ? t.icon + " " : "") + t.name])], "Type"),
-      sel("place", [["", "Any place"], ...state.places.map((p) => [p.id, p.name])], "Place"),
-      sel("completion", [["", "Any completion"], ["required", "Required"], ["optional", "Optional"]], "Completion"),
-    ];
-    const clearBtn = activeFilters(view).length
-      ? h("button", { class: "link-btn", type: "button", onclick: () => { ["assignee", "priority", "type", "place", "completion"].forEach((k) => { view[k] = ""; }); saveView(listId, view); renderToolbar(); loadTasks(); } }, "Clear filters")
-      : null;
-    mount(toolbarBox, h("div", { class: "toolbar" }, seg.el, sortSel, filters, clearBtn));
+    // the five filters live in a sheet behind one button that says how many are on (like the Calendar's)
+    const clearAll = () => { ["assignee", "priority", "type", "place", "completion"].forEach((k) => { view[k] = ""; }); saveView(listId, view); renderToolbar(); loadTasks(); };
+    const openFilters = () => {
+      const people = state.users.filter((u) => !u.disabled || u.id === view.assignee);
+      const row = (label, el) => h("label", { class: "form-row" }, h("span", null, label), el);
+      const m = openModal("Filters", h("div", { class: "cal-filters" },
+        row("Assignee", sel("assignee", [["", "Anyone"], ["me", "Me"], ["unassigned", "Unassigned"], ...people.map((u) => [u.id, u.name])], "Assignee")),
+        row("Priority", sel("priority", [["", "Any priority"], ["high", "High"], ["medium", "Medium"], ["low", "Low"], ["none", "No priority"]], "Priority")),
+        row("Type", sel("type", [["", "Any type"], ["none", "No type"], ...state.types.map((t) => [t.id, (t.icon ? t.icon + " " : "") + t.name])], "Type")),
+        row("Place", sel("place", [["", "Any place"], ...state.places.map((p) => [p.id, p.name])], "Place")),
+        row("Completion", sel("completion", [["", "Any completion"], ["required", "Required"], ["optional", "Optional"]], "Completion")),
+        h("button", { class: "link-btn", type: "button", onclick: () => { m.close(); clearAll(); } }, "Clear filters")), { sheet: true });
+    };
+    const nOn = activeFilters(view).length;
+    const filtersBtn = h("button", { class: "btn-ghost cal-filters-btn" + (nOn ? " on" : ""), type: "button", onclick: openFilters },
+      "⚙ Filters", nOn ? ` · ${nOn}` : "", " ▾");
+    mount(toolbarBox, h("div", { class: "toolbar" }, seg.el, sortSel, filtersBtn));
   }
 
   function renderQuick() {
@@ -1191,12 +1246,13 @@ const cal = {
   sub: "calendar",                 // "calendar" | "today" | "quick"; the Calendar tab opens on the calendar
 };
 
-// The Calendar tab's views: the calendar itself, Today (what's due, the workload) and Quick tasks (one's own list)
+// The Calendar tab's views: the calendar itself, My week (what's due, the workload) and Quick tasks (one's own list)
 function calSubTabs() {
-  return segmented([["calendar", "📅 Calendar"], ["today", "☀️ Today"], ["quick", "⚡ Quick tasks"]], cal.sub, (v) => {
-    cal.sub = v;
-    renderCalendar();
-  }).el;
+  // each view has its own address (#/calendar, #/today, #/quick); switching views replaces it, so Back leaves the tab
+  const seg = segmented([["calendar", "📅 Calendar"], ["today", "☀️ My week"], ["quick", "⚡ Quick tasks"]], cal.sub, (v) => {
+    navTo(hashFor("calendar", v), { replace: true });
+  });
+  return seg.el;
 }
 // The tab's heading: its name and the views in one row (on a phone only the views — the bottom bar names the tab)
 function calHead() {
@@ -1369,15 +1425,19 @@ function calSchedChip(s) {
     s.name, tag, range ? h("span", { class: "cal-chip-time" }, lock, range) : null);
 }
 
-// One day's chips, tasks and schedule entries merged: all-day first, then by time
-function dayChips(slot) {
-  const keyed = [
-    ...slot.tasks.map((t, i) => [t.dueTime || "", 0, i, calTaskChip(t)]),
-    ...slot.sched.map((e, i) => [e.startTime || "", 1, i, calSchedChip(e)]),
-    ...(slot.maint || []).map((e, i) => ["", 2, i, calMaintChip(e)]),
+// One day's entries — tasks, schedule items and maintenance merged: timed ones by time, then the untimed ones
+// (tasks, schedule items, maintenance, each in their own order)
+function dayEntries(slot) {
+  const entries = [
+    ...slot.tasks.map((t, i) => ({ time: t.dueTime || "", kind: 0, i, task: t })),
+    ...slot.sched.map((e, i) => ({ time: e.startTime || "", kind: 1, i, sched: e })),
+    ...(slot.maint || []).map((e, i) => ({ time: "", kind: 2, i, maint: e })),
   ];
-  keyed.sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : a[1] - b[1] || a[2] - b[2]));
-  return keyed.map((k) => k[3]);
+  return entries.sort((a, b) => (a.time && !b.time ? -1 : !a.time && b.time ? 1
+    : a.time < b.time ? -1 : a.time > b.time ? 1 : a.kind - b.kind || a.i - b.i));
+}
+function dayChips(slot) {
+  return dayEntries(slot).map((e) => (e.task ? calTaskChip(e.task) : e.sched ? calSchedChip(e.sched) : calMaintChip(e.maint)));
 }
 
 async function scheduleFilterDialog() {
@@ -1433,9 +1493,6 @@ function paintCalendar() {
   const asnSel = h("select", { value: cal.assignee, "aria-label": "Assignee", onchange: (e) => { cal.assignee = e.target.value; loadCalendar(); } },
     h("option", { value: "" }, "Anyone"), h("option", { value: "me" }, "Me"), h("option", { value: "unassigned" }, "Unassigned"),
     state.users.filter((u) => !u.disabled).map((u) => h("option", { value: u.id }, u.name)));
-  const weekSel = h("select", { value: sundayFirst() ? "sunday" : "monday", "aria-label": "Week starts on", title: "Week starts on",
-    onchange: (e) => { lsSet("calendarWeekStart", e.target.value); loadCalendar(); } },
-    h("option", { value: "sunday" }, "Sunday"), h("option", { value: "monday" }, "Monday"));
   const showDone = h("input", { type: "checkbox", checked: cal.showCompleted });
   showDone.addEventListener("change", () => { cal.showCompleted = showDone.checked; loadCalendar(); });
   const pref = schedPref();
@@ -1449,7 +1506,8 @@ function paintCalendar() {
       h("label", { class: "form-row" }, h("span", null, "Type"), typeSel),
       h("label", { class: "form-row" }, h("span", null, "Person"), asnSel),
       h("label", { class: "mini-toggle" }, showDone, "Show completed"),
-      h("label", { class: "form-row" }, h("span", null, "Week starts on"), weekSel),
+      h("div", { class: "hint" }, `The week starts on ${sundayFirst() ? "Sunday" : "Monday"} — `,
+        h("button", { class: "link-btn", type: "button", onclick: () => { m.close(); goTab("settings"); } }, "change it in Settings")),
       h("button", { class: "btn-secondary", type: "button", onclick: () => { m.close(); scheduleFilterDialog(); } }, "🗓 " + schedLabel + " …"),
       nOn ? h("button", { class: "link-btn", type: "button", onclick: () => {
         cal.type = ""; cal.assignee = ""; cal.showCompleted = false;
@@ -1465,17 +1523,18 @@ function paintCalendar() {
       h("button", { class: "btn-ghost", type: "button", "aria-label": "Previous month", onclick: () => shiftMonth(-1) }, "‹"),
       h("span", { class: "title" }, monthTitle),
       h("button", { class: "btn-ghost", type: "button", "aria-label": "Next month", onclick: () => shiftMonth(1) }, "›"),
-      h("button", { class: "btn-ghost", type: "button", onclick: () => { cal.cursor = todayIso().slice(0, 8) + "01"; cal.selected = todayIso(); loadCalendar(); } }, "Today"),
+      h("button", { class: "btn-ghost", type: "button", title: "Go to this month and today", onclick: () => { cal.cursor = todayIso().slice(0, 8) + "01"; cal.selected = todayIso(); loadCalendar(); } }, "This month"),
       viewSeg.el, filtersBtn)
     : h("div", { class: "cal-toolbar" }, h("span", { class: "title", style: "text-align:left" }, "Next 30 days"), viewSeg.el, filtersBtn);
 
-  const banner = cal.overdue > 0
-    ? h("div", { class: "cal-banner" }, `${cal.overdue} overdue — `, h("button", { class: "link-btn", type: "button", onclick: () => { cal.sub = "today"; renderCalendar(); } }, "see Today"))
-    : null;
-  const undated = data.undatedCount > 0
-    ? h("div", { class: "hint", style: "margin-top:10px" }, `${data.undatedCount} open task${data.undatedCount === 1 ? " has" : "s have"} no date — `,
-      h("button", { class: "link-btn", type: "button", onclick: () => { listUI.openId = null; showTab("lists"); } }, "see your lists"))
-    : null;
+  // one status line under the toolbar: what's overdue, and the open tasks with no date
+  const bits = [];
+  if (cal.overdue > 0) bits.push(h("span", { class: "cal-status-over" }, `${cal.overdue} overdue — `,
+    h("button", { class: "link-btn", type: "button", onclick: () => navTo("#/today", { replace: true }) }, "see My week")));
+  if (data.undatedCount > 0) bits.push(h("span", null, `${data.undatedCount} open task${data.undatedCount === 1 ? " has" : "s have"} no date — `,
+    h("button", { class: "link-btn", type: "button", onclick: () => goTab("lists") }, "see your lists")));
+  const status = bits.length ? h("div", { class: "cal-status" + (cal.overdue > 0 ? " over" : ""), role: "status" },
+    bits.flatMap((b, i) => (i ? [h("span", { class: "sep", "aria-hidden": "true" }, " · "), b] : [b]))) : null;
 
   // ---- body ----
   let body;
@@ -1494,7 +1553,12 @@ function paintCalendar() {
         class: "cal-cell" + (parseIso(date).getMonth() !== monthNo ? " other" : "") + (date === todayIso() ? " today" : "") + (date === cal.selected ? " selected" : ""),
         dataset: { date }, tabindex: "0", role: "button", "aria-label": fmtDate(date, { year: true }),
       }, h("div", { class: "num" }, parseIso(date).getDate()), shown, chips.length > 3 ? h("div", { class: "cal-more" }, `+${chips.length - 3} more`) : null);
-      const select = () => { cal.selected = date; paintCalendar(); };
+      const select = () => {
+        cal.selected = date;
+        paintCalendar();
+        // too narrow for the day panel beside the month: it sits below, so bring it into view
+        if (window.matchMedia("(max-width: 900px)").matches) { const p = $("#tab-calendar .day-panel"); if (p) p.scrollIntoView({ behavior: "smooth", block: "start" }); }
+      };
       cell.addEventListener("click", select);
       cell.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); select(); } });
       cells.push(cell);
@@ -1530,13 +1594,21 @@ function paintCalendar() {
       : emptyCard("Nothing dated in the next 30 days.", "Add a task", () => openAddDialog()));
   }
   if (cal.sub !== "calendar") return;               // switched view while this was loading
-  mount(root, calHead(), banner, nav, body, undated);
+  mount(root, calHead(), nav, status, body);
 }
 
 function dayContent(date, slot, again) {
   const parts = [];
-  if (slot.tasks.length) parts.push(h("div", { class: "task-list" }, slot.tasks.map((t) => taskRow(t, { onChange: again, showList: true }))));
-  slot.sched.forEach((s) => {
+  let run = null;                                   // consecutive tasks share one list
+  dayEntries(slot).forEach((e) => {
+    if (e.task) {
+      if (!run) { run = h("div", { class: "task-list" }); parts.push(run); }
+      run.appendChild(taskRow(e.task, { onChange: again, showList: true }));
+      return;
+    }
+    run = null;
+    if (e.maint) { parts.push(maintDayEntry(e.maint, again)); return; }
+    const s = e.sched;
     const struck = s.status === "skipped" || s.status === "moved_away";
     const range = timeRange(s);
     parts.push(h("div", { class: "sched-entry" + (struck ? " struck" : "") },
@@ -1547,7 +1619,6 @@ function dayContent(date, slot, again) {
       linkChip(s.url),
       statusChip(s), pickupActions(s.itemId, s, again)));
   });
-  (slot.maint || []).forEach((m) => parts.push(maintDayEntry(m, again)));
   return parts;
 }
 
@@ -1568,7 +1639,7 @@ function dayPanel(date, slot, again) {
     h("h3", null, h("span", null, fmtDate(date, { year: true })), h("span", { class: "hint" }, relLabel(date))),
     h("div", { class: "quick-add", style: "margin-bottom:10px" }, title, add),
     empty ? h("div", { class: "hint" }, "Nothing on this day.") : dayContent(date, slot, again),
-    slot.sched.length ? h("div", { class: "hint", style: "margin-top:8px" }, h("button", { class: "link-btn", type: "button", onclick: () => showTab("schedule") }, "Open the Schedule tab")) : null);
+    slot.sched.length ? h("div", { class: "hint", style: "margin-top:8px" }, h("button", { class: "link-btn", type: "button", onclick: () => goTab("schedule") }, "Open the Schedule tab")) : null);
 }
 
 // =====================================================================
@@ -1649,15 +1720,26 @@ async function renderSchedule() {
     if (!SCHEDULE_FILTERS.some(([v]) => v === schedUI.filter)) schedUI.filter = "";
     const items = await api("/api/schedule" + (schedUI.filter ? `?assignee=${schedUI.filter}` : ""));
     const again = () => renderSchedule();
-    const newBtn = h("button", { class: "btn-primary", type: "button", onclick: () => openScheduleForm(null, again) }, "+ New item");
+    const newBtn = h("button", { class: "btn-primary page-add", type: "button", onclick: () => openScheduleForm(null, again) }, "+ New item");
     const filter = segmented(SCHEDULE_FILTERS, schedUI.filter, (v) => { schedUI.filter = v; lsSet("scheduleFilter", v); again(); });
-    const intro = h("div", { class: "hint", style: "margin-bottom:12px" },
-      "Things that repeat and are never “completed” — bin day, recycling, the gutter clean, or one person's weekly class. Each can become a Home Assistant sensor to build automations from: an all-day item switches on ahead of the day, a timed one only while it's happening. An item that's for one person is included in their reminders and can be kept private to them.");
+    const intro = h("details", { class: "about" }, h("summary", null, "Things that repeat and are never “completed”"),
+      h("p", null, "Bin day, recycling, the gutter clean, or one person's weekly class. Each can become a Home Assistant sensor to build automations from: an all-day item switches on ahead of the day, a timed one only while it's happening. An item that's for one person is included in their reminders and can be kept private to them. Tap an item to edit it (or delete it, or copy its sensor's entity id)."));
     const empty = schedUI.filter === "me" ? "Nothing on the schedule is for you yet."
       : schedUI.filter === "unassigned" ? "No household items yet."
         : "No schedule items yet. Add “Trash pickup — every Monday” to get started.";
+    // soonest first, under This week / Later
+    const sorted = [...items].sort((a, b) => ((a.nextDate || "9999") < (b.nextDate || "9999") ? -1
+      : (a.nextDate || "9999") > (b.nextDate || "9999") ? 1 : a.name.localeCompare(b.name)));
+    const weekEnd = addDays(todayIso(), 6);
+    const groups = [
+      ["This week", sorted.filter((it) => it.nextDate && it.nextDate <= weekEnd)],
+      ["Later", sorted.filter((it) => it.nextDate && it.nextDate > weekEnd)],
+      ["No upcoming date", sorted.filter((it) => !it.nextDate)],
+    ].filter(([, its]) => its.length);
     const box = items.length
-      ? h("div", { class: "card" }, items.map((it) => scheduleRow(it, again)))
+      ? h("div", { class: "card" }, groups.map(([label, its]) => [
+        h("div", { class: "ui-group-head" }, label, h("span", { class: "ui-group-total" }, String(its.length))),
+        its.map((it) => scheduleRow(it, again))]))
       : emptyCard(empty, "+ New item", () => openScheduleForm(null, again));
     mount(root, h("div", { class: "page-head" }, h("h2", null, "Schedule"), newBtn), intro,
       h("div", { class: "toolbar" }, filter.el), box);
@@ -1691,17 +1773,18 @@ function scheduleRow(it, again) {
       h("div", { class: "name" }, it.name),
       h("div", { class: "sub" }, it.ruleLabel, " · next ", next),
       chips.length ? h("div", { class: "task-meta" }, chips) : null,
-      it.notes ? h("div", { class: "sub" }, it.notes) : null,
-      it.published
-        ? h("div", { class: "sub" }, h("code", { class: "entity" }, it.entityId), " ",
-          h("button", { class: "icon-btn", type: "button", title: "Copy entity id", "aria-label": "Copy entity id", onclick: () => copyText(it.entityId) }, "⧉"))
-        : null),
+      it.notes ? h("div", { class: "sub" }, it.notes) : null),
     it.published
       ? h("span", { class: "chip " + (it.sensorOn ? "on" : "off"), title: sensorTitle }, it.sensorOn ? "On now" : "Off")
       : h("span", { class: "chip off", title: "No Home Assistant sensor for this item" }, "Not published"),
-    toggle,
-    h("button", { class: "btn-secondary btn-small", type: "button", title: "Edit", "aria-label": `Edit ${it.name}`, onclick: () => openScheduleForm(it, again) }, "✎ Edit"),
-    h("button", { class: "btn-danger btn-small", type: "button", title: "Delete", "aria-label": `Delete ${it.name}`, onclick: () => deleteScheduleItem(it, again) }, "🗑 Delete"));
+    toggle);
+  // a tap on the row edits it (Delete and the entity id are in the edit dialog); its links and buttons keep their own job
+  head.classList.add("clickable");
+  head.setAttribute("tabindex", "0");
+  head.setAttribute("role", "button");
+  head.setAttribute("aria-label", `Edit ${it.name}`);
+  head.addEventListener("click", (e) => { if (!e.target.closest("a, button, select, input")) openScheduleForm(it, again); });
+  head.addEventListener("keydown", (e) => { if (e.target === head && (e.key === "Enter" || e.key === " ")) { e.preventDefault(); openScheduleForm(it, again); } });
 
   const row = h("div", { class: "sched-row" }, head);
   if (open) {
@@ -1744,11 +1827,6 @@ function turnPicker(it, e, again) {
 
 function scheduleDeleteQuestion(it) {
   return `Delete “${it.name}”?` + (it.published ? `\n\nIts Home Assistant entity (${it.entityId}) will be removed too.` : "");
-}
-
-async function deleteScheduleItem(it, again) {
-  if (!confirm(scheduleDeleteQuestion(it))) return;
-  try { await api(`/api/schedule/${it.id}`, { method: "DELETE" }); toast("Deleted"); again(); } catch (e) { fail(e); }
 }
 
 function openScheduleForm(item, onSaved) {
@@ -1939,6 +2017,8 @@ function openScheduleForm(item, onSaved) {
     h("div", { class: "form-row" }, h("label", { class: "field wide" }, "Notes", notes)),
     warn, yearlyHint,
     editing ? h("div", { class: "hint" }, "Changing the repeat rule or first occurrence clears this item's skips and moves (extra dates are kept).") : null,
+    editing && item.published ? h("div", { class: "hint entity-line" }, "Home Assistant entity: ", h("code", { class: "entity" }, item.entityId), " ",
+      h("button", { class: "icon-btn", type: "button", title: "Copy entity id", "aria-label": "Copy entity id", onclick: () => copyText(item.entityId) }, "⧉")) : null,
     err, h("div", { class: "actions" }, editing ? delBtn : null, save));
   const modal = openModal(editing ? "Edit schedule item" : "New schedule item", form);
   delBtn.addEventListener("click", async () => {
@@ -1986,7 +2066,7 @@ function telUrl(phone) {
   return "tel:" + phone.replace(/[^\d+]/g, "");
 }
 
-const placesUI = { q: "" };
+const placesUI = { q: "", add: null };
 
 async function renderPlaces() {
   const root = $("#tab-places");
@@ -1996,13 +2076,19 @@ async function renderPlaces() {
   let timer = null;
   search.addEventListener("input", () => { clearTimeout(timer); timer = setTimeout(() => { placesUI.q = search.value; loadPlaces(); }, 200); });
 
+  // the search box shows once there are more than 8 places (or while a search is typed)
+  const searchRow = h("div", { class: "form-row" }, search);
+  const syncSearch = () => { searchRow.hidden = !(placesUI.q.trim() || state.places.length > 8); };
   async function loadPlaces() {
+    if (!listBox.firstChild) UI.loading(listBox);
     try {
       const places = await api("/api/places" + (placesUI.q.trim() ? `?q=${encodeURIComponent(placesUI.q.trim())}` : ""));
       state.places = placesUI.q.trim() ? state.places : places;
+      syncSearch();
       mount(listBox, places.length
         ? h("div", { class: "card" }, places.map((p) => placeRow(p, loadPlaces)))
-        : h("div", { class: "card empty" }, placesUI.q.trim() ? "No places match that search." : "No places yet. Add the hospital, the school, the vet — then pick them from any task."));
+        : placesUI.q.trim() ? UI.empty("No places match that search.")
+          : UI.empty("No places yet", "Add the hospital, the school, the vet — then pick them from any task.", { label: "+ New place", onclick: () => newPlaceModal() }));
     } catch (e) { mount(listBox, errorCard(e, loadPlaces)); }
   }
 
@@ -2033,9 +2119,10 @@ async function renderPlaces() {
     setTimeout(() => name.focus(), 0);
   }
 
-  const newBtn = h("button", { class: "btn-primary", type: "button", onclick: newPlaceModal }, "+ New place");
-  mount(root, h("div", { class: "page-head" }, h("h2", null, "Places"), newBtn),
-    h("div", { class: "form-row" }, search), listBox);
+  placesUI.add = newPlaceModal;                     // the ＋ button on this tab
+  const newBtn = h("button", { class: "btn-primary page-add", type: "button", onclick: newPlaceModal }, "+ New place");
+  syncSearch();
+  mount(root, h("div", { class: "page-head" }, h("h2", null, "Places"), newBtn), searchRow, listBox);
   await loadPlaces();
 }
 
@@ -2055,39 +2142,37 @@ function driveTimesOn() { return !!(state.me && state.me.driveTimes && state.me.
 
 function placeRow(p, again) {
   const drive = driveTimesOn();
-  const recalcBtn = !drive ? null : h("button", { class: "btn-ghost btn-small", type: "button", title: "Look up this address again and recompute its estimated drive time from home" },
-    "🔄 Recalculate drive time");
-  if (recalcBtn) recalcBtn.addEventListener("click", async () => {
-    recalcBtn.disabled = true;
-    const label = recalcBtn.textContent;
-    recalcBtn.textContent = "Calculating…";
+  const recalc = async () => {
+    toast("Calculating the drive time…");
     try {
       await api(`/api/places/${p.id}/recalculate-drive-time`, { method: "POST" });
       await refreshPlaces();
       toast("Drive time updated");
       again();
-    } catch (e) {
-      fail(e);
-      recalcBtn.disabled = false;
-      recalcBtn.textContent = label;
-    }
-  });
+    } catch (e) { fail(e); }
+  };
+  const del = async () => {
+    const msg = p.usageCount ? `${p.usageCount} task${p.usageCount === 1 ? "" : "s"} will lose their reference to it.` : "No tasks use it.";
+    if (!confirm(`Delete “${p.name}”? ${msg}`)) return;
+    try { await api(`/api/places/${p.id}`, { method: "DELETE" }); await refreshPlaces(); toast("Deleted"); again(); } catch (e) { fail(e); }
+  };
+  // a tap on the name edits it; Open in maps stays on the row, the rest is under ⋯
+  const name = h("span", { class: "place-name", tabindex: "0", role: "button", title: "Edit", onclick: () => editPlace(p, again),
+    onkeydown: (e) => { if (e.key === "Enter") editPlace(p, again); } }, p.name);
   return h("div", { class: "place-row" },
     h("div", { class: "info" },
-      h("div", { class: "name" }, p.name, h("span", { class: "hint" }, `used by ${p.usageCount} task${p.usageCount === 1 ? "" : "s"}`)),
+      h("div", { class: "name" }, name, h("span", { class: "hint" }, `used by ${p.usageCount} task${p.usageCount === 1 ? "" : "s"}`)),
       h("div", { class: "addr" }, p.address),
       p.phone ? h("div", { class: "addr" }, h("a", { href: telUrl(p.phone) }, "📞 ", p.phone)) : null,
       drive ? h("div", { class: "addr hint" }, driveTimeText(p)) : null),
     h("div", { class: "actions" },
       h("a", { class: "btn-ghost btn-small", href: mapsUrl(p.address), target: "_blank", rel: "noopener noreferrer" }, "Open in maps"),
-      h("button", { class: "btn-ghost btn-small", type: "button", onclick: () => copyText(p.address) }, "Copy address"),
-      recalcBtn,
-      h("button", { class: "icon-btn", type: "button", title: "Edit", "aria-label": `Edit ${p.name}`, onclick: () => editPlace(p, again) }, "✎"),
-      h("button", { class: "icon-btn danger", type: "button", title: "Delete", "aria-label": `Delete ${p.name}`, onclick: async () => {
-        const msg = p.usageCount ? `${p.usageCount} task${p.usageCount === 1 ? "" : "s"} will lose their reference to it.` : "No tasks use it.";
-        if (!confirm(`Delete “${p.name}”? ${msg}`)) return;
-        try { await api(`/api/places/${p.id}`, { method: "DELETE" }); await refreshPlaces(); toast("Deleted"); again(); } catch (e) { fail(e); }
-      } }, "🗑")));
+      actionMenu(p.name, [
+        ["✎ Edit", () => editPlace(p, again)],
+        ["⧉ Copy address", () => copyText(p.address)],
+        drive ? ["🔄 Recalculate drive time", recalc] : null,
+        ["🗑 Delete…", del, true],
+      ], `More for ${p.name}`)));
 }
 
 function editPlace(p, again) {
@@ -2135,9 +2220,9 @@ async function renderSettings() {
     cards.push(await remindersCard());
     const assistant = await assistantCard();
     if (assistant) cards.push(assistant);
-    cards.push(await whoamiCard());
     cards.push(await typesCard());
-    cards.push(h("div", { class: "card mobile-only" }, h("h3", null, "Appearance"), themeSelect({ style: "width:100%" })));
+    cards.push(appearanceCard());
+    cards.push(await whoamiCard());              // the diagnostic card: last, folded
     mount(root, pageHead("Settings"), cards);
   } catch (e) { mount(root, pageHead("Settings"), errorCard(e, renderSettings)); }
 }
@@ -2145,9 +2230,21 @@ async function renderSettings() {
 // "How the app sees you": exactly what Home Assistant sent, whether it matched
 // admin_users, and whether an admin linked a notify service (Admin → Users). Always the real signed-in person, even while an
 // admin is acting as someone else. Read-only; shows counts, never the lists. Drawn by common/whoami.js.
+// Appearance: the theme (also in the sidebar) and the calendar's first day of the week — both kept on this device
+function appearanceCard() {
+  const week = h("select", { value: sundayFirst() ? "sunday" : "monday", "aria-label": "Week starts on",
+    onchange: (e) => { lsSet("calendarWeekStart", e.target.value); toast("Saved"); } },
+    h("option", { value: "sunday" }, "Sunday"), h("option", { value: "monday" }, "Monday"));
+  return h("div", { class: "card", id: "appearanceCard" }, h("h3", null, "Appearance"),
+    h("div", { class: "form-row" },
+      h("label", { class: "field" }, "Theme", themeSelect({ style: "width:100%" })),
+      h("label", { class: "field" }, "Week starts on", week)),
+    h("div", { class: "hint" }, "Remembered on this device. The week start is for the calendar."));
+}
+
 async function whoamiCard() {
   const w = await api("/api/whoami", { asSelf: true });
-  return h("div", { class: "card", id: "whoamiCard" }, h("h3", null, "How the app sees you"),
+  return h("details", { class: "card whoami-fold", id: "whoamiCard" }, h("summary", null, h("h3", null, "How the app sees you")),
     HouseholdWhoami.panel(w, {
       appName: "Household Todo",
       adviceTag: "div", adviceStyle: "margin-top:8px",
@@ -2331,7 +2428,7 @@ function renderAdmin(sub) {
   const tabs = h("div", { class: "admin-tabs", role: "tablist", "aria-label": "Admin sections" },
     ADMIN_TABS.map(([key, label]) => h("button", {
       type: "button", role: "tab", class: key === sub ? "active" : "", "aria-selected": key === sub ? "true" : "false",
-      dataset: { adminTab: key }, onclick: () => showTab("admin", { sub: key }),
+      dataset: { adminTab: key }, "aria-current": key === sub ? "page" : null, onclick: () => navTo(hashFor("admin", key), { replace: true }),
     }, label)));
   const body = h("div", { class: "admin-body" });
   mount(root, pageHead("Admin"), tabs, body);
@@ -2555,13 +2652,16 @@ async function setActAs(id) {
 // =====================================================================
 
 let addKind = "task";
-async function openAddDialog() {
+// opts.listId: add a task to that list (no task / quick task / schedule item chooser) — the ＋ on Lists
+async function openAddDialog(opts = {}) {
   let lists = [];
   try { lists = await api("/api/lists"); } catch (e) { fail(e); return; }
   const refresh = () => { if (state.tab !== "settings" && state.tab !== "admin") RENDERERS[state.tab](); };
   const body = h("div", { class: "add-dialog" });
   let m = null;
-  const kinds = segmented([["task", "Task"], ["quick", "Quick task"], ["schedule", "Schedule item"]], addKind, (v) => { addKind = v; draw(); });
+  const only = opts.listId && lists.some((l) => l.id === opts.listId) ? opts.listId : null;
+  if (only) addKind = "task";
+  const kinds = only ? null : segmented([["task", "Task"], ["quick", "Quick task"], ["schedule", "Schedule item"]], addKind, (v) => { addKind = v; draw(); });
   function draw() {
     if (addKind === "schedule") {
       if (m) m.close();
@@ -2575,7 +2675,7 @@ async function openAddDialog() {
     const fields = [h("div", { class: "form-row" }, title)];
     let sel = null, date = null;
     if (addKind === "task") {
-      const last = lsGet("addList");
+      const last = only || lsGet("addList");
       const pick = lists.find((l) => l.id === last) || lists.find((l) => l.kind === "personal") || lists[0];
       sel = h("select", { "aria-label": "List", value: pick ? pick.id : "" },
         lists.map((l) => h("option", { value: l.id }, l.name + (l.kind === "personal" ? " (only me)" : ""))));
@@ -2605,20 +2705,24 @@ async function openAddDialog() {
     };
     ok.addEventListener("click", go);
     title.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); go(); } });
-    mount(body, h("div", { style: "margin-bottom:10px" }, kinds.el), fields, err, h("div", { class: "actions" }, ok));
+    mount(body, kinds ? h("div", { style: "margin-bottom:10px" }, kinds.el) : null, fields, err, h("div", { class: "actions" }, ok));
     setTimeout(() => title.focus(), 0);
   }
   if (addKind === "schedule") addKind = "task";      // the dialog opens on a task or a quick task
-  m = openModal("Add", body, { sheet: true });
+  m = openModal(only ? "Add a task" : "Add", body, { sheet: true });
   draw();
 }
 
-// ⋯ More (a phone): the less used tabs
+// ⋯ More (a phone): the less used tabs, and you (How the app sees you; the theme is in Settings → Appearance)
 function openMoreSheet() {
   const tabs = [["places", "📍", "Places"], ["settings", "⚙️", "Settings"]].concat(isAdmin() ? [["admin", "🛡️", "Admin"]] : []);
+  const me = state.me ? state.me.haDisplayName + (state.me.isAdmin ? " · admin" : "") : null;
   const m = openModal("More", h("div", { class: "more-sheet" }, tabs.map(([t, icon, label]) =>
-    h("button", { type: "button", class: "more-item" + (state.tab === t ? " active" : ""), onclick: () => { m.close(); showTab(t); } },
-      h("span", { class: "nav-icon" }, icon), label))), { sheet: true });
+    h("button", { type: "button", class: "more-item" + (state.tab === t ? " active" : ""), "aria-current": state.tab === t ? "page" : null,
+      onclick: () => { m.close(); goTab(t); } },
+      h("span", { class: "nav-icon" }, icon), label)),
+    me ? h("button", { type: "button", class: "more-item more-me", onclick: () => { m.close(); openWhoamiCard(); } },
+      h("span", { class: "nav-icon" }, "👤"), h("span", null, me, h("span", { class: "hint" }, " — how the app sees you"))) : null), { sheet: true });
 }
 
 // =====================================================================
@@ -2644,7 +2748,8 @@ function parseHash(hash) {
   let [tab, sub] = parts;
   // #/ticket/<task>/<file> (a reminder's "Open ticket"): the Dashboard with that file's dialog over it
   if (tab === "ticket") return ROUTE_ARG.test(parts[1] || "") && ROUTE_ARG.test(parts[2] || "") ? { tab: "calendar", sub: "today", ticket: [parts[1], parts[2]] } : null;
-  if (tab === "dashboard" || tab === "today") return { tab: "calendar", sub: "today" };   // the Dashboard is Today now
+  if (tab === "dashboard" || tab === "today" || tab === "week") return { tab: "calendar", sub: "today" };   // the Dashboard is My week now
+  if (tab === "calendar") return { tab: "calendar", sub: "calendar" };
   if (tab === "quick") return { tab: "calendar", sub: "quick" };
   if (LEGACY_ROUTES[tab]) [tab, sub] = LEGACY_ROUTES[tab];
   if (!TABS.includes(tab)) return null;
@@ -2654,24 +2759,60 @@ function parseHash(hash) {
   return { tab, sub };
 }
 
-function routeHash(tab, sub) { return tab === "admin" ? `#/admin/${sub || "settings"}` : `#/${tab}`; }
+// The address of a page: #/calendar | #/today (My week) | #/quick, #/lists | #/lists/<id>, #/admin/<section>, #/<tab>
+function hashFor(tab, sub) {
+  if (tab === "admin") return `#/admin/${sub || "settings"}`;
+  if (tab === "lists") return sub ? `#/lists/${sub}` : "#/lists";
+  if (tab === "calendar") return sub === "today" ? "#/today" : sub === "quick" ? "#/quick" : "#/calendar";
+  return `#/${tab}`;
+}
+function tabSub(tab) { return tab === "admin" ? state.adminTab : tab === "lists" ? listUI.route : tab === "calendar" ? cal.sub : null; }
+function currentHash() { return hashFor(state.tab, tabSub(state.tab)); }
+function setHash(hash) {             // show an address without navigating (the page already shows it)
+  if (location.hash === hash) return;
+  try { history.replaceState(history.state, "", hash); } catch (e) { /* sandboxed frame: fine without deep links */ }
+}
+// In-app navigation goes through BackNav (backnav.js), so Back retraces it. opts.replace: a view, filter or
+// section change that Back shouldn't stop at. The page follows from the hashchange (onRoute).
+let backNavReady = false;
+function navTo(hash, opts = {}) {
+  if (window.BackNav && backNavReady) { BackNav.go(hash, { replace: !!opts.replace }); return; }
+  setHash(hash);
+  onRoute();
+}
+function goTab(tab, sub) {
+  const hash = hashFor(tab, sub);
+  if (hash === location.hash && hash === currentHash()) { showTab(tab, { sub, force: true }); return; }   // again: redraw it
+  navTo(hash);
+}
+const TAB_HASH = /^#\/(calendar|lists|schedule|maintenance|places|settings|admin(\/[\w-]+)?)$/;
+function parentOfHash(hash) {
+  if (/^#\/lists\/./.test(hash)) return "#/lists";
+  if (hash === "#/today" || hash === "#/quick") return "#/calendar";
+  return null;
+}
 
 function showTab(tab, opts = {}) {
   if (LEGACY_ROUTES[tab]) { opts = { ...opts, sub: LEGACY_ROUTES[tab][1] }; tab = "admin"; }
   if (!TABS.includes(tab)) tab = "calendar";
   if (tab === "admin" && opts.sub) state.adminTab = opts.sub;
-  if (tab === "lists" && opts.sub) listUI.openId = opts.sub;      // renderLists falls back to the first list
-  if (tab === "calendar" && ["today", "quick"].includes(opts.sub)) cal.sub = opts.sub;     // #/dashboard, #/quick
-  else if (tab === "calendar" && state.tab !== "calendar") cal.sub = "calendar";    // opening the tab: the calendar first
-  if (tab === "maintenance" && state.tab !== "maintenance" && typeof maint !== "undefined") maint.view = "coming";   // Coming up first
-  state.tab = tab;
-  const want = routeHash(tab, state.adminTab);
-  if (location.hash !== want) {
-    try { history.replaceState(null, "", want); } catch (e) { /* sandboxed frame: fine without deep links */ }
+  if (tab === "lists") {                     // #/lists/<id>: that list (on a phone, on its own page)
+    listUI.route = opts.sub || null;
+    if (opts.sub) listUI.openId = opts.sub;   // renderLists falls back to the first list
   }
-  document.querySelectorAll(".side-nav .tab-btn[data-tab]").forEach((b) => b.classList.toggle("active", b.dataset.tab === tab));
+  if (tab === "calendar" && ["calendar", "today", "quick"].includes(opts.sub)) cal.sub = opts.sub;     // #/today, #/quick
+  else if (tab === "calendar" && state.tab !== "calendar") cal.sub = "calendar";    // opening the tab: the calendar first
+  // opening Maintenance: Needs doing when something does, else Coming up (paintMaintenance decides)
+  if (tab === "maintenance" && state.tab !== "maintenance" && typeof maint !== "undefined") maint.view = null;
+  state.tab = tab;
+  setHash(currentHash());
+  document.querySelectorAll(".side-nav .tab-btn[data-tab]").forEach((b) => {
+    const on = b.dataset.tab === tab;
+    b.classList.toggle("active", on);
+    if (on) b.setAttribute("aria-current", "page"); else b.removeAttribute("aria-current");
+  });
   $("#moreBtn").classList.toggle("active", SECONDARY_TABS.includes(tab));
-  document.body.classList.toggle("no-fab", tab === "settings" || tab === "admin");
+  syncFab();
   TABS.forEach((t) => $("#tab-" + t).classList.toggle("active", t === tab));
   lastDrawn = Date.now();
   RENDERERS[tab]();
@@ -2700,18 +2841,44 @@ document.addEventListener("visibilitychange", () => {
 });
 setInterval(() => { if (Date.now() - lastDrawn >= REFRESH_EVERY_MS) quietRefresh(); }, 30 * 1000);
 
-window.addEventListener("hashchange", () => {
+// The address changed (BackNav, a link, Back): show that page, unless it's already showing
+function onRoute() {
   if (!state.me) return;
   const r = parseHash(location.hash);
-  if (r && r.ticket) { showTab(r.tab); openTicket(...r.ticket); return; }
-  if (r && r.tab === "calendar" && r.sub && r.sub !== cal.sub) { showTab(r.tab, { sub: r.sub }); return; }
-  if (r && routeHash(r.tab, r.sub) !== routeHash(state.tab, state.adminTab)) showTab(r.tab, { sub: r.sub });
-});
+  if (!r) return;
+  if (r.ticket) { showTab(r.tab, { sub: r.sub }); openTicket(...r.ticket); return; }
+  if (hashFor(r.tab, r.sub) !== currentHash()) showTab(r.tab, { sub: r.sub });
+}
+window.addEventListener("hashchange", onRoute);
+
+// ＋ follows the page: a place on Places, an item on Maintenance and Schedule, a task in the open list on
+// Lists (a new list on a phone's list overview), and on the Calendar the task / quick task / schedule item chooser
+function fabAction() {
+  switch (state.tab) {
+    case "places": return ["New place", () => { if (placesUI.add) placesUI.add(); }];
+    case "maintenance": return typeof maintEnabled === "function" && maintEnabled() ? ["New maintenance item", () => openMaintForm(null, () => renderMaintenance())] : null;
+    case "schedule": return ["New schedule item", () => openScheduleForm(null, () => renderSchedule())];
+    case "lists":
+      if (PHONE.matches && !listUI.route) return ["New list", () => newListModal()];
+      return ["Add a task to this list", () => openAddDialog({ listId: listUI.openId })];
+    case "calendar": return ["Add a task, a quick task or a schedule item", () => openAddDialog()];
+    default: return null;
+  }
+}
+function syncFab() {
+  const a = fabAction();
+  const fab = $("#addFab");
+  document.body.classList.toggle("no-fab", !a);
+  if (a) { fab.title = a[0]; fab.setAttribute("aria-label", a[0]); }
+}
 
 function wireChrome() {
-  document.querySelectorAll(".side-nav .tab-btn[data-tab]").forEach((b) => b.addEventListener("click", () => showTab(b.dataset.tab)));
+  document.querySelectorAll(".side-nav .tab-btn[data-tab]").forEach((b) => b.addEventListener("click", () => goTab(b.dataset.tab)));
   $("#moreBtn").addEventListener("click", openMoreSheet);
-  $("#addFab").addEventListener("click", () => openAddDialog());
+  $("#addFab").addEventListener("click", () => { const a = fabAction(); if (a) a[1](); });
+  // crossing the phone width: Lists changes between one page and two levels, and ＋ with it
+  const onWidth = () => { if (!state.me) return; syncFab(); if (state.tab === "lists") renderLists(); };
+  if (PHONE.addEventListener) PHONE.addEventListener("change", onWidth); else if (PHONE.addListener) PHONE.addListener(onWidth);
   const collapse = $("#sidebarCollapseBtn");
   const syncCollapse = () => {
     const collapsed = document.documentElement.getAttribute("data-sidebar") === "collapsed";
@@ -2729,12 +2896,12 @@ function wireChrome() {
 // A fresh install has nobody in admin_users, so nobody can open App settings.
 // Every page says how to fix that (for everyone); nobody is ever auto-promoted.
 function openWhoamiCard() {
-  showTab("settings");
-  // the Settings tab renders asynchronously; wait for the card, then scroll to it
+  if (state.tab !== "settings") goTab("settings");
+  // the Settings tab renders asynchronously; wait for the card, open it, then scroll to it
   const t0 = Date.now();
   (function look() {
     const c = $("#whoamiCard");
-    if (c) c.scrollIntoView({ behavior: "smooth", block: "start" });
+    if (c) { c.open = true; c.scrollIntoView({ behavior: "smooth", block: "start" }); }
     else if (Date.now() - t0 < 3000) setTimeout(look, 100);
   })();
 }
@@ -2783,17 +2950,21 @@ async function init() {
   initBackNav();
 }
 
-// Android's back gesture in the Home Assistant app (see backnav.js): Back
-// closes the top dialog first, then returns to the Calendar (the start page);
-// only Back on the Calendar with nothing open leaves the app.
+// Android's back gesture in the Home Assistant app (see backnav.js): Back closes the top dialog first, then
+// retraces the pages opened in the app (a list's page → the lists; a tab → the one before), then the page's
+// parent (#/lists/<id> → #/lists, My week / Quick tasks → the calendar), then the Calendar (the start page);
+// only Back on the calendar view with nothing open leaves the app.
 function initBackNav() {
   if (!window.BackNav) return;
   BackNav.init({
-    atHome: () => state.tab === "calendar",
-    goHome: () => showTab("calendar"),   // showTab keeps the hash in sync with replaceState
+    atHome: () => state.tab === "calendar" && cal.sub === "calendar",
+    goHome: () => showTab("calendar", { sub: "calendar" }),   // showTab keeps the hash in sync
     openLayers: () => UI.dialogs(),
     closeLayer: (m) => m.close(),         // the modal's own close, so onClose runs
+    isTab: (hash) => TAB_HASH.test(hash),
+    parentOf: parentOfHash,
   });
+  backNavReady = true;
 }
 
 // maintenance.js is loaded after this file: start once every script has run

@@ -513,15 +513,17 @@ input[type="color"] { width: 40px; height: 32px; padding: 2px; cursor: pointer; 
   #app { flex-direction: column; }
   .sidebar {
     width: 100%; height: auto; position: fixed; bottom: 0; left: 0; right: 0; top: auto;
-    flex-direction: row; padding: 6px 4px; border-right: none; border-top: 1px solid var(--border); z-index: 50;
+    flex-direction: row; padding: 6px 4px calc(6px + var(--safe-bottom)); border-right: none; border-top: 1px solid var(--border); z-index: 50;
   }
   .sidebar .brand, .sidebar-footer, .sidebar-user, .sidebar-collapse-btn { display: none; }
   [data-sidebar="collapsed"] .sidebar { width: 100%; }
   .side-nav { flex-direction: row; justify-content: flex-start; width: 100%; padding: 0; overflow-x: auto; overflow-y: hidden; }
-  .side-nav .tab-btn { flex: 1 0 auto; flex-direction: column; gap: 3px; padding: 6px 10px; border-left: none; border-radius: 10px; font-size: 0.65rem; white-space: nowrap; }
+  .side-nav .tab-btn { flex: 1 0 auto; flex-direction: column; justify-content: center; gap: 3px; min-height: 48px; padding: 6px 10px; border-left: none; border-radius: 10px; font-size: 0.72rem; white-space: nowrap; }
   .side-nav .tab-btn.active { border-left: none; background: var(--panel-alt); }
   .nav-icon { font-size: 1.15rem; }
-  .main-col { padding-bottom: 78px; }
+  :root { --bottombar-h: 62px; }
+  .main-col { padding-bottom: calc(78px + var(--safe-bottom)); }
+  .toast-root { bottom: calc(var(--bottombar-h) + var(--safe-bottom) + 12px); }
   main { padding: 14px 10px 40px; }
   .cal-layout { flex-direction: column; }
   .day-panel { width: 100%; position: static; }
@@ -687,8 +689,12 @@ main { padding-bottom: 96px; }                  /* room so the ＋ never covers 
 .strip-day.today { border-color: var(--accent); }
 .strip-day.today .num { color: var(--accent); }
 
-/* the day panel goes under the month once the screen is too narrow for both side by side */
+/* the day panel stays beside the month (narrower) down to 900px — a laptop with Home Assistant's sidebar —
+   and goes under it below that (a tap on a day then scrolls it into view) */
 @media (max-width: 1100px) {
+  .day-panel { width: 280px; }
+}
+@media (max-width: 900px) {
   .cal-layout { flex-direction: column; }
   .day-panel { width: 100%; position: static; }
 }
@@ -721,7 +727,9 @@ main { padding-bottom: 96px; }                  /* room so the ＋ never covers 
   .side-nav { justify-content: space-around; }
   .side-nav .tab-btn { flex: 1 1 0; min-width: 0; }
   .side-nav .tab-btn.first-secondary { margin-top: 0; }
-  .add-fab { right: 16px; bottom: 84px; width: 52px; height: 52px; }
+  .add-fab { right: 16px; bottom: calc(var(--bottombar-h) + var(--safe-bottom) + 14px); width: 52px; height: 52px; }
+  /* ＋ is the page's add button on a phone: the same button in the page heading would be a duplicate */
+  .page-add { display: none; }
   /* a smaller heading; the Calendar tab shows only its views (the bottom bar names the tab) */
   .page-head { margin-bottom: 10px; }
   .page-head h2 { font-size: 1.05rem; }
@@ -738,3 +746,50 @@ main { padding-bottom: 96px; }                  /* room so the ＋ never covers 
 }
 .cal-filters .form-row, .add-dialog .form-row, .modal .form-row.stack { align-items: stretch; text-align: left; }
 .cal-filters .form-row > span, .add-dialog .form-row > span { font-size: 0.8rem; color: var(--text-dim); text-align: left; }
+
+/* ---------- 2.8 navigation and layout ---------- */
+/* ⋯ menus */
+.menu-btn { font-size: 1.2rem; line-height: 1; padding: 4px 10px; }
+.more-item.danger { color: var(--danger); }
+.more-me .hint { font-weight: 400; }
+.back-btn { margin: 0 0 8px; padding-left: 4px; font-weight: 600; }
+
+/* Calendar: one status line under the toolbar */
+.cal-status { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 0; margin: 0 0 10px; font-size: 0.86rem; color: var(--text-dim); }
+.cal-status .cal-status-over { color: var(--danger); font-weight: 600; }
+.cal-status .sep { padding: 0 6px; }
+
+/* My week: the counts as one line; the workload folded */
+.week-stats { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 14px; }
+.week-stat { display: inline-flex; align-items: baseline; gap: 4px; min-height: 36px; padding: 6px 12px; border-radius: 999px;
+  border: 1px solid var(--border); background: var(--panel); color: var(--text-dim); font: inherit; font-size: 0.86rem; cursor: pointer; }
+.week-stat b { color: var(--accent); font-size: 1rem; }
+.week-stat.over { border-color: var(--danger); }
+.week-stat.over b { color: var(--danger); }
+.week-stat:disabled { cursor: default; opacity: 0.75; }
+.workload-fold > summary, .whoami-fold > summary { cursor: pointer; list-style: none; display: flex; align-items: center; gap: 8px; }
+.workload-fold > summary::-webkit-details-marker, .whoami-fold > summary::-webkit-details-marker { display: none; }
+.workload-fold > summary::before, .whoami-fold > summary::before { content: "▸"; color: var(--text-dim); }
+.workload-fold[open] > summary::before, .whoami-fold[open] > summary::before { content: "▾"; }
+.workload-fold > summary h3, .whoami-fold > summary h3 { margin: 0; }
+.workload-fold[open] > summary, .whoami-fold[open] > summary { margin-bottom: 10px; }
+
+/* Lists: Shared and Personal as two labelled groups */
+.list-group .list-cards { margin-bottom: 8px; }
+.list-group-head { margin-top: 4px; }
+
+/* the task dialog: the rarer fields under More */
+.task-edit > .hint { margin: -4px 0 10px; }
+.more-fields { margin: 10px 0; border-top: 1px solid var(--border); padding-top: 8px; }
+.more-fields > summary { cursor: pointer; font-weight: 600; color: var(--accent); padding: 4px 0; }
+.more-fields[open] > summary { margin-bottom: 8px; }
+
+/* Schedule: a tap on a row edits it */
+.sched-head.clickable { cursor: pointer; border-radius: 8px; }
+.sched-head.clickable:hover .name { color: var(--accent); }
+.sched-head.clickable:focus-visible { outline: 2px solid var(--accent-dim); outline-offset: 2px; }
+.entity-line { margin: 8px 0; }
+
+/* Places: a tap on the name edits it */
+.place-name { cursor: pointer; }
+.place-name:hover { color: var(--accent); }

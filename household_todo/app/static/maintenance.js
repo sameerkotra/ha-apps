@@ -10,7 +10,7 @@ const maint = {
   histYear: "",
   histCat: "",
   showHidden: false,
-  view: "coming",          // the tab shown: opening Maintenance always starts on Coming up
+  view: null,              // the tab shown; opening Maintenance starts on Needs doing when something does, else Coming up
 };
 // the four views, as tabs; History and Suggestions are folding sections below them
 const MAINT_VIEWS = [["needs", "Needs doing"], ["coming", "Coming up"], ["jobs", "Open jobs"], ["all", "All upkeep"]];
@@ -99,7 +99,7 @@ async function renderMaintenance() {
   const root = $("#tab-maintenance");
   if (!maintEnabled()) {
     mount(root, pageHead("Maintenance"), h("div", { class: "card empty" }, "Maintenance is turned off. ",
-      isAdmin() ? h("button", { class: "link-btn", type: "button", onclick: () => showTab("admin", { sub: "maintenance" }) }, "Turn it on in Admin → Maintenance") : "An admin can turn it on."));
+      isAdmin() ? h("button", { class: "link-btn", type: "button", onclick: () => goTab("admin", "maintenance") }, "Turn it on in Admin → Maintenance") : "An admin can turn it on."));
     return;
   }
   if (!maint.data) mount(root, pageHead("Maintenance"), spinner());
@@ -125,7 +125,7 @@ function paintMaintenance() {
   const horizon = addDays(d.today, d.upcomingDays);
   const coming = d.items.filter((x) => x.status === "upcoming" && x.dueDate <= horizon).sort((a, b) => (a.dueDate < b.dueDate ? -1 : 1));
 
-  const newBtn = h("button", { class: "btn-primary", type: "button", onclick: () => openMaintForm(null, again) }, "+ New item");
+  const newBtn = h("button", { class: "btn-primary page-add", type: "button", onclick: () => openMaintForm(null, again) }, "+ New item");
   const filesNote = d.files.configured && !d.files.online
     ? h("div", { class: "warn-box soft" }, "📎 Files: ", d.files.reason) : null;
 
@@ -141,7 +141,7 @@ function paintMaintenance() {
     comingBody = h("div", null, Object.keys(byMonth).sort().map((k) => {
       const dt = parseIso(k + "-01");
       return h("div", null, h("div", { class: "group-head" }, MONTHS_FULL[dt.getMonth()] + " " + dt.getFullYear()),
-        byMonth[k].map((it) => maintRow(it, again, { actions: false })));
+        byMonth[k].map((it) => maintRow(it, again, { done: true })));
     }));
   } else comingBody = h("div", { class: "empty" }, `Nothing else is due in the next ${d.upcomingDays} days.`);
 
@@ -168,10 +168,11 @@ function paintMaintenance() {
   const histBox = h("div", null, spinner());
   loadHistory(histBox, again);
 
-  // ---- the four views as tabs (Coming up when the tab opens; redraws keep the one that's open) ----
+  // ---- the four views as tabs (Needs doing when the tab opens and something needs doing, else Coming up;
+  // redraws keep the one that's open) ----
   const counts = { needs: needs.length, coming: coming.length, jobs: d.jobs.length, all: d.items.length };
   const bodies = { needs: needsBody, coming: comingBody, jobs: jobsBody, all: allBody };
-  if (!bodies[maint.view]) maint.view = "coming";
+  if (!bodies[maint.view]) maint.view = needs.length ? "needs" : "coming";
   const panel = h("div", { class: "maint-view", role: "tabpanel" });
   const tabBtns = MAINT_VIEWS.map(([k, label]) => {
     const urgent = k === "needs" && needs.some((x) => x.status === "overdue");
@@ -210,7 +211,7 @@ function maintRow(it, again, opts = {}) {
   name.addEventListener("click", openIt);
   name.addEventListener("keydown", (e) => { if (e.key === "Enter") openIt(); });
   const btns = [];
-  if (opts.actions || opts.manage) {
+  if (opts.actions || opts.manage || opts.done) {
     if (it.status !== "paused") btns.push(h("button", { class: "btn-primary btn-small", type: "button", onclick: () => markDoneDialog(it, again) }, "✓ Done"));
     if (opts.actions && it.status !== "paused") btns.push(h("button", { class: "btn-ghost btn-small", type: "button", onclick: () => snoozeDialog(it, again) }, "💤 Snooze"));
   }
@@ -616,7 +617,7 @@ function suggestionsBody(again) {
     h("div", { class: "hint", style: "margin-bottom:8px" },
       `It's ${s.seasonLabel.toLowerCase()} here${s.south ? " (southern hemisphere)" : ""}; jobs for this season or the next month come first. `,
       "Suggestions follow what the house has — ",
-      isAdmin() ? h("button", { class: "link-btn", type: "button", onclick: () => showTab("admin", { sub: "maintenance" }) }, "the home profile") : "the home profile an admin sets", "."),
+      isAdmin() ? h("button", { class: "link-btn", type: "button", onclick: () => goTab("admin", "maintenance") }, "the home profile") : "the home profile an admin sets", "."),
     s.items.length ? h("div", null, (maint.showAllSugg ? s.items : s.items.slice(0, SUGG_FIRST)).map((x) => card(x, false))) : h("div", { class: "empty" }, "No more suggestions — everything that fits is set up or hidden."),
     s.items.length > SUGG_FIRST ? h("div", { style: "margin-top:8px" }, h("button", { class: "link-btn", type: "button",
       onclick: () => { maint.showAllSugg = !maint.showAllSugg; paintMaintenance(); } }, maint.showAllSugg ? "Show fewer" : `Show all ${s.items.length}`)) : null,
@@ -651,7 +652,7 @@ function filesBox({ files, owner, onChange, readOnly = false }) {
   }));
   if (readOnly || !owner) return files.length ? list : null;
   if (!st.configured) return h("div", null, list, h("div", { class: "hint" }, "Attaching files is off — ", isAdmin()
-    ? h("button", { class: "link-btn", type: "button", onclick: () => showTab("admin", { sub: "settings" }) }, "choose a files folder in App settings") : "an admin can choose a files folder", "."));
+    ? h("button", { class: "link-btn", type: "button", onclick: () => goTab("admin", "settings") }, "choose a files folder in App settings") : "an admin can choose a files folder", "."));
   if (!st.online) return h("div", null, list, h("div", { class: "hint warn" }, "📎 ", st.reason || "The files folder isn't connected."));
   const picker = pendingFiles({ immediate: async (fs, progress) => {
     const failed = await uploadAll(fs, owner, progress);
@@ -753,7 +754,7 @@ function taskFilesSection(task, { onChange = () => {} } = {}) {
     let add;
     if (!st.configured) {
       add = h("div", { class: "hint" }, "Attaching files is off — ",
-        h("button", { class: "link-btn", type: "button", onclick: () => { UI.dialogs().forEach((m) => m.close()); showTab("admin", { sub: "settings" }); } }, "choose a files folder in App settings"), ".");
+        h("button", { class: "link-btn", type: "button", onclick: () => { UI.dialogs().forEach((m) => m.close()); goTab("admin", "settings"); } }, "choose a files folder in App settings"), ".");
     } else if (!st.online) {
       add = h("div", { class: "hint warn" }, "📎 ", st.reason || "The files folder isn't connected.");
     } else if (d.completed) {
@@ -871,7 +872,7 @@ function maintDayEntry(e, again) {
       : e.status === "overdue" ? h("span", { class: "chip overdue" }, `Overdue since ${fmtDate(e.dueDate)}`) : h("span", { class: "chip today" }, "Maintenance"),
     e.assigneeName ? h("span", { class: "chip" }, "👤 ", e.assigneeName) : null,
     done,
-    h("button", { class: "btn-ghost btn-small", type: "button", onclick: () => showTab("maintenance") }, "Open"));
+    h("button", { class: "btn-ghost btn-small", type: "button", onclick: () => goTab("maintenance") }, "Open"));
 }
 
 async function scheduleMaintCard() {
@@ -885,7 +886,7 @@ async function scheduleMaintCard() {
     : h("div", { class: "hint" }, "No upkeep set up yet.");
   return section("schedule-maint", "🔧 Maintenance", d.items.length, h("div", null, body,
     h("div", { class: "hint", style: "margin-top:8px" }, "Recurring upkeep is marked done on the ",
-      h("button", { class: "link-btn", type: "button", onclick: () => showTab("maintenance") }, "Maintenance tab"), ".")));
+      h("button", { class: "link-btn", type: "button", onclick: () => goTab("maintenance") }, "Maintenance tab"), ".")));
 }
 
 // ---------------------------------------------------------------------------------------------------
@@ -950,7 +951,7 @@ async function renderAdminMaintenance(box) {
       h("div", { class: "hint" }, fs.configured ? [fs.path, " — ", h("strong", null, fs.online ? "Connected" : "Not connected"), fs.online ? null : [": ", fs.reason]]
         : "Not set: attaching files is off."),
       h("div", { class: "actions", style: "justify-content:flex-start" },
-        h("button", { class: "btn-secondary", type: "button", onclick: () => showTab("admin", { sub: "settings" }) }, "Choose it in App settings"))) : null,
+        h("button", { class: "btn-secondary", type: "button", onclick: () => goTab("admin", "settings") }, "Choose it in App settings"))) : null,
     a.enabled ? customSuggestionsCard(a, again) : null);
 }
 

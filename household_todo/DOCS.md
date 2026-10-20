@@ -31,7 +31,7 @@ Home Assistant account.
      *Reminders*). People appear here after they have opened the app once.
    - **Admin → Maintenance**: turn on house maintenance if you want it.
    - Add a first task with **＋**, the quick-add box on the Calendar's
-     **Today** view, or in **Lists**.
+     **My week** view, or in **Lists**.
 
 Only `admin_users` is set in the Configuration tab; everything else is in the
 app and changes apply straight away, without a restart.
@@ -42,8 +42,10 @@ app and changes apply straight away, without a restart.
   person gets a private personal list, **My Tasks**, the first time they open
   the app. Anyone can add more lists: *Shared* (everyone sees it) or *Only
   me* (private). A list can be renamed or deleted (deleting removes its
-  tasks); whether it is shared or private can't be changed later. Drag the
-  list cards to reorder them. A deleted **shared** list is kept for 30 days:
+  tasks) from the list's **⋯** menu; whether it is shared or private can't be
+  changed later. The lists show in two groups, **Shared** and **Personal**;
+  drag the list cards to reorder them within a group. On a phone, tap a list to
+  open it on its own page (**‹ Lists** or Back returns to the lists). A deleted **shared** list is kept for 30 days:
   an admin can bring it back, with its tasks and their files, from
   **Admin → Storage → Deleted lists**. A deleted personal list is gone at once.
 - **Tasks.** Only a **title** is required. Optional: notes, a **link**, a due
@@ -69,11 +71,11 @@ app and changes apply straight away, without a restart.
   to you; if it was assigned to someone else it becomes unassigned (the form
   warns you first). You can't move tasks into someone else's personal list.
 - **Quick add** in each list (with a **Required** toggle and **More options**
-  for all the fields), on the Calendar's Today view (to My Tasks), in the
+  for all the fields), on the Calendar's My week view (to My Tasks), in the
   calendar's day panel (on that date), and **＋** on every page.
 - **Sort, filter and order.** Each list has **Upcoming | Completed**, a sort
-  (manual, due date, priority, assignee, newest) and filters for assignee,
-  priority, type, place and completion; your choice is remembered per list on
+  (manual, due date, priority, assignee, newest) and **⚙ Filters** (assignee,
+  priority, type, place and completion; the button says how many are on); your choice is remembered per list on
   that device. With manual sort and no filters, drag tasks to reorder them
   (Alt + ↑/↓ from the keyboard).
 - **Completed tasks** are deleted automatically 60 days after they were
@@ -108,10 +110,16 @@ The main tabs are **Calendar**, **Lists**, **Schedule** and, when it's on,
 **Maintenance**. **Places**, **Settings** and **Admin** sit below a line in the
 sidebar; on a phone they're under **⋯ More** in the bottom bar.
 
-**＋** (bottom right, on every page but Settings and Admin) adds a **task** (on
-the list you pick — the last one you used is remembered — with a date if you
-want one), a **quick task**, or a **schedule item**. On the calendar's month
-view, a new task is dated on the day you have selected.
+**＋** (bottom right, on every page but Settings and Admin) adds what the page
+is about: on **Calendar** a **task** (on the list you pick — the last one you
+used is remembered — with a date if you want one), a **quick task**, or a
+**schedule item** (on the month view a new task is dated on the day you have
+selected); on **Lists** a task in the open list (on a phone's list overview, a
+new list); on **Schedule**, **Maintenance** and **Places** a new item or place.
+On a phone, ＋ replaces the page's own **+ New …** button.
+
+Each page has its own address, so a reload keeps your place, and Back (the
+phone's back gesture too) returns to the page you came from.
 
 On a phone (a touch screen), **swipe** a task right to tick it off (or back
 on), and left to move it to tomorrow; swipe a quick task either way to remove
@@ -119,30 +127,35 @@ it.
 
 ## Calendar
 
-The start page. Its three views are at the top: **📅 Calendar**, **☀️ Today**
+The start page. Its three views are at the top: **📅 Calendar**, **☀️ My week**
 and **⚡ Quick tasks**. The tab always opens on the calendar.
 
 **Month** view is a grid of every dated task and every schedule occurrence;
 **Agenda** lists the next 30 days (the default on a phone), with the next two
 weeks as a strip of days on top (a dot on busy days; tap one to go to it, or
 to add a task on a free one). **⚙ Filters** holds everything that narrows the
-calendar — type, person, **Show completed**, which day the week starts on, and
+calendar — type, person, **Show completed** (the day the week starts on is in
+**Settings → Appearance**; the sheet links to it), and
 **🗓 Schedule items** (all, none, or tick off the ones you don't want to see —
 remembered on that device; the items, reminders and sensors keep working; if
 maintenance is on, its due dates show with 🔧 and can be hidden there too).
 The button says how many filters are on.
 
-Click a day for its panel (beside the month on a wide screen, below it
-otherwise): add a task on that date, see the day's tasks and schedule items,
-and **Skip**, **Move…** or **Undo** a schedule date. An "N overdue" banner
-links to Today, and a footer counts tasks with no date.
+**This month** goes back to the current month and today. Click a day for its
+panel (beside the month down to a laptop-sized window, below it on narrower
+screens, where a tap scrolls to it): add a task on that date, see the day's
+tasks and schedule items — timed ones in time order, then the rest — and
+**Skip**, **Move…** or **Undo** a schedule date. One line under the toolbar
+says how many tasks are overdue (linking to My week) and how many have no date.
 
-**☀️ Today** (it was the Dashboard): quick add to My Tasks; tiles for
-**Overdue**, **Due today**, **Next 7 days** and **Open tasks**; the overdue,
-today and upcoming task groups; **Coming up** (schedule items that are on now,
-and your own items today or tomorrow); and **workload cards** for each person
-(open, overdue, due soon, done this week) plus *Unassigned*. An admin can click
-someone's card to act as them. Old links to the Dashboard open Today.
+**☀️ My week** (it was Today, and before that the Dashboard): quick add to My
+Tasks; one line of counts — **overdue**, **due today**, **next 7 days** and
+**open tasks** — each jumping to its group; the overdue and today task groups;
+**Coming up** (schedule items that are on now, and your own items today or
+tomorrow); the upcoming tasks; and, folded at the bottom, **Household
+workload**: a card for each person (open, overdue, due soon, done this week)
+plus *Unassigned*. An admin can click someone's card to act as them. Old links
+to the Dashboard or Today open My week.
 
 **⚡ Quick tasks** is a plain list of your own: type an item and press Enter
 (or **Add**), and tap ✕ to remove it when it's done. Drag ⠿ to put them in
@@ -179,9 +192,11 @@ last) weekday of the month; every N days.
   you can change or delete it (an admin only while acting as you). Household
   items, assigned or not, can be edited by anyone.
 - **Link**, **notes** and an **icon** (a preset or any `mdi:` icon name).
-- The tab has an **All · Mine · Household** filter; each row shows the next
-  date, person, time, place, drive time (if on), link and its Home Assistant
-  entity, and **Next dates ▾** lists the coming dates with their changes.
+- The tab has an **All · Mine · Household** filter and lists items soonest
+  first, under **This week** and **Later**; each row shows the next date,
+  person, time, place, drive time (if on) and link, and **Next dates ▾** lists
+  the coming dates with their changes. Tap a row to edit it; **Delete** and the
+  item's Home Assistant entity id (with a copy button) are in the edit dialog.
 - Up to 100 schedule items, and 50 date changes per item.
 
 ### Schedule sensors in Home Assistant
@@ -229,8 +244,10 @@ action:
 
 A shared address book: name, address and an optional phone number. Pick a
 place on any task or schedule item (the picker has a **Search places** box
-and **+ New place…**). Each place has **Open in maps**, **Copy address** and
-a 📞 call link; a task's 📍 chip opens maps too. The same address can't be
+and **+ New place…**). Each place has **Open in maps** and a 📞 call link,
+and under **⋯** **Edit**, **Copy address**, **Recalculate drive time** and
+**Delete** (tap the name to edit it too); the tab's search box appears once
+there are more than 8 places; a task's 📍 chip opens maps too. The same address can't be
 saved twice. Anyone can add, edit or delete a place (tasks just lose the
 reference).
 
@@ -240,7 +257,7 @@ With **Drive times** on (Admin → App settings) and a home address set, each
 place gets an estimated drive time from home. A task or schedule item with a
 place and a time then shows **🚗 18 min · leave by 14:12**, and reminders add
 "~18 min drive, leave by 14:12". The Places tab shows "~18 min from home" (or
-"not calculated yet") and a **🔄 Recalculate drive time** button.
+"not calculated yet") and **🔄 Recalculate drive time** under each place's **⋯**.
 
 - Estimates are worked out in the background (one place a minute), cached,
   and refreshed about once a month or when an address changes; nothing waits
@@ -261,13 +278,15 @@ House upkeep in its own 🔧 **Maintenance** tab, off until an admin turns it
 on in **Admin → Maintenance** (which also creates a shared **Maintenance**
 list and makes every admin a recipient).
 
-Four tabs across the top — the page opens on **Coming up** — and, below them,
+Four tabs across the top — the page opens on **Needs doing** when something
+does, otherwise on **Coming up** — and, below them,
 **History** and **Suggestions** (both folded until you open them):
 
 - **Needs doing** — overdue items and items due within their reminder time.
   **✓ Done** records the date, a note, an optional cost and photos or a
   receipt, and works out the next due date. **💤 Snooze** moves one due date.
-- **Coming up** — the next 90 days, by month.
+- **Coming up** — the next 90 days, by month, each with **✓ Done** for a job
+  done early.
 - **Open jobs** — one-off jobs, which are ordinary tasks in the Maintenance
   list (it can't be deleted while Maintenance is on). Jobs can have files.
 - **All upkeep** — every item by category, with details, files, history,
@@ -389,13 +408,16 @@ and you can turn it off for yourself on **Settings → Household Assistant**.
 - **Reminders** (above; only as yourself, not while acting as someone).
 - **Household Assistant** — *Let the Household Assistant answer for me* (on),
   shown while an admin lets the Household Assistant ask Todo.
-- **How the app sees you** — the user name and user id Home Assistant sent
-  (copyable), whether you're an admin, how many names are in `admin_users`,
-  whether a reminder service is linked, and what to do if something's wrong.
 - **Task types** — add, rename, recolour or delete types, each with an emoji.
-- **Theme** (Midnight, Slate, Daylight, or Auto, which follows your device's
-  light or dark setting) in the sidebar, or in Settings on a phone. If you had
-  picked Ink before, you now get Midnight.
+- **Appearance** — the **Theme** (Midnight, Slate, Daylight, or Auto, which
+  follows your device's light or dark setting; also in the sidebar on a
+  computer) and the day the calendar's **week starts on**, both remembered on
+  that device. If you had picked Ink before, you now get Midnight.
+- **How the app sees you** (last, folded; your name in the sidebar, or under
+  **⋯ More** on a phone, opens it) — the user name and user id Home Assistant
+  sent (copyable), whether you're an admin, how many names are in
+  `admin_users`, whether a reminder service is linked, and what to do if
+  something's wrong.
 
 ## Admin (admins only)
 

@@ -1,5 +1,19 @@
 # Changelog
 
+## 2.8.0
+
+- **Back and reloads keep your place.** Every page has its own address — an open list, My week, Quick tasks, an Admin section — so a reload stays where you were, and Back returns to the page you came from.
+- **Lists on a phone: two levels.** Tap a list to open it on its own page; **‹ Lists** or Back returns to the lists. The lists are grouped under **Shared** and **Personal**; **Rename** and **Delete** are under the list's **⋯**; the filters are behind one **⚙ Filters** button that says how many are on.
+- **＋ follows the page:** a new place on Places, a new item on Maintenance and Schedule, a task in the open list on Lists, and the task / quick task / schedule item choice on the Calendar. On a phone it replaces the page's own **+ New …** button.
+- **☀️ Today is now ☀️ My week**, and the calendar's **Today** button is **This month**. My week shows its counts as one line (tap one to jump to it), **Coming up** sits above the upcoming tasks, and **Household workload** is last, folded.
+- **Calendar:** the day panel stays beside the month down to a laptop-sized window (below that, tapping a day scrolls to it); overdue and undated tasks are one line under the toolbar; a day lists its timed entries in time order, then the rest.
+- **Task dialog:** title, when, who and priority first, then the checklist and notes; link, type, place, completion and list fold under **More** (which names the ones that are set).
+- **Schedule:** soonest first under **This week** and **Later**; tap a row to edit it, with **Delete** and the entity id in the edit dialog; the explanation folds under one line.
+- **Maintenance** opens on **Needs doing** when something does, and **Coming up** rows have **✓ Done** too.
+- **Places:** **Open in maps** stays on each place, the rest is under **⋯**; the search box shows once there are more than 8 places.
+- **Settings:** **Appearance** (theme and the week's first day) on every screen; **How the app sees you** is last and folded. On a phone, **⋯ More** also opens it.
+- **Phones:** a bigger bottom bar that clears the home indicator, with larger labels; ＋ sits above it.
+
 ## 2.7.9
 
 - **Back goes to the page you came from.** The phone's back gesture (and the browser's Back) now steps back through the pages you opened in the app, instead of jumping straight to the start page; dialogs still close first, and Back on the start page still leaves the app.
