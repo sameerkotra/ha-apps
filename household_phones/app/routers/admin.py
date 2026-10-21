@@ -22,7 +22,7 @@ def available(conn, p, s: dict) -> dict:
     return {"id": p["id"], "name": s["name"], "owner": s["owner"], "ownerId": p["owner_id"], "kind": p["kind"],
             "kindGuess": KIND_GUESS.get(p["kind"], p["kind"]), "model": p["model"], "manufacturer": p["manufacturer"],
             "osName": p["os_name"], "inRegistry": bool(p["in_registry"]), "nameOwn": p["name"],
-            "intervalOwn": p["interval_min"]}
+            "intervalOwn": p["interval_min"], "offlineAlert": monitor.spell_view(p, config.clock())}
 
 
 @router.get("/admin/phones")
@@ -66,9 +66,10 @@ def refresh(admin: dict = Depends(require_admin)):
 @router.put("/admin/phones/{pid}")
 def edit_phone(pid: str, body: dict = Body(...), admin: dict = Depends(require_admin)):
     """A monitored phone's settings: {name?, kind?: phone|tablet, intervalMin?: null|5|10|15, ownerId?: null|id,
-    notifyService?: null|text}. Adding to and stopping monitoring have their own routes."""
+    notifyService?: null|text, offlineAlertAfterMin?: null|minutes}. Adding to and stopping monitoring have their own
+    routes."""
     body = body if isinstance(body, dict) else {}
-    keys = {"name", "kind", "intervalMin", "ownerId", "notifyService"}
+    keys = {"name", "kind", "intervalMin", "ownerId", "notifyService", "offlineAlertAfterMin"}
     if set(body) - keys:
         raise HTTPException(422, f"Unknown field(s): {', '.join(sorted(set(body) - keys))}.")
     with db.get_conn() as conn:
@@ -99,8 +100,8 @@ def edit_phone(pid: str, body: dict = Body(...), admin: dict = Depends(require_a
 
 
 def _phone_fields(conn, p, body: dict, admin: dict) -> tuple[dict, list]:
-    """The columns to set from {name, kind, intervalMin, ownerId} (shared by Edit and Add to monitoring), and the
-    history notes. HTTPException 422."""
+    """The columns to set from {name, kind, intervalMin, ownerId, offlineAlertAfterMin} (shared by Edit and Add to
+    monitoring), and the history notes. HTTPException 422."""
     sets, notes = {}, []
     if "name" in body:
         name = " ".join(str(body["name"] or "").split())[:60]
@@ -116,6 +117,14 @@ def _phone_fields(conn, p, body: dict, admin: dict) -> tuple[dict, list]:
         if body["intervalMin"] not in (None, 5, 10, 15):
             raise HTTPException(422, "The interval is 15, 10 or 5 minutes, or the household's.")
         sets["interval_min"] = body["intervalMin"]
+    if "offlineAlertAfterMin" in body:
+        v = body["offlineAlertAfterMin"]
+        if v is not None and (isinstance(v, bool) or v not in dict(settings.OFFLINE_DELAYS)):
+            raise HTTPException(422, "Alert when offline: the household's default or one of the listed times.")
+        if v != p["offline_alert_after_min"]:
+            sets["offline_alert_after_min"] = v
+            notes.append("Offline alert: " + ("the household's default" if v is None else
+                                              f"after {settings.delay_label(v).lower()}") + f" (set by {admin['name']}).")
     if "ownerId" in body:
         oid = body["ownerId"]
         known = oid is None or (isinstance(oid, str) and (oid == p["owner_id"] or conn.execute(
@@ -130,11 +139,11 @@ def _phone_fields(conn, p, body: dict, admin: dict) -> tuple[dict, list]:
 
 @router.post("/admin/phones/{pid}/monitor")
 def add_to_monitoring(pid: str, body: dict = Body(...), admin: dict = Depends(require_admin)):
-    """Add to monitoring (§2): {ownerId, name, kind: phone|tablet, intervalMin} in one go. From then on it is asked
-    to report when overdue, its alerts go out and its history is kept; its owner gets My phone, and decides about
-    forwarding there."""
+    """Add to monitoring (§2): {ownerId, name, kind: phone|tablet, intervalMin, offlineAlertAfterMin?} in one go. From
+    then on it is asked to report when overdue, its alerts go out and its history is kept; its owner gets My phone, and
+    decides about forwarding there."""
     body = body if isinstance(body, dict) else {}
-    keys = {"name", "kind", "intervalMin", "ownerId"}
+    keys = {"name", "kind", "intervalMin", "ownerId", "offlineAlertAfterMin"}
     if set(body) - keys:
         raise HTTPException(422, f"Unknown field(s): {', '.join(sorted(set(body) - keys))}.")
     if body.get("kind") not in ("phone", "tablet"):
@@ -151,6 +160,7 @@ def add_to_monitoring(pid: str, body: dict = Body(...), admin: dict = Depends(re
         sets.update(monitored=1, monitored_since=now, kind_confirmed=1, welcome=1 if owner else 0, status="unknown",
                     status_reason=None, status_since=now, late_since=None, requests_sent=0, overdue_from=None,
                     request_error=None, request_error_kind=None, stop_requested_at=None, low_battery_sent=0,
+                    offline_since=None, offline_counted_s=0, offline_counted_at=None, offline_alerted=0, app_alerted=0,
                     last_reboot=phones.last_reboot(pid) or p["last_reboot"])      # no "restarted" alert for the past
         level, chg = phones.battery(pid), phones.charging(pid)
         if level is not None:
@@ -180,7 +190,8 @@ def stop_monitoring(pid: str, body: dict = Body(...), admin: dict = Depends(requ
                      "pause_kind = NULL, pause_until = NULL, pause_until_online = 0, pause_reason = NULL, pause_by = NULL, "
                      "stop_requested_at = NULL, status = 'unknown', status_reason = 'not_monitored', status_since = ?, "
                      "late_since = NULL, requests_sent = 0, overdue_from = NULL, request_error = NULL, "
-                     "request_error_kind = NULL WHERE id = ?", (now, pid))
+                     "request_error_kind = NULL, offline_since = NULL, offline_counted_s = 0, offline_counted_at = NULL, "
+                     "offline_alerted = 0, app_alerted = 0 WHERE id = ?", (now, pid))
         conn.execute("DELETE FROM alert_queue WHERE phone_id = ?", (pid,))
         conn.execute("DELETE FROM alert_state WHERE phone_id = ?", (pid,))
         if keep:

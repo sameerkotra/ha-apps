@@ -68,6 +68,20 @@ def _interval(v: int) -> int:
     return v
 
 
+OFFLINE_DELAYS = ((0, "As soon as it's Offline"), (30, "30 minutes"), (60, "1 hour"), (120, "2 hours"), (240, "4 hours"),
+                  (360, "6 hours"), (600, "10 hours"), (720, "12 hours"), (1440, "24 hours"))
+
+
+def _offline_delay(v: int) -> int:
+    if v not in dict(OFFLINE_DELAYS):
+        raise ValueError("Choose one of the listed times.")
+    return v
+
+
+def delay_label(minutes: int) -> str:
+    return dict(OFFLINE_DELAYS).get(minutes, f"{minutes} minutes")
+
+
 def _one_line(v: str) -> str:
     if "\n" in v or "\r" in v:
         raise ValueError("One line only.")
@@ -136,13 +150,20 @@ SETTINGS = [
     Setting("alert_offline", True, "Offline", group="alerts",
             help="When a phone becomes Offline, with its battery level at the last check-in."),
     Setting("alert_offline_to", "admins", "…to", group="alerts", choices=RECIPIENTS, show_if="alert_offline"),
+    Setting("offline_alert_after_min", 0, "Alert when offline for at least", group="alerts", type=int,
+            validators=[_offline_delay], choices=OFFLINE_DELAYS, show_if="alert_offline",
+            help="The household's default; each phone can have its own (its page in Admin mode). The phone is marked "
+                 "Offline as usual, only the alert waits, and none goes out if it comes back sooner. The owner's "
+                 "do-not-monitor hours and pauses don't count. App not reporting alerts wait the same time."),
     Setting("alert_app", True, "App not reporting", group="alerts",
             help="The phone is probably on but the Companion app can't report (signed out, a sensor off, battery "
-                 "optimisation). Sent once it has lasted longer than the Offline time."),
+                 "optimisation). Sent once it has lasted longer than the Offline time, and the phone's Alert-when-offline time."),
     Setting("alert_app_to", "both", "…to", group="alerts", choices=RECIPIENTS, show_if="alert_app"),
     Setting("alert_lost_contact", True, "Lost contact with all phones", group="alerts",
             help="To admins, as a Home Assistant notification (needs no internet) and on their phones."),
-    Setting("alert_back", False, "Back online", group="alerts"),
+    Setting("alert_back", False, "Back online", group="alerts",
+            help="When a phone that was Offline or App not reporting reports again. With an Alert-when-offline time, "
+                 "only if its alert had gone out."),
     Setting("alert_back_to", "admins", "…to", group="alerts", choices=RECIPIENTS, show_if="alert_back"),
     Setting("alert_restart", True, "Restarted", group="alerts",
             help="With a guess: \"battery was 3%, probably ran out\" or \"probably an update\"."),

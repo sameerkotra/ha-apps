@@ -200,7 +200,9 @@ def admin_page(conn, p, now: float, viewer: dict) -> dict:
                stopRequested=bool(p["stop_requested_at"]), pause=pause_view(p, now))
     if p["fwd_on"]:
         out["forwardingTarget"] = forwarding.target_name(p)
+    out["offlineAlert"] = monitor.spell_view(p, now)
     if out.get("hidden"):
+        out["offlineAlert"]["counting"] = None           # nothing about its status while hidden (§9)
         keep = ("pause", "found", "owner") if out["monitored"] else ()
         out.update(sensors=None, history=[h for h in history(conn, p["id"]) if h["kind"] in keep] if keep else [])
         return out

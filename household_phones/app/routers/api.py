@@ -374,7 +374,7 @@ def replaces(pid: str, body: dict = Body(...), user: dict = Depends(get_current_
 
 
 MOVED = ("name", "kind", "monitored", "monitored_since", "interval_min", "owner_id", "owner_by_admin", "dnm_windows",
-         "share_place", "fwd_on", "fwd_target", "fwd_chat_id", "fwd_chat_name", "fwd_chat_kind", "fwd_members",
+         "offline_alert_after_min", "share_place", "fwd_on", "fwd_target", "fwd_chat_id", "fwd_chat_name", "fwd_chat_kind", "fwd_members",
          "fwd_members_at", "fwd_disappear", "fwd_apps", "fwd_filter", "fwd_words", "fwd_all_confirmed",
          "fwd_quiet_start", "fwd_quiet_end", "fwd_quiet_mode")
 

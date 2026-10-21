@@ -101,6 +101,16 @@ CREATE TABLE IF NOT EXISTS phones (
     last_reboot TEXT,
     low_battery_sent INTEGER NOT NULL DEFAULT 0,
     charge_reminded_on TEXT,              -- the date of the last charging reminder
+    -- the offline alert's delay (§5): NULL = the household's (App settings), else minutes (0 = at once)
+    offline_alert_after_min INTEGER,
+    -- the current unreachable spell (Offline / App not reporting until it is back online): when it began, the time
+    -- counted towards the delay so far (not do-not-monitor hours or pauses), when that count was last brought up to
+    -- date (NULL: not counting now), and whether its Offline / App-not-reporting alert has gone out
+    offline_since REAL,
+    offline_counted_s REAL NOT NULL DEFAULT 0,
+    offline_counted_at REAL,
+    offline_alerted INTEGER NOT NULL DEFAULT 0,
+    app_alerted INTEGER NOT NULL DEFAULT 0,
     -- forwarding (§6): only the owner switches it on
     fwd_on INTEGER NOT NULL DEFAULT 0,
     fwd_target TEXT NOT NULL DEFAULT 'my_room' CHECK (fwd_target IN ('my_room', 'chat')),
@@ -212,6 +222,12 @@ MIGRATIONS: dict = {"phones": [
     ("monitored_since", "REAL"),
     ("welcome", "INTEGER NOT NULL DEFAULT 0"),
     ("dnm_windows", "TEXT"),
+    ("offline_alert_after_min", "INTEGER"),          # 1.2: the offline alert's delay
+    ("offline_since", "REAL"),
+    ("offline_counted_s", "REAL NOT NULL DEFAULT 0"),
+    ("offline_counted_at", "REAL"),
+    ("offline_alerted", "INTEGER NOT NULL DEFAULT 0"),
+    ("app_alerted", "INTEGER NOT NULL DEFAULT 0"),
 ]}
 
 ALL_DAYS = [0, 1, 2, 3, 4, 5, 6]

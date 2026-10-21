@@ -45,7 +45,8 @@ building, and the phase-1 questions answered by fallbacks.**
   (`in_registry = 0`) until removed.
 - **Monitored only when an admin adds it.** Discovery lists every mobile_app device; in Admin mode All phones shows
   the ones not added under **Available devices** (with the kind guess) and **Add to monitoring** on each: one dialog
-  sets the owner (pre-filled from discovery), name, kind (Phone or Tablet) and interval. A device that isn't added
+  sets the owner (pre-filled from discovery), name, kind (Phone or Tablet), interval and *Alert when offline for at
+  least* (§5). A device that isn't added
   (`monitored = 0`) is never asked to report, its reports aren't written, it gets no alerts and no history, isn't
   counted in the summary strip or the lost-contact rule, and doesn't appear in Check now, the bus answers
   (`phones.forwarding_into`), the Assistant or the Home Assistant sensors. It has no My phone page: its owner sees
@@ -70,8 +71,8 @@ building, and the phase-1 questions answered by fallbacks.**
   its owner has an older monitored phone.
 - **Not used lately:** a monitored phone with no check-in for 30 days (setting) → listed with **Remove** (history
   deleted) or **Keep**. Never removed automatically.
-- **Per phone:** display name (default "<owner>'s <model>"), kind, monitored, its own interval, owner, notify service;
-  the owner's do-not-monitor hours.
+- **Per phone:** display name (default "<owner>'s <model>"), kind, monitored, its own interval, owner, notify service,
+  its offline alert delay (§5; admins only); the owner's do-not-monitor hours.
 
 ## 3. Phone mode: checking in
 
@@ -90,7 +91,8 @@ check-in within the wait after a request is an *answer* (learnt per phone: `answ
 **Status** (I = the interval; `monitor.compute`, a pure function):
 - **Online:** a check-in within I + 2 minutes.
 - **Late:** overdue; the app is asking.
-- **Offline:** no check-in for I + 2 + requests × wait (I + 12 minutes; 27 at the default). The offline alert goes out.
+- **Offline:** no check-in for I + 2 + requests × wait (I + 12 minutes; 27 at the default). The offline alert goes out
+  (at once, or after the phone's offline alert delay, §5).
 - **App not reporting**, with the reason and the fix: *signed out or uninstalled* (the notify service is missing, or
   the request is refused as a registration error); *a needed sensor is off* (Battery level disabled, when it would
   otherwise be Offline); *answers requests but never reports by itself* (it answered requests, and no spontaneous
@@ -169,6 +171,8 @@ check is in the phone's log: who, when, via, result; the owner sees it.
 - **Phone page:** the device (manufacturer, model, OS, companion app version, owner, kind); its settings; **every
   enabled sensor** grouped (Battery, Network, Activity, Storage, Location zone — only if the owner shares it —, Last
   reboot and updates, Notifications — never their text —, Other); disabled sensors by name ("off on the phone");
+  while an offline alert delay is counting, a hint under the status ("⏳ Offline 2 h 14 min — alert after 10 h", "not
+  counting now" during do-not-monitor hours or a pause);
   **history** (kept 7 days) with the battery at each change, grouped by day; Check now at the top; a danger zone
   (Stop monitoring — keep or delete the history —, Remove). A device not monitored shows only what discovery knows
   and Add to monitoring.
@@ -176,6 +180,21 @@ check is in the phone's log: who, when, via, result; the owner sees it.
 **Alerts** (App settings), each on/off with recipients (admins / the owner / both):
 - **Offline**, with the battery at the last check-in (+ last zone with *Last place in the offline alert*, for owners
   who share it).
+- **Alert when offline for at least** (`offline_alert_after_min`; shown when the Offline alert is on): as soon as it's
+  Offline (the default), 30 minutes, 1, 2, 4, 6, 10, 12 or 24 hours. Each phone can use the household's default or
+  its own choice (`phones.offline_alert_after_min`, NULL = default), set by admins on the phone's page or in Add to
+  monitoring — not by owners. The phone is still marked Offline (status, list, history unchanged); only the alert
+  waits, until the phone has been offline for that long, counted from when it became Offline. Time in the owner's
+  do-not-monitor hours and while alerts or watching are paused doesn't count (the count pauses and goes on after);
+  the start-up grace and Late / Can't check in between neither reset nor end it. The spell is kept on the phone's
+  row (`offline_since`, `offline_counted_s`, `offline_counted_at` — NULL while not counting —, `offline_alerted`,
+  `app_alerted`), so an app or Home Assistant restart resumes it; time while the app was stopped counts except the
+  do-not-monitor hours and pauses in it. The spell ends when the phone is back online: no Offline alert if it comes
+  back sooner (also when it comes back during a do-not-monitor window), and **Back online** only if the spell's
+  Offline or App-not-reporting alert went out (at once, Back online follows an Offline or App not reporting status, as
+  before). The text says how long: "Asha's Pixel has been offline for 10 hours (since 05:02, battery was 4%)". Cooldown,
+  quiet hours (queued) and lost contact (held) apply when it fires. **App not reporting** waits the same delay ("…
+  Unreachable for 10 hours (since 05:02)"); **Lost contact** is never delayed.
 - **App not reporting**; **Lost contact** (admins); **Back online** (off by default); **Restarted** with a guess
   ("battery was 3%, probably ran out" when ≤ 5%; "probably an update" after an OS or app version change in the last 6
   hours); **Battery low** (below 15%, not charging, once per discharge); **Charging reminder at night** (off; 22:00,
@@ -243,7 +262,7 @@ turning off *Enhanced notifications*, until a normal message is forwarded after 
 | Phones | `guess_kind` (on), `unused_days` (30) — nothing monitored until an admin adds it (§2) |
 | Check-in | `interval_min` (15; 10, 5), `ask_after_min` (2), `wait_reply_min` (5), `requests` (2), `startup_grace_min` (12), `lost_contact_on` (on), `lost_contact_window_min` (10), `lost_contact_min_phones` (2) |
 | Check now | `check_wait_s` (60), `check_per_hour` (20), `check_by_chat_members` (on) |
-| Alerts | `alert_offline` (on) + `_to` (admins), `alert_app` (on) + `_to` (both), `alert_lost_contact` (on), `alert_back` (off) + `_to`, `alert_restart` (on) + `_to`, `alert_battery` (on) + `_to` (owner), `battery_low_pct` (15), `alert_charge` (off) + `_to` (owner), `charge_time` (22:00), `charge_pct` (30), `charge_to_phone` (off), `alert_last_place` (off), `alert_cooldown_min` (30), `alert_delivery` ([phones]; phones / ha / chat), `quiet_start` / `quiet_end` ("") |
+| Alerts | `alert_offline` (on) + `_to` (admins), `offline_alert_after_min` (0 = at once; 30, 60, 120, 240, 360, 600, 720, 1440 minutes), `alert_app` (on) + `_to` (both), `alert_lost_contact` (on), `alert_back` (off) + `_to`, `alert_restart` (on) + `_to`, `alert_battery` (on) + `_to` (owner), `battery_low_pct` (15), `alert_charge` (off) + `_to` (owner), `charge_time` (22:00), `charge_pct` (30), `charge_to_phone` (off), `alert_last_place` (off), `alert_cooldown_min` (30), `alert_delivery` ([phones]; phones / ha / chat), `quiet_start` / `quiet_end` ("") |
 | Forwarding | `forwarding_allowed` (on), `forward_disappear` (1h), `forward_chats` (member; own_room / member / listed), `forward_groups` ([]), `forward_apps` (Google Messages, Samsung Messages), `forward_group_filter` (codes) |
 | Transparency | `adults_may_pause` (on), `pause_max_hours` (24), `dnm_allowed` (on), `dnm_max_hours` (12) |
 | History | `history_days` (7) |
@@ -323,7 +342,7 @@ Everyone: `GET /api/me`, `GET /api/whoami`, `GET /api/my` (with `unmonitored`: n
 `PUT /api/phones/{id}/forwarding`, `POST /api/phones/{id}/forwarding/chats` → `GET /api/requests/{rid}`,
 `POST /api/phones/{id}/stop-request`, `POST /api/phones/{id}/replaces`, `POST /api/phones/{id}/check`,
 `GET /api/checks/{cid}`, `GET /api/check/{id}/latest`. Admins: `GET /api/admin/phones`, `POST /api/admin/refresh`,
-`PUT|DELETE /api/admin/phones/{id}`, `POST /api/admin/phones/{id}/monitor` (ownerId, name, kind, intervalMin),
+`PUT|DELETE /api/admin/phones/{id}`, `POST /api/admin/phones/{id}/monitor` (ownerId, name, kind, intervalMin, offlineAlertAfterMin; also on `PUT`),
 `POST /api/admin/phones/{id}/unmonitor` (keepHistory), `POST /api/admin/phones/{id}/keep`, `GET|PUT /api/admin/settings`,
 `GET /api/admin/people`, `PUT /api/admin/people/{uid}` (`isChild`), the notify routes, `POST /api/admin/test-alert`,
 `POST /api/admin/test-forward`, `GET /api/admin/connected`, `GET /api/admin-storage-download-db`,
@@ -333,7 +352,7 @@ Everyone: `GET /api/me`, `GET /api/whoami`, `GET /api/my` (with `unmonitored`: n
 
 `users` (id, name, username, is_child, own alert quiet hours), `user_notify`, `phones` (the device, kind, owner,
 settings, monitored and since when, the welcome card, check-in and request state, status, pauses, do-not-monitor
-windows (JSON), share place, alert memory, forwarding settings and
+windows (JSON), share place, alert memory and the offline alert delay with its current spell, forwarding settings and
 its last error — no message text), `history`, `checks`, `forwards` (phone, time, chat name, kind), `alert_state`
 (cooldowns, held), `alert_queue` (alerts waiting for a recipient's quiet hours), `bus_requests`, `app_state`
 (lost contact), `app_settings`, and the bus tables. In memory only: Home Assistant's devices, entities and latest

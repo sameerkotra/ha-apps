@@ -11,6 +11,10 @@
 - **False alarms**: the start-up grace (also after a do-not-monitor window and after an admin adds a phone), lost
   contact with most phones at once, Can't check when the request itself failed, pauses.
 - **Not monitored** devices are left alone entirely: never asked, no check-ins written, no alerts, no history.
+- **The offline alert's delay** (`alert_delay_min`, §5): a phone can be Offline for a while before its Offline (or
+  App not reporting) alert goes out. Each unreachable spell is kept on the phone's row (`offline_since`, the time
+  counted so far, whether its alerts went out), so a restart resumes the count; do-not-monitor hours and pauses
+  don't count (`_spell`).
 
 `tick()` runs every 30 seconds (and soon after a check-in): it decides under one database connection, then sends
 requests and alerts with none open.
@@ -166,6 +170,90 @@ def display(p, now: float) -> dict:
                          "reason": p["pause_reason"]}
         if p["pause_kind"] == "alerts":
             out["label"] = f"Paused · {STATUS_LABEL.get(st, st)}"
+    return out
+
+
+def alert_delay_min(p) -> int:
+    """How long this phone must be offline before its Offline / App not reporting alert: its own, else the household's."""
+    own = p["offline_alert_after_min"]
+    return int(own) if own is not None else int(settings.get("offline_alert_after_min") or 0)
+
+
+def duration_text(seconds: float, short: bool = False) -> str:
+    """"10 hours", "2 hours 15 minutes", "45 minutes" (short: "10 h", "2 h 15 min", "45 min")."""
+    m = int(max(0, seconds) // 60)
+    h, mm = divmod(m, 60)
+    if short:
+        return " ".join(x for x in (f"{h} h" if h else "", f"{mm} min" if mm or not h else "") if x)
+    def unit(n, word):
+        return f"{n} {word}" + ("" if n == 1 else "s")
+    return " ".join(x for x in (unit(h, "hour") if h else "", unit(mm, "minute") if mm or not h else "") if x)
+
+
+def _counted_between(p, a: float, b: float) -> float:
+    """Seconds between `a` and `b` that count towards the delay. Ticks are 30 seconds apart; a longer gap (the app
+    was stopped) is sampled minute by minute so do-not-monitor hours and pauses in it are left out."""
+    span = b - a
+    if span <= 0:
+        return 0.0
+    if span <= 120:
+        return span
+    span = min(span, 14 * 86400)
+    step = 60.0 if span <= 2 * 86400 else 300.0
+    n = int(span // step)
+    ok = sum(1 for i in range(n) if not (dnm.active(p, a + (i + 0.5) * step) or alerts_paused(p, a + (i + 0.5) * step)
+                                         or watching_paused(p, a + (i + 0.5) * step)))
+    return ok * step + (span - n * step)
+
+
+def _spell(conn, p, st: str, now: float, counting: bool) -> dict:
+    """Bring the phone's unreachable spell up to date and store it: it begins when the phone becomes Offline or App
+    not reporting, ends when it is back online (or isn't monitored), and in between counts only the time `counting`
+    (not in do-not-monitor hours, not paused). Late, Can't check and the start-up grace in between neither end nor
+    reset it. Returns {since, counted, alerted, appAlerted} (since None: no spell)."""
+    since, counted, at = p["offline_since"], p["offline_counted_s"] or 0.0, p["offline_counted_at"]
+    alerted, app_alerted = bool(p["offline_alerted"]), bool(p["app_alerted"])
+    if st == "online" or not runs(p):
+        if since is not None:
+            conn.execute("UPDATE phones SET offline_since = NULL, offline_counted_s = 0, offline_counted_at = NULL, "
+                         "offline_alerted = 0, app_alerted = 0 WHERE id = ?", (p["id"],))
+        return {"since": None, "counted": 0.0, "alerted": False, "appAlerted": False}
+    if since is None:
+        if st not in ("offline", "app_not_reporting"):
+            return {"since": None, "counted": 0.0, "alerted": False, "appAlerted": False}
+        since, counted, at, alerted, app_alerted = now, 0.0, (now if counting else None), False, False
+    elif counting:
+        counted += _counted_between(p, at, now) if at is not None else 0.0
+        at = now
+    else:
+        at = None
+    conn.execute("UPDATE phones SET offline_since = ?, offline_counted_s = ?, offline_counted_at = ?, offline_alerted = ?, "
+                 "app_alerted = ? WHERE id = ?", (since, counted, at, int(alerted), int(app_alerted), p["id"]))
+    return {"since": since, "counted": counted, "alerted": alerted, "appAlerted": app_alerted}
+
+
+def _mark_spell(conn, pid: str, col: str) -> None:
+    conn.execute(f"UPDATE phones SET {col} = 1 WHERE id = ? AND offline_since IS NOT NULL", (pid,))
+
+
+def spell_view(p, now: float) -> dict:
+    """The offline alert's delay for the admin's phone page: the choice, and the count while it runs."""
+    own, delay = p["offline_alert_after_min"], alert_delay_min(p)
+    hh = int(settings.get("offline_alert_after_min") or 0)
+    out = {"own": own, "delayMin": delay, "defaultMin": hh, "defaultLabel": settings.delay_label(hh),
+           "choices": [{"value": v, "label": lbl} for v, lbl in settings.OFFLINE_DELAYS], "counting": None}
+    st = p["status"]
+    if delay and p["offline_since"] is not None and runs(p):
+        alert = "app" if st == "app_not_reporting" else "offline"
+        done = p["app_alerted"] if alert == "app" else p["offline_alerted"]
+        if not done and alerts.enabled(alert):
+            counted = (p["offline_counted_s"] or 0) + (max(0.0, now - p["offline_counted_at"])
+                                                       if p["offline_counted_at"] is not None else 0)
+            label = STATUS_LABEL.get(st, st) if st in ("offline", "app_not_reporting") else "Offline"
+            out["counting"] = {"countedMin": int(counted // 60), "paused": p["offline_counted_at"] is None,
+                               "text": f"{label} {duration_text(counted, True)} — alert after "
+                                       f"{duration_text(delay * 60, True)}"
+                                       + (" (not counting now)" if p["offline_counted_at"] is None else "")}
     return out
 
 
@@ -409,31 +497,47 @@ def tick(now: float | None = None, source=None, *, again: bool = True) -> dict:
                 conn.execute("UPDATE phones SET late_since = ? WHERE id = ?", (late_since, pid))
             dnm_on = st == "dnm"
             muted = alerts_paused(p, now) or watching_paused(p, now) or not runs(p) or dnm_on
+            delay = alert_delay_min(p)
+            spell = _spell(conn, p, st, now, counting=not muted)
+            due = bool(delay) and spell["since"] is not None and spell["counted"] >= delay * 60
             if dnm_on or not runs(p):         # do-not-monitor hours: nothing held for later either (§3.1)
                 for a in ("offline", "battery"):
                     if alerts.held(conn, pid, a):
                         alerts.set_held(conn, pid, a, False)
             # -- alerts on a change
             if changed and not muted:
-                if st == "offline" and alerts.enabled("offline"):
+                if st == "offline" and alerts.enabled("offline") and not delay:
+                    _mark_spell(conn, pid, "offline_alerted")
                     if lost:                  # lost contact: held until contact returns (§3.1)
                         alerts.set_held(conn, pid, "offline", True)
                     else:
                         to_alert.append(("offline", pid, offline_text(conn, p, name)))
-                if st == "online" and p["status"] in ("offline", "app_not_reporting") and alerts.enabled("back"):
+                # back online: after Offline / App not reporting; with a delay, only if that alert went out
+                was = p["offline_alerted"] or p["app_alerted"]
+                if st == "online" and alerts.enabled("back") and (
+                        (not delay and p["status"] in ("offline", "app_not_reporting")) or (delay and was)):
                     to_alert.append(("back", pid, f"{name} is back online" + (f" (battery {battery}%)" if battery is not None else "") + "."))
                 if st == "online":
                     alerts.set_held(conn, pid, "offline", False)
-            # -- App not reporting, once it has lasted longer than the Offline time
-            if st == "app_not_reporting" and not muted and alerts.enabled("app"):
+            # -- the delayed Offline alert: once the spell has counted the phone's delay (§5)
+            if delay and st == "offline" and not muted and due and not spell["alerted"] and alerts.enabled("offline"):
+                _mark_spell(conn, pid, "offline_alerted")
+                if lost:
+                    alerts.set_held(conn, pid, "offline", True)
+                else:
+                    to_alert.append(("offline", pid, offline_text(conn, p, name, spell, now)))
+            # -- App not reporting, once it has lasted longer than the Offline time (and the delay, if one is set)
+            if st == "app_not_reporting" and not muted and alerts.enabled("app") and (
+                    not delay or (due and not spell["appAlerted"])):
                 since_st = p["status_since"] if not changed else now
                 r = conn.execute("SELECT last_sent FROM alert_state WHERE phone_id = ? AND alert = 'app'", (pid,)).fetchone()
                 if since_st is not None and now - since_st >= t.offline_after and not (r and r["last_sent"] and r["last_sent"] >= since_st):
-                    to_alert.append(("app", pid, app_text(p, name, reason)))
+                    _mark_spell(conn, pid, "app_alerted")
+                    to_alert.append(("app", pid, app_text(p, name, reason, spell if delay else None, now)))
             # -- held offline alerts: released when contact returns, if still offline
             if not muted and st == "offline" and not lost and alerts.held(conn, pid, "offline"):
                 alerts.set_held(conn, pid, "offline", False)
-                to_alert.append(("offline", pid, offline_text(conn, p, name)))
+                to_alert.append(("offline", pid, offline_text(conn, p, name, spell if delay else None, now)))
             if st != "offline" and alerts.held(conn, pid, "offline") and not lost:
                 alerts.set_held(conn, pid, "offline", False)
             # -- requests
@@ -467,12 +571,20 @@ def tick(now: float | None = None, source=None, *, again: bool = True) -> dict:
     return out
 
 
-def offline_text(conn, p, name: str) -> str:
-    seen = config.hhmm(p["last_checkin"]) if p["last_checkin"] else "never"
-    text = f"{name} is offline: no check-in since {seen}"
-    if p["battery"] is not None:
-        text += f", battery {p['battery']}% then" + (" (charging)" if p["charging"] else "")
-    text += "."
+def offline_text(conn, p, name: str, spell: dict | None = None, now: float | None = None) -> str:
+    """The Offline alert. With a delay (`spell`): how long — "Asha's Pixel has been offline for 10 hours (since 05:02,
+    battery was 4%)"."""
+    if spell and spell.get("since") is not None and now is not None:
+        bits = [f"since {config.hhmm(spell['since'])}"]
+        if p["battery"] is not None:
+            bits.append(f"battery was {p['battery']}%" + (" and charging" if p["charging"] else ""))
+        text = f"{name} has been offline for {duration_text(now - spell['since'])} ({', '.join(bits)})."
+    else:
+        seen = config.hhmm(p["last_checkin"]) if p["last_checkin"] else "never"
+        text = f"{name} is offline: no check-in since {seen}"
+        if p["battery"] is not None:
+            text += f", battery {p['battery']}% then" + (" (charging)" if p["charging"] else "")
+        text += "."
     if settings.get("alert_last_place") and p["share_place"]:
         z = phones.zone(p["id"])
         if z:
@@ -480,10 +592,13 @@ def offline_text(conn, p, name: str) -> str:
     return text
 
 
-def app_text(p, name: str, reason: str | None) -> str:
+def app_text(p, name: str, reason: str | None, spell: dict | None = None, now: float | None = None) -> str:
     short = {"signed_out": "signed out?", "sensor_off": "a sensor is off on the phone",
              "answers_only": "battery optimisation?"}.get(reason or "", "")
-    return f"{name}: the HA app stopped reporting" + (f" — {short}" if short else "") + "."
+    text = f"{name}: the HA app stopped reporting" + (f" — {short}" if short else "") + "."
+    if spell and spell.get("since") is not None and now is not None:
+        text += f" Unreachable for {duration_text(now - spell['since'])} (since {config.hhmm(spell['since'])})."
+    return text
 
 
 def quietly_note_restart(conn, p) -> None:

@@ -667,7 +667,17 @@
       h("button", { type: "button", class: "btn-secondary", onclick: () => addDialog(a) }, "Add to monitoring"));
   }
 
-  // Add to monitoring: owner (from discovery), name, kind and interval in one go
+  // The offline alert's delay for one phone: the household's default, or one of the same choices
+  const DELAY_HELP = "Only the alert waits: the phone is still shown Offline. Its owner's do-not-monitor hours and pauses don't count. App not reporting alerts wait the same time.";
+  function delaySelect(oa) {
+    oa = oa || { own: null, defaultLabel: "As soon as it's Offline", choices: [] };
+    return h("select", null, [h("option", { value: "", selected: oa.own === null || oa.own === undefined ? true : null },
+      `Household default: ${oa.defaultLabel}`)].concat(oa.choices.map((c) =>
+      h("option", { value: String(c.value), selected: oa.own === c.value ? true : null }, c.label))));
+  }
+  const delayValue = (sel) => (sel.value === "" ? null : Number(sel.value));
+
+  // Add to monitoring: owner (from discovery), name, kind, interval and the offline alert's delay in one go
   async function addDialog(a, after) {
     const people = await peopleList();
     const opts = people.map((p) => [p.id, p.name]);
@@ -679,12 +689,13 @@
       h("option", { value: v, selected: (a.kind === "tablet" ? "tablet" : "phone") === v ? true : null }, l)));
     const interval = h("select", null, [["", "The household's"], ["15", "15 minutes"], ["10", "10 minutes"], ["5", "5 minutes"]]
       .map(([v, l]) => h("option", { value: v, selected: String(a.intervalOwn || "") === v ? true : null }, l)));
+    const delay = delaySelect(a.offlineAlert);
     let dlg = null;
     const ok = h("button", { type: "button", class: "btn-primary", onclick: async () => {
       ok.disabled = true;
       try {
         await api(`api/admin/phones/${a.id}/monitor`, { method: "POST", body: { ownerId: owner.value || null, name: name.value,
-          kind: kind.value, intervalMin: interval.value ? Number(interval.value) : null } });
+          kind: kind.value, intervalMin: interval.value ? Number(interval.value) : null, offlineAlertAfterMin: delayValue(delay) } });
         dlg.close(); toast(`${name.value || a.name} is monitored`); (after || loadPhones)();
       } catch (e) { ok.disabled = false; toast(e.message, true); }
     } }, "Add to monitoring");
@@ -693,6 +704,7 @@
       field("Owner", owner, "Who Home Assistant says registered it; change it if that's wrong."),
       field("Name", name, "Empty: \"<owner>'s <model>\"."),
       h("div", { class: "grid2" }, field("Kind", kind), field("Check-in interval", interval)),
+      field("Alert when offline for at least", delay, DELAY_HELP),
       h("div", { class: "actions" }, h("button", { type: "button", class: "btn-ghost", onclick: () => dlg.close() }, "Cancel"), ok)));
   }
 
@@ -760,13 +772,14 @@
         facts([[a.manufacturer, a.model].filter(Boolean).join(" "), a.owner ? `owner ${a.owner}` : "no owner yet"]),
         h("div", { class: "card-actions" }, h("button", { type: "button", class: "btn-primary", onclick: () => addDialog({
           id: a.id, name: a.name, owner: a.owner, ownerId: a.ownerId, kind: a.kind, kindGuess: a.kind === "tablet" ? "Tablet" : a.kind === "ignored" ? "Watch or other device" : "Phone",
-          nameOwn: null, intervalOwn: a.intervalOwn }, again) }, "Add to monitoring"))));
+          nameOwn: null, intervalOwn: a.intervalOwn, offlineAlert: a.offlineAlert }, again) }, "Add to monitoring"))));
       return;
     }
     add(box, h("div", { class: "card" }, h("div", { class: "card-head" },
       h("div", null, h("h2", { class: "view-title" }, a.name), statusLine(a)),
       a.hidden ? null : h("button", { type: "button", class: "btn-primary", onclick: () => runCheck(a.id) }, "Check now")),
       a.reasonText ? h("p", { class: "note warn" }, a.reasonText) : null,
+      a.offlineAlert && a.offlineAlert.counting ? h("p", { class: "dim offline-countdown" }, `⏳ ${a.offlineAlert.counting.text}`) : null,
       a.stopRequested ? h("p", { class: "note warn" }, `${a.owner || "The owner"} asked to stop monitoring this phone.`) : null,
       a.dnmText ? h("p", { class: "dim" }, `🌙 ${a.dnmText} — the owner's do-not-monitor hours (only they can change them).`) : null,
       a.hidden ? h("p", { class: "hint" }, a.status === "dnm" ? "Do-not-monitor hours: its status, battery, network and sensors aren't shown, and nothing is asked, until they end."
@@ -820,13 +833,15 @@
     const owner = h("select", null, [h("option", { value: "" }, "Nobody")].concat(people.map((p) =>
       h("option", { value: p.id, selected: p.id === a.ownerId ? true : null }, p.name))));
     const svc = h("input", { type: "text", value: a.notifyService || "", placeholder: a.defaultService || "mobile_app_…" });
+    const delay = delaySelect(a.offlineAlert);
     return h("details", { class: "card" }, h("summary", null, h("strong", null, "⚙️ This phone's settings")),
       h("div", { class: "form" }, field("Name", name, "Empty: \"<owner>'s <model>\"."), h("div", { class: "grid2" }, field("Kind", kind), field("Check-in interval", interval)),
+        field("Alert when offline for at least", delay, DELAY_HELP),
         field("Owner", owner, "Who Home Assistant says registered it; correct it here. Changing the owner switches forwarding off (only the owner switches it on)."),
         field("Notify service", svc, "Only if Home Assistant names this phone's notify service differently."),
         h("div", { class: "card-actions" }, h("button", { type: "button", class: "btn-primary", onclick: async () => {
           const body = { name: name.value, kind: kind.value, intervalMin: interval.value ? Number(interval.value) : null,
-            ownerId: owner.value || null, notifyService: svc.value || null };
+            ownerId: owner.value || null, notifyService: svc.value || null, offlineAlertAfterMin: delayValue(delay) };
           try { await api(`api/admin/phones/${a.id}`, { method: "PUT", body }); toast("Saved"); again(); } catch (e) { toast(e.message, true); }
         } }, "Save"))));
   }

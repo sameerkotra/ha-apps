@@ -144,16 +144,17 @@ for 30 days: **Keep** or **Remove** — its history goes with it; nothing is rem
 phones, problems first: status and last check-in, owner and model, battery, network and app version, the owner's
 do-not-monitor hours, with ⋯ (Check now, Pause alerts, Edit, Stop monitoring). Tablets come after. Then **Available
 devices**: every Companion-app device not monitored, with a guess of its kind (phone, tablet, or watch and the like),
-and **Add to monitoring** (owner, name, kind and interval in one dialog). **Stop monitoring** asks whether to keep or
+and **Add to monitoring** (owner, name, kind, interval and when to alert that it's offline, in one dialog). **Stop monitoring** asks whether to keep or
 delete the phone's history, switches forwarding off, and puts it back under Available devices. **Read Home Assistant
 again** reads the devices now (it also happens every few minutes and whenever Home Assistant's devices change).
 
 A **phone's page** shows the device (manufacturer, model, Android/iOS version, Companion app version, owner, kind),
-its settings (name, kind, its own interval, owner, and the notify service if Home Assistant names it
+its settings (name, kind, its own interval, *Alert when offline for at least*, owner, and the notify service if Home Assistant names it
 differently from `notify.mobile_app_<device name>`), **every enabled sensor** grouped (Battery, Network, Activity,
 Storage, Location zone, Last reboot and updates, Other — notification texts are never shown), the sensors that are
 **off on the phone**, and its **history** (status changes, restarts, Check now, pauses and alerts, with the battery
-at each change). A phone whose owner paused being watched shows only "Paused by …"; one in its do-not-monitor hours only "Not
+at each change). While an offline alert is waiting, a line under the status says so: "⏳ Offline 2 h 14 min — alert
+after 10 h". A phone whose owner paused being watched shows only "Paused by …"; one in its do-not-monitor hours only "Not
 monitored (until …)".
 
 ## Forwarding messages into Household Chat
@@ -205,10 +206,17 @@ recorder:
 In App settings, each alert on or off with its recipients (admins, the phone's owner, or both):
 
 - **Offline**, with the battery at the last check-in (and optionally the last zone, for phones whose owner shares it).
-- **App not reporting** — once it has lasted longer than the Offline time ("Asha's Pixel: the HA app stopped
-  reporting — signed out?").
+  **Alert when offline for at least** chooses when: as soon as it's Offline (the default), or after 30 minutes, 1, 2,
+  4, 6, 10, 12 or 24 hours. That's the household's default; an admin can give a phone its own on its page (or when
+  adding it). The phone is still shown Offline straight away — only the alert waits, and none goes out if it comes back
+  sooner (then no Back online either). Its owner's do-not-monitor hours and pauses don't count towards the time, and a
+  restart doesn't start the count again. The alert says how long: "Asha's Pixel has been offline for 10 hours (since
+  05:02, battery was 4%)". *Example:* for a phone that's often off at night, set its Alert when offline to 10 hours.
+- **App not reporting** — once it has lasted longer than the Offline time, and the phone's *Alert when offline* time
+  if one is set ("Asha's Pixel: the HA app stopped reporting — signed out?").
 - **Lost contact with all phones** — to admins.
-- **Back online** (off by default).
+- **Back online** (off by default) — when a phone that was Offline or App not reporting reports again; with an
+  *Alert when offline* time, only if its alert had gone out.
 - **Restarted** — with a guess: "battery was 3%, probably ran out" or "probably an update".
 - **Battery low** — below 15%, not charging, once per discharge.
 - **Charging reminder at night** (off by default) — at 22:00, each phone below 30% and not charging; optionally to
@@ -245,7 +253,7 @@ forward to your own My room.
   at least 2, within 10 minutes).
 - **Check now:** wait for a reply (60 s), at most 20 per phone an hour, people in a phone's forwarding chat may check
   it (on).
-- **Alerts:** each on/off with recipients, battery threshold (15%), charging reminder time and level (22:00, 30%),
+- **Alerts:** each on/off with recipients, alert when offline for at least (as soon as it's Offline), battery threshold (15%), charging reminder time and level (22:00, 30%),
   last place in offline alerts (off), cooldown (30 minutes), delivery, quiet hours.
 - **Forwarding:** allowed (on), default disappear time (1 hour), which chats owners may choose, the default messaging
   apps, the starting filter for a group (codes only).

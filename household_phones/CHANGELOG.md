@@ -2,6 +2,11 @@
 
 All notable changes to Household Phones. See the [repository](https://github.com/sameerkotra/ha-apps).
 
+## 1.2.0
+
+- **Alert when offline for at least…:** choose how long a phone may be offline before its alert goes out — as soon as it's Offline (as before), or after 30 minutes up to 24 hours. Set the household's default in Admin → App settings → Alerts, and give a phone its own on its page or when adding it to monitoring. For a phone that's often off at night, choose 10 hours.
+- **Only the alert waits:** the phone is still shown Offline straight away. Nothing is sent if it comes back sooner, its owner's do-not-monitor hours and pauses don't count, and a restart picks the count up where it left off. The alert says how long: "Asha's Pixel has been offline for 10 hours (since 05:02, battery was 4%)". App not reporting alerts wait the same time.
+
 ## 1.1.0
 
 - **Phones aren't monitored until an admin adds them.** All phones lists every Companion-app device under **Available devices** with a guess of its kind; **Add to monitoring** sets the owner, name, kind and check-in interval in one step. Until then a device is never asked to report, gets no alerts or history, and its owner sees only "Your phone isn't monitored — ask an admin".
