@@ -239,6 +239,9 @@ def _write_zip(tmp, msgs, title, att_rows, disappearing_ids, skipped_disappearin
                      + (" <span class=\"hint\">(edited)</span>" if msg["editedAt"] else "") + "</div>"]
             if msg["forwarded"]:
                 parts.append('<div class="hint">↪ Forwarded</div>')
+            if msg.get("fromApp") and not msg["deleted"]:
+                fa = msg["fromApp"]
+                parts.append(f'<div class="hint">{e(fa["icon"])} from {e(fa["badge"])} · {e(fa["label"])}</div>')
             rt = msg["replyTo"]
             if rt and rt.get("id") in disappearing_ids:
                 parts.append('<div class="quote">Original message not included</div>')

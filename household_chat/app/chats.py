@@ -362,6 +362,31 @@ def post_card(conn, out: Outbox, conv, user: dict, card: dict, bus_id: str | Non
     return mid
 
 
+def app_posts_out(conn, ids) -> dict:
+    """{message id: {app, badge, icon, label}} for plain-text messages another app posted (chat.message.post)."""
+    if not ids:
+        return {}
+    q = ",".join("?" * len(ids))
+    return {r["message_id"]: {"app": r["app"], "badge": r["badge"], "icon": r["icon"], "label": r["label"]}
+            for r in conn.execute(f"SELECT * FROM app_posts WHERE message_id IN ({q})", list(ids))}
+
+
+def post_app_message(conn, out: Outbox, conv, user: dict, text: str, expires_in: int | None, post: dict,
+                     bus_id: str | None = None) -> int:
+    """A plain-text message another household app asked to post for `user` (checked by app_messages.py like a
+    message they type): as their message, live and with notifications like any other. `expires_in` is already
+    the shorter of the app's time and the chat's own (app_messages.on_message_post); no mentions."""
+    require_post(conn, conv, user["id"])
+    mid = insert_message(conn, conv, user["id"], kind="text", body=text, expires_in=expires_in)
+    conn.execute("INSERT INTO app_posts (message_id, app, badge, icon, label, bus_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                 (mid, post["app"], post["badge"], post["icon"], post["label"], bus_id, config.now_iso()))
+    publish_message(conn, out, conv, message_row(conn, mid))
+    if conv["kind"] != "personal":
+        from . import notifier
+        out.job(notifier.new_message, mid)
+    return mid
+
+
 # ---------- call notes (§15.12) ----------
 def call_row(conn, mid: int):
     return conn.execute("SELECT * FROM calls WHERE message_id = ?", (mid,)).fetchone()
@@ -443,6 +468,7 @@ def messages_out(conn, rows, viewer_id: str | None = None, visible_from: int = 0
             replies[r["id"]] = r
     cards = cards_out(conn, [r["id"] for r in rows if r["kind"] == "card"])
     calls = calls_out(conn, [r["id"] for r in rows if r["kind"] == "call"])
+    posts = app_posts_out(conn, [r["id"] for r in rows if r["kind"] == "text" and not r["deleted_at"]])
     acks: dict = {}
     if any(r["announcement"] for r in rows):
         for a in conn.execute(f"SELECT message_id, user_id FROM announcement_acks WHERE message_id IN ({qmarks}) ORDER BY at", ids):
@@ -468,6 +494,7 @@ def messages_out(conn, rows, viewer_id: str | None = None, visible_from: int = 0
              "replyTo": None, "poll": poll_out(conn, r["id"]) if r["kind"] == "poll" else None,
              "card": cards.get(r["id"]) if r["kind"] == "card" and not r["deleted_at"] else None,
              "call": calls.get(r["id"]) if r["kind"] == "call" and not r["deleted_at"] else None,
+             "fromApp": posts.get(r["id"]),
              "expiresAt": r["expires_at"],
              "announcement": announcement_out(conn, r, acks.get(r["id"], [])) if r["announcement"] else None}
         if r["reply_gone"] and not r["reply_to"]:
@@ -1083,6 +1110,8 @@ def create_poll(conn, out: Outbox, conv, user: dict, q: str, opts: list, multi: 
 def edit_message(conn, out: Outbox, msg, conv, user: dict, body: str, mentions=None) -> None:
     if msg["user_id"] != user["id"] or msg["kind"] not in ("text", "file"):
         raise HTTPException(403, "Only the person who wrote a message can edit it.")
+    if conn.execute("SELECT 1 FROM app_posts WHERE message_id = ?", (msg["id"],)).fetchone():
+        raise HTTPException(403, "A message another app posted can't be edited.")
     if msg["deleted_at"]:
         raise HTTPException(409, "That message was deleted.")
     window = settings.get("edit_window_minutes", conn)
@@ -1114,7 +1143,7 @@ def delete_message(conn, out: Outbox, msg, conv, m, user: dict) -> None:
     if gone:          # the files are moved after the deletion is saved, never while the transaction is open
         out.job(files.discard_files, gone)
     conn.execute("DELETE FROM attachments WHERE message_id = ?", (msg["id"],))
-    for t in ("reactions", "stars", "reminders", "poll_votes", "poll_options", "polls", "app_cards", "calls"):
+    for t in ("reactions", "stars", "reminders", "poll_votes", "poll_options", "polls", "app_cards", "app_posts", "calls"):
         conn.execute(f"DELETE FROM {t} WHERE message_id = ?", (msg["id"],))
     conn.execute("UPDATE messages SET body = '', mentions = NULL, mention_all = 0, deleted_at = ?, pinned_at = NULL, "
                  "pinned_by = NULL WHERE id = ?", (config.now_iso(), msg["id"]))

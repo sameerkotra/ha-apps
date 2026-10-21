@@ -68,7 +68,7 @@ household_chat/
 │   ├── ha_client.py       # thin: re-exports the shared Core API client + person_entities, user sync, load_time_zone_blocking
 │   ├── ha_events.py       # the notification buttons (§15.1), on the shared WebSocket client common/ha_ws.py;
 │   │                      # the same one connection carries the app messages (app_messages.py)
-│   ├── app_messages.py    # messages from the other household apps: chat.chats.list, chat.card (§15.11)
+│   ├── app_messages.py    # messages from the other household apps: chat.chats.list, chat.card, chat.message.post; asks phones.forwarding_into (§15.11)
 │   ├── notifier.py        # who gets told what, batching, quiet hours, "already looking" (§7)
 │   ├── live.py            # SSE hub: per-user queues, events, presence/typing (§8)
 │   ├── chats.py           # rules and serialisation of chats and messages
@@ -276,6 +276,8 @@ CREATE TABLE app_cards (message_id INTEGER PRIMARY KEY REFERENCES messages(id) O
   item_id TEXT NOT NULL, title TEXT NOT NULL, owner_name TEXT,
   panel TEXT, target TEXT,                             -- the other app's page and the item's route in it
   shared_with_members INTEGER NOT NULL DEFAULT 0, bus_id TEXT, created_at TEXT NOT NULL);
+CREATE TABLE app_posts (message_id INTEGER PRIMARY KEY REFERENCES messages(id) ON DELETE CASCADE,  -- §15.11 chat.message.post
+  app TEXT NOT NULL, badge TEXT NOT NULL, icon TEXT NOT NULL, label TEXT NOT NULL, bus_id TEXT, created_at TEXT NOT NULL);
 CREATE TABLE calls (id TEXT PRIMARY KEY, conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,   -- §15.12
   caller_id TEXT NOT NULL, callee_id TEXT NOT NULL, started_at TEXT NOT NULL, answered_at TEXT, ended_at TEXT,
   outcome TEXT CHECK (outcome IN ('answered','missed','declined','busy','failed')),   -- NULL while on
@@ -387,6 +389,7 @@ CREATE TABLE calls (id TEXT PRIMARY KEY, conversation_id TEXT NOT NULL REFERENCE
 | POST `/conversations/{id}/uploads` · DELETE `/uploads/{id}` | Upload (raw body, §5.3) / cancel |
 | GET `/files/{id}` · `/files/{id}/thumb` · `?download=1` · POST `/files/{id}/heard` | Serve (§4); voice message played |
 | GET `/conversations/{id}/files?type=` · GET `/me/files` · GET `/conversations/{id}/pins` | Files lists; pins |
+| GET `/conversations/{id}/phones` | `{phones: [{id, name, ownerName, url}]}` — the chat menu's 📱 Check <phone> (§15.11) |
 | GET `/search?q=&conversation=` | Messages (FTS5, snippets) and file names, only in my chats |
 | GET `/me/starred` · GET / DELETE `/me/reminders[/{id}]` | Starred and reminders |
 | PUT / DELETE `/conversations/{id}/draft` | Drafts (§16.8) |
@@ -645,6 +648,7 @@ An admin shares an existing folder in Home Assistant's `/share` (e.g. `/share/Do
   - **Who sets it:** in a group, the owner or a group admin; in a direct chat, either person. Children can't change it (§16.5).
   - **What it covers:** every **new** message in that chat — text, files, voice, polls, pins, announcements — disappears that long after it was **sent**. Messages sent before it was turned on keep their own setting, and turning it off stops only new messages from disappearing.
   - **How it looks:** a system message (which itself stays) says "Meera turned on disappearing messages: 1 day". The chat shows ⏱ in its header and in the chat list, and the composer says "New messages disappear after 1 day".
+- **From another app.** A forwarded text from Household Phones may disappear even when the person is a child, and the shorter of its time and the chat's applies (§15.11).
 - **Per message.** In any chat, ⏱ in the composer sets one message to disappear after 1 hour, 1 day, 7 days or 30 days (`expiresIn`; 0 = never, not allowed in a disappearing chat). Each disappearing message shows ⏱ and the time left.
 - **When it expires** (checked every tick), it is **deleted completely**. There is no placeholder and nothing kept in `_deleted`:
   - the `messages` row is **deleted**, together with its reactions, poll, pin, stars, reminders, announcement acknowledgements, and its search (FTS) entry;
@@ -689,7 +693,7 @@ Household Docs' *Send to chat* (Docs spec §17.15) reaches Chat as app messages 
   starts the bus on it (`app_bus.start(..., ws=…)`, `outbox_thread=False`) before starting it, and stops the bus
   before closing it. The outbox (re-sends, expiry, six-hourly `hello`) runs in the 20-second housekeeping tick.
   Without a Supervisor token (development, tests) the bus is off. `hello` says `can: ["chat.card",
-  "chat.chats.list"]`.
+  "chat.chats.list", "chat.message.post", …]`.
 - **`chat.chats.list`** answers the chats `requested_by` may post in — exactly `list_conversations()` (Chat's own
   order and visibility) without read-only ones — with names as that person sees them and member counts, trimmed to
   fit the 8 KB event (§6.3). *(security review 2026-10)* The list names no members (answers go into Home
@@ -716,6 +720,29 @@ Household Docs' *Send to chat* (Docs spec §17.15) reaches Chat as app messages 
   sharer or a group owner/admin; removes the `app_cards` row), retention, chat downloads ("✅ <title> — shared
   from Docs (<owner>'s)", no link). **Not** editable, forwardable or copyable as text. A card never holds
   document content; whether a member may open the item is Household Docs' decision (its own "No access" page).
+- **Forwarded texts from Household Phones (`chat.message.post`, APP_MESSAGES_SPEC §6.3b).** Only from
+  `household_phones`, and only while Admin → App settings → *Phones may post forwarded messages*
+  (`phones_may_post`, on by default) is on (`app_messages.POSTERS`; otherwise `nack not_allowed app`). Then the
+  same checks as a card (enabled user → member of `chat_id`, or `my_room: true` = their 📌 My room, made if missing
+  → may post → fields: `label` 1–80, `text` 1–4000 with newlines kept, `disappear_after` 1h/1d/7d/30d or null →
+  the 30-a-minute limit shared with cards and typing) and posts **as `requested_by`** an ordinary `text` message
+  (no mentions) plus an `app_posts` row (app, badge "Phones", icon 📱, label). In the page (`chat.js appFromEl`)
+  the bubble shows the badge **📱 Phones** and the label above the text; ⏱ and the time left as for any disappearing
+  message. It is live, unread, searchable and notified like any message; **not editable** (it's the app's text),
+  deletable (removes the `app_posts` row), forwardable only when it doesn't disappear. Chat downloads show
+  "📱 from Phones · <label>" above it. **Disappearing:** `disappear_after` is allowed **even for a child** — the
+  "children can't send disappearing messages of their own" rule (§15.8) is for what they type; a child's phone
+  forwarding into their own room must work. In a disappearing chat the **shorter** of the two times applies (null =
+  the chat's). Disappearing ones follow every §15.8 rule (out of downloads and backups, "Nisha sent a disappearing
+  message", not forwardable, deleted completely with their `app_posts` row). Audit: `message_from_app`.
+- **📱 Check <phone> in the chat's ⋯ menu.** `GET /api/conversations/{id}/phones` (a member only) asks Household
+  Phones `phones.forwarding_into {requested_by, chat_id, my_room}` as the person (`app_messages.
+  phones_forwarding_into`: `bus.send` with `ref` "phones:…", the outbox run at once, the answer awaited up to 4 s)
+  and answers `{phones: [{id, name, ownerName, url}]}` — `url` = Phones' page (`app_page("household_phones")`,
+  worked out like the Assistant's: only while Phones is on the bus) + its `page` + the phone id; anything malformed
+  is left out. Answers are kept 60 s per (person, chat); no answer in time, or Phones not on the bus: `[]`, not
+  kept. The menu opens at once and `chat.js addPhoneItems` adds the items when the list arrives; each opens the page
+  with `ConnectedApps.openAppPage`.
 - **Admin → App settings → Connected apps:** a read-only card under the settings (`GET /api/admin/connected-apps`
   → `{on, connected, apps}`, drawn by `common/connected-apps.js`): name, version, last seen, what each app can do.
 - **Privacy:** envelopes carry ids, names, titles and types only; DOCS.md shows the `recorder: exclude:
@@ -1027,7 +1054,7 @@ the signalling but not the sound (tunnels don't pass UDP for public hostnames), 
 
 - An admin marks a person as a **child** (Admin → People).
 - **A child can:** read and write in the **Household group** and in chats an adult adds them to; start **direct chats with adults**.
-- **A child can't:** create groups, add or remove people, rename chats, pin or announce; be a group admin or owner (becoming a child hands those roles to an adult); start direct chats with other children (unless `children_can_message_each_other` is on); delete other people's messages, send disappearing messages of their own, or change a chat's disappearing setting (in a disappearing chat their messages disappear like everyone's); forward out of a group to a direct chat with another child.
+- **A child can't:** create groups, add or remove people, rename chats, pin or announce; be a group admin or owner (becoming a child hands those roles to an adult); start direct chats with other children (unless `children_can_message_each_other` is on); delete other people's messages, send disappearing messages of their own (their phone's forwarded texts from Household Phones may disappear, §15.11), or change a chat's disappearing setting (in a disappearing chat their messages disappear like everyone's); forward out of a group to a direct chat with another child.
 - Admins can't read a child's chats unless they're in them, like everyone (§4).
 - The limits are enforced on the server (`is_manager()` is false for children); the UI just hides what isn't allowed.
 - Schema: `users.is_child`. API: `PATCH /admin/people/{id} {isChild}`.

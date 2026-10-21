@@ -1,6 +1,7 @@
 """Messages from the other household apps (APP_MESSAGES_SPEC §6.3; SPEC §15.11).
 
-- the two handlers (chat.chats.list, chat.card): every check, allowed and refused, nothing written on a nack;
+- the handlers (chat.chats.list, chat.card, chat.message.post): every check, allowed and refused, nothing written
+  on a nack; the chat menu's phones (asking Household Phones `phones.forwarding_into`, cached, timing out);
 - cards in the app: what the page gets, the link, notifications, search, previews, replies, edit/forward/delete,
   chat downloads, disappearing chats, Admin → Connected apps;
 - the messages-table migration (a 2.1.0 database → 2.2.0);
@@ -376,6 +377,232 @@ class CardTests(HandlerCase):
         out = self.ok(self.get("/api/admin/connected-apps"))
         self.assertFalse(out["on"])                                    # no Home Assistant in the tests
         self.assertEqual(out["apps"], [])
+
+
+class MessagePostTests(HandlerCase):
+    """chat.message.post: Household Phones posts a forwarded text as the phone's owner."""
+    HANDLERS = dict(HandlerCase.HANDLERS, **{"chat.message.post": app_messages.on_message_post})
+
+    def setUp(self):
+        super().setUp()
+        chats.message_limit.reset()
+
+    def post_msg(self, user=NISHA, frm="household_phones", **over):
+        data = {"requested_by": user["id"], "label": "📱 Nisha's Pixel · Messages · 14:02", "text": "Bank: OTP 1234\nDon't share"}
+        data.update(over)
+        return self.call("chat.message.post", data, frm=frm)
+
+    def one(self, cid, mid, user=NISHA):
+        return [x for x in self.messages(cid, user) if x["id"] == mid][0]
+
+    def test_my_room(self):
+        res = self.post_msg(my_room=True)
+        self.assertEqual(set(res), {"message_id", "chat_id"})
+        self.assertEqual(res["chat_id"], self.personal(NISHA))
+        m = self.one(res["chat_id"], res["message_id"])
+        self.assertEqual((m["kind"], m["userId"], m["body"]), ("text", NISHA["id"], "Bank: OTP 1234\nDon't share"))
+        self.assertEqual(m["fromApp"], {"app": "household_phones", "badge": "household_phones", "icon": "📱",
+                                        "label": "📱 Nisha's Pixel · Messages · 14:02"})
+        self.assertIsNone(m["expiresAt"])
+        self.assertEqual(sql("SELECT action, user_id, conversation_id FROM audit_log WHERE action = 'message_from_app'"),
+                         [{"action": "message_from_app", "user_id": NISHA["id"], "conversation_id": res["chat_id"]}])
+        self.assertEqual(self.sent.items, [])                               # My room: never a notification
+
+    def test_group_with_notification_and_badge_name(self):
+        with db.get_conn() as conn:
+            conn.execute("INSERT INTO bus_apps (slug, name, version, can, last_seen) VALUES ('household_phones', "
+                         "'Household Phones', '1.0.0', '[]', ?)", (config.now_iso(),))
+        self.notify_to(TARUN, "mobile_app_tarun")
+        self.ok(self.put(f"/api/conversations/{self.trip}/me", {"notify": "all"}, TARUN))
+        res = self.post_msg(chat_id=self.trip)
+        self.assertEqual(res["chat_id"], self.trip)
+        m = self.one(self.trip, res["message_id"], TARUN)
+        self.assertEqual((m["fromApp"]["badge"], m["author"]), ("Phones", "Nisha"))
+        self.assertEqual(self.sent.items[-1]["message"], "Nisha: Bank: OTP 1234 Don't share")
+        conv = [c for c in self.ok(self.get("/api/conversations", TARUN))["conversations"] if c["id"] == self.trip][0]
+        self.assertEqual(conv["unread"], 1)
+        # not editable (the app's text), deletable like any of hers
+        self.assertEqual(self.patch(f"/api/messages/{res['message_id']}", {"body": "x"}, NISHA).status_code, 403)
+        self.ok(self.delete(f"/api/messages/{res['message_id']}", NISHA))
+        m = self.one(self.trip, res["message_id"])
+        self.assertTrue(m["deleted"])
+        self.assertIsNone(m["fromApp"])
+        self.assertEqual(sql("SELECT COUNT(*) AS n FROM app_posts")[0]["n"], 0)
+
+    def test_disappearing(self):
+        self.notify_to(TARUN, "mobile_app_tarun")
+        res = self.post_msg(chat_id=self.dm, disappear_after="1h")
+        m = self.one(self.dm, res["message_id"])
+        left = (datetime.fromisoformat(m["expiresAt"].replace("Z", "+00:00")) - datetime.now(timezone.utc)).total_seconds()
+        self.assertTrue(3500 < left <= 3600, left)
+        self.assertEqual(self.sent.items[-1]["message"], "Nisha sent a disappearing message")
+        r = self.post("/api/messages/forward", {"messageIds": [res["message_id"]], "conversationIds": [self.hh]}, NISHA)
+        self.assertGreaterEqual(r.status_code, 400)                         # disappearing: never forwarded
+
+    def test_shorter_of_the_two_times(self):
+        self.ok(self.patch(f"/api/conversations/{self.trip}", {"disappearSeconds": 86400}, NISHA))
+        for after, want in ((None, 86400), ("1h", 3600), ("7d", 86400), ("30d", 86400)):
+            with self.subTest(after=after):
+                m = self.one(self.trip, self.post_msg(chat_id=self.trip, disappear_after=after)["message_id"])
+                left = (datetime.fromisoformat(m["expiresAt"].replace("Z", "+00:00")) - datetime.now(timezone.utc)).total_seconds()
+                self.assertTrue(want - 100 < left <= want, (after, left))
+
+    def test_a_child_may_send_a_disappearing_one(self):
+        self.ok(self.patch(f"/api/admin/people/{LEELA['id']}", {"isChild": True}))
+        self.assertEqual(self.post(f"/api/conversations/{self.hh}/messages", {"body": "x", "expiresIn": 3600}, LEELA).status_code, 403)
+        res = self.post_msg(user=LEELA, my_room=True, disappear_after="1d")
+        self.assertIsNotNone(self.one(res["chat_id"], res["message_id"], LEELA)["expiresAt"])
+        res = self.post_msg(user=LEELA, chat_id=self.hh, disappear_after="1h")
+        self.assertIsNotNone(self.one(self.hh, res["message_id"], LEELA)["expiresAt"])
+
+    def test_not_a_member_read_only_and_refused_apps(self):
+        lonely = self.ok(self.post("/api/conversations", {"name": "Others", "memberIds": [LEELA["id"]]}, TARUN), 201)["id"]
+        self.assertNack(self.post_msg(chat_id=lonely), "not_found", "chat")
+        self.assertNack(self.post_msg(chat_id="0" * 32), "not_found", "chat")
+        self.assertNack(self.post_msg(user={"id": "u-stranger"}, my_room=True), "not_allowed", "no_access")
+        self.ok(self.patch(f"/api/admin/people/{TARUN['id']}", {"disabled": True}))
+        self.assertNack(self.post_msg(chat_id=self.dm), "not_allowed", "read_only")
+        self.assertNack(self.post_msg(chat_id=self.trip, frm="household_docs"), "not_allowed", "app")
+        self.ok(self.put("/api/admin/settings", {"phones_may_post": False}))
+        self.assertNack(self.post_msg(my_room=True), "not_allowed", "app")
+        self.ok(self.put("/api/admin/settings", {"phones_may_post": True}))
+        self.assertIn("message_id", self.post_msg(my_room=True))
+
+    def test_invalid_fields_write_nothing(self):
+        before = sql("SELECT COUNT(*) AS n FROM messages")[0]["n"]
+        bad = [({}, "chat_id"), ({"my_room": True, "chat_id": self.trip}, "chat_id"), ({"my_room": False}, "chat_id"),
+               ({"chat_id": 5}, "chat_id"), ({"chat_id": "bad id!"}, "chat_id"), ({"my_room": "yes"}, "my_room"),
+               ({"my_room": True, "label": ""}, "label"), ({"my_room": True, "label": "x" * 81}, "label"),
+               ({"my_room": True, "label": None}, "label"), ({"my_room": True, "text": ""}, "text"),
+               ({"my_room": True, "text": "  \n "}, "text"), ({"my_room": True, "text": "x" * 4001}, "text"),
+               ({"my_room": True, "text": 5}, "text"), ({"my_room": True, "disappear_after": "2h"}, "disappear_after"),
+               ({"my_room": True, "disappear_after": 3600}, "disappear_after")]
+        for over, key in bad:
+            with self.subTest(over=over):
+                self.assertNack(self.post_msg(**over), "invalid", key)
+        self.assertEqual(sql("SELECT COUNT(*) AS n FROM messages")[0]["n"], before)
+        self.assertEqual(sql("SELECT COUNT(*) AS n FROM app_posts")[0]["n"], 0)
+        self.assertIn("message_id", self.post_msg(my_room=True, text="x" * 4000, label="x" * 80))
+
+    def test_rate_limit_and_restore_are_busy(self):
+        for _ in range(30):
+            self.assertIn("message_id", self.post_msg(my_room=True))
+        self.assertNack(self.post_msg(my_room=True), "busy", "rate")
+        self.assertNack(self.card(self.trip), "busy", "rate")                # the same limit as cards
+        chats.message_limit.reset()
+        db.RESTORING.set()
+        try:
+            self.assertNack(self.post_msg(my_room=True), "busy", "restoring")
+        finally:
+            db.RESTORING.clear()
+
+    def test_left_out_of_downloads_and_backups_when_disappearing(self):
+        self.post_msg(chat_id=self.trip, text="kept forwarded text")
+        self.post_msg(chat_id=self.trip, text="temporary forwarded text", disappear_after="1h")
+        r = self.get(f"/api/conversations/{self.trip}/export", NISHA)
+        self.assertEqual(r.status_code, 200, r.text)
+        with zipfile.ZipFile(io.BytesIO(r.content)) as z:
+            page = z.read([n for n in z.namelist() if n.endswith(".html")][0]).decode()
+        self.assertIn("kept forwarded text", page)
+        self.assertIn("Nisha&#x27;s Pixel · Messages", page)
+        self.assertNotIn("temporary forwarded text", page)
+        r = self.get("/api/admin-storage-download-db")
+        z = zipfile.ZipFile(io.BytesIO(r.content))
+        path = os.path.join(config.DATA_DIR, "copy.db")
+        with open(path, "wb") as f:
+            f.write(z.read("chat.db"))
+        c = sqlite3.connect(path)
+        try:
+            self.assertEqual(c.execute("SELECT COUNT(*) FROM messages WHERE body LIKE 'temporary%'").fetchone()[0], 0)
+            self.assertEqual(c.execute("SELECT COUNT(*) FROM messages WHERE body LIKE 'kept%'").fetchone()[0], 1)
+            self.assertEqual(c.execute("SELECT COUNT(*) FROM app_posts").fetchone()[0], 1)
+        finally:
+            c.close()
+        with open(path, "rb") as f:
+            self.assertNotIn(b"temporary forwarded", f.read())
+        os.remove(path)
+
+
+class PhonesMenuTests(ApiTestCase):
+    """GET /api/conversations/{cid}/phones: Chat asks Household Phones `phones.forwarding_into` as the person."""
+
+    def setUp(self):
+        super().setUp()
+        from unittest import mock
+        self.enable(ADMIN, NISHA, TARUN)
+        self.hh = self.household()
+        app_messages.forget_phones()
+        self.asked, self.answer = [], {"phones": [{"id": "p_1", "name": "Nisha's Pixel", "owner_name": "Nisha"}],
+                                       "page": "#/check/"}
+        self.apps = [{"slug": "household_phones", "active": True}]
+
+        def send(to, kind, data, ref=None, **kw):
+            self.asked.append((to, kind, data))
+            if self.answer is not None:
+                env = {"id": "a1", "v": 1, "from": to, "to": "household_chat", "kind": "ack", "kv": 1,
+                       "reply_to": "q1", "ref": ref, "data": {"result": self.answer}}
+                app_messages._on_phones_answer(app_bus.Message(env, answers=kind), None)
+            return "q1"
+        self.patches = [mock.patch.object(app_bus.default, "started", True),
+                        mock.patch.object(app_bus, "apps", lambda: self.apps),
+                        mock.patch.object(app_bus, "available", lambda a, k: any(x["slug"] == a and x["active"] for x in self.apps)),
+                        mock.patch.object(app_bus, "send", send),
+                        mock.patch.object(app_bus, "run_outbox_once", lambda: None),
+                        mock.patch.object(config, "INGRESS_URL", "/a1b2c3d4_household_chat"),
+                        mock.patch.object(app_messages, "PHONES_WAIT", 0.05)]
+        for p in self.patches:
+            p.start()
+
+    def tearDown(self):
+        for p in reversed(self.patches):
+            p.stop()
+        app_messages.forget_phones()
+        super().tearDown()
+
+    def phones(self, cid, user=NISHA):
+        return self.ok(self.get(f"/api/conversations/{cid}/phones", user))["phones"]
+
+    def test_asks_as_the_person_and_gives_the_page(self):
+        self.assertEqual(self.phones(self.personal(NISHA)),
+                         [{"id": "p_1", "name": "Nisha's Pixel", "ownerName": "Nisha",
+                           "url": "/a1b2c3d4_household_phones#/check/p_1"}])
+        self.assertEqual(self.asked, [("household_phones", "phones.forwarding_into",
+                                       {"requested_by": NISHA["id"], "chat_id": self.personal(NISHA), "my_room": True})])
+        self.phones(self.hh, TARUN)
+        self.assertEqual(self.asked[-1][2], {"requested_by": TARUN["id"], "chat_id": self.hh, "my_room": False})
+        self.assertEqual(self.get(f"/api/conversations/{self.personal(NISHA)}/phones", TARUN).status_code, 404)
+
+    def test_cached_a_minute_per_person_and_chat(self):
+        self.phones(self.hh)
+        self.answer = {"phones": [], "page": "#/check/"}
+        self.assertEqual(len(self.phones(self.hh)), 1)                    # from the cache
+        self.assertEqual(len(self.asked), 1)
+        self.assertEqual(self.phones(self.hh, TARUN), [])                 # another person: asked again
+        self.assertEqual(len(self.asked), 2)
+        key = (NISHA["id"], self.hh)
+        t, v = app_messages._phones_cache[key]
+        app_messages._phones_cache[key] = (t - 61, v)                     # a minute later
+        self.assertEqual(self.phones(self.hh), [])
+        self.assertEqual(len(self.asked), 3)
+
+    def test_no_answer_or_no_phones_app_shows_nothing(self):
+        self.answer = None                                                # doesn't answer in time
+        self.assertEqual(self.phones(self.hh), [])
+        self.assertEqual(len(self.asked), 1)
+        self.answer = {"phones": [{"id": "p_1", "name": "Pixel"}], "page": "#/check/"}
+        self.assertEqual(len(self.phones(self.hh)), 1)                    # a timeout isn't kept
+        app_messages.forget_phones()
+        self.apps[0]["active"] = False                                    # not on the bus: not even asked
+        self.assertEqual(self.phones(self.hh), [])
+        self.assertEqual(len(self.asked), 2)
+
+    def test_malformed_answers_left_out(self):
+        self.answer = {"phones": [{"id": "../x", "name": "A"}, {"id": "p_2", "name": ""}, "x", {"id": "p_3", "name": "Ok"}],
+                       "page": "#/check/"}
+        self.assertEqual([p["id"] for p in self.phones(self.hh)], ["p_3"])
+        app_messages.forget_phones()
+        self.answer = {"phones": [{"id": "p_3", "name": "Ok"}], "page": "javascript:alert(1)//"}
+        self.assertEqual(self.phones(self.hh), [])
 
 
 class MigrationTests(ApiTestCase):

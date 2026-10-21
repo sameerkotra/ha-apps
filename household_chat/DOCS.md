@@ -192,6 +192,10 @@ If the household also uses the **Household Docs** app, its **⋯ → Send to cha
 - It's posted **as the person who sent it**, only where they could post themselves (they must be in the chat; a direct chat with someone who no longer has access is read-only), and it counts toward their 30 messages a minute.
 - Cards notify like messages ("Nisha shared a checklist “Trip 2026”"), show in search by title, and can be replied to, reacted to, pinned, starred, reminded and deleted. They can't be edited or forwarded — send it again from Docs instead. A chat download lists them by title, without a link.
 
+### Forwarded phone messages (Household Phones)
+
+If the household uses the **Household Phones** app, a phone can forward its texts into a chat or your 📌 My room. Each shows as a message from the phone's owner with a **📱 Phones** badge and a line saying which phone and app it came from ("Asha's Pixel · Messages · 14:02"). Phones can make them disappear (⏱) — this works even for a child's phone, and in a disappearing chat the shorter time applies; like every disappearing message they're left out of downloads and backups and can't be forwarded. They can't be edited. Where a phone forwards into a chat, the chat's **⋯** menu offers **📱 Check <phone>**, which opens that phone in Household Phones (shown only to people Phones allows). An admin can stop new forwarded messages with **Admin → App settings → Messages between apps → Phones may post forwarded messages**.
+
 ### The Household Assistant
 
 If the household also uses the **Household Assistant** app, you can ask it "Do I have unread messages?". Chat tells it only **which of your chats have unread messages and how many** (and how many mention you), with a link to each — never what anyone wrote, who wrote it or who is in a chat. It answers only for you, from your own chats.
@@ -254,6 +258,7 @@ The settings are in cards (Files, Chats and messages, Old messages, Notification
 | Address lookup (STUN) server | empty | For calls away from home, e.g. `stun:stun.cloudflare.com:3478`. Empty = home network only. |
 | Call relay (TURN) | None | None, Cloudflare Realtime TURN (key id + API token) or your own TURN server (address + shared secret). |
 | App-messages signing key | empty | The same key in every household app (paste it into each app's App settings). With a key, messages from other apps without the right signature are refused; without one, any app on Home Assistant's network could send messages as another. Set it in every app at about the same time: an app with a key refuses the others until they have it too. Not included in backups. |
+| Phones may post forwarded messages | On | Lets the Household Phones app post the texts a phone forwards, as the phone's owner and only into their own chats (see *Forwarded phone messages*). Off: nothing new is posted. |
 | Answer the Household Assistant | On | Lets the Household Assistant app tell a person their unread counts (see *The Household Assistant*). |
 
 ## The chat files folder

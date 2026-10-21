@@ -4,7 +4,7 @@ from datetime import timedelta
 from fastapi import APIRouter, Body, Depends, HTTPException, Query
 from pydantic import Field
 
-from .. import chats, config, db, presence, shared_folders
+from .. import app_messages, chats, config, db, presence, shared_folders
 from ..auth import require_user
 from ..live import hub
 from .common import Strict
@@ -427,6 +427,16 @@ def conversation_files(cid: str, type: str | None = None, user: dict = Depends(r
     with db.get_conn() as conn:
         chats.access(conn, cid, user)
         return {"files": files_query(conn, " AND m.conversation_id = ?", [cid], user["id"], type, 500)}
+
+
+@router.get("/conversations/{cid}/phones")
+def conversation_phones(cid: str, user: dict = Depends(require_user)):
+    """The chat menu's "📱 Check <phone>": the phones that forward into this chat and that this person may check,
+    asked of Household Phones as them (kept 60 s; none when Phones isn't on or doesn't answer in a few seconds)."""
+    with db.get_conn() as conn:
+        conv, _m = chats.access(conn, cid, user)
+        my_room = conv["kind"] == "personal"
+    return {"phones": app_messages.phones_forwarding_into(user["id"], cid, my_room)}
 
 
 # ---------- polls ----------

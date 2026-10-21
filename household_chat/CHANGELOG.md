@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.8.0
+
+- **Forwarded phone messages**: the new Household Phones app can post the texts a phone forwards into a chat or your My room. They show a **📱 Phones** badge and which phone and app they came from, and can disappear (⏱) — even from a child's phone; in a disappearing chat the shorter time applies.
+- **📱 Check phone** in a chat's ⋯ menu opens a phone that forwards into that chat in Household Phones, for the people Phones allows.
+- **New setting**: Admin → App settings → Messages between apps → **Phones may post forwarded messages** (on).
+
 ## 2.7.1
 
 - **Retry, empty-page and confirm buttons look right again.**

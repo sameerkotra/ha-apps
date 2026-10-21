@@ -68,8 +68,8 @@ GROUPS = [
     Group("calls", "Voice calls", "One-to-one calls in direct chats. The sound goes straight between the two "
           "phones. At home nothing needs setting up; for calls away from home add an address lookup (STUN) and, "
           "for networks that block direct connections (common on mobile data), a call relay."),
-    Group("apps", "Messages between apps", "Household Chat answers the other household apps (Docs shares cards, the "
-          "Household Assistant asks for unread counts) through Home Assistant's event bus."),
+    Group("apps", "Messages between apps", "Household Chat answers the other household apps (Docs shares cards, "
+          "Phones forwards texts, the Household Assistant asks for unread counts) through Home Assistant's event bus."),
     Group("assistant", "Household Assistant", "The Household Assistant app answers questions from what the household "
           "apps know. Chat tells it only which chats have unread messages and how many — never what anyone wrote."),
 ]
@@ -143,6 +143,9 @@ SETTINGS = [
             validators=[_one_line], page={"clearFlag": "clear_bus_signing_key"},
             help="The same key in every household app (Admin → App settings there). Without one, any app on Home "
                  "Assistant's network can send messages as any other."),
+    Setting("phones_may_post", True, "Phones may post forwarded messages", group="apps",
+            help="Lets the Household Phones app post the texts a phone forwards into a chat, as the phone's owner "
+                 "and only into chats they're in. Off: nothing new is posted; what's there stays."),
     Setting("export_max_mb", 500, "Largest chat download, files included (MB)", group="files", min=10, max=10000),
 ]
 

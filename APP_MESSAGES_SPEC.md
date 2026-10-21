@@ -102,7 +102,7 @@ General rules: kind names are `<area>.<verb>` or `<area>.<thing>.<verb>` (lower 
 32 characters); a kind's data only ever gains optional fields within its `kv`; a breaking change is a new `kv`, and
 receivers answer `nack unsupported_version` to versions they don't know.
 
-Rules for every request kind below (§6.3, §6.4), as for §6.2:
+Rules for every request kind below (§6.3, §6.3b, §6.4), as for §6.2:
 
 - **`requested_by` is the actor.** The receiver checks the request against its own data and rules exactly as if
   that person did it in the app (membership, enabled, may post / may add, read-only chats, private lists), and acts
@@ -188,6 +188,34 @@ How Chat shows a card (Chat spec §15.11):
   shared a checklist “Trip 2026”" with full previews, "New message from <person>" / "New message in Household
   Chat" with shorter previews, like any message; **chat list preview**: "✅ Trip 2026"; **chat downloads**:
   "✅ <title> — shared from Docs (<owner_name>'s)", without a link; **backups** keep cards like messages.
+
+### 6.3b Forwarded texts (Household Phones ↔ Household Chat)
+| Kind | Direction | Data |
+|---|---|---|
+| `chat.message.post` | Phones → Chat | `{requested_by, chat_id? \| my_room?: true (exactly one), label (1–80; the sender line, e.g. "📱 Asha's Pixel · Messages · 14:02"), text (1–4000, plain, newlines kept), disappear_after?: "1h" \| "1d" \| "7d" \| "30d" \| null}` |
+| ack result | Chat → Phones | `{message_id, chat_id}` |
+| `phones.forwarding_into` | Chat → Phones | `{requested_by, chat_id, my_room: bool}` |
+| ack result | Phones → Chat | `{phones: [{id, name, owner_name}], page: "#/check/"}` |
+
+**`chat.message.post`** — one plain-text message from an app into a chat **as `requested_by`** (the phone's
+owner). Chat checks, in this order: the sending app is one Chat lets post (today only `household_phones`, while
+Admin → App settings → *Phones may post forwarded messages* is on; otherwise `not_allowed app`); `requested_by` is
+an enabled Chat user (`not_allowed no_access`); `my_room` (their 📌 My room, made if missing) or `chat_id`, a chat
+they're a member of (`not_found chat`); they may post there (`not_allowed read_only`); the fields (`invalid
+<field>`); the rate limit shared with `chat.card` and typing (`busy`). The message is an ordinary text message with
+the app's badge (📱 Phones) and the label above it: no mentions, not editable, deletable, live, unread and notified
+like any message. `disappear_after` makes it a disappearing message **even when the person is a child** (their
+phone forwarding into their own room must work); in a chat with its own disappearing setting the **shorter** time
+applies, and `null` there means the chat's time. Disappearing ones are, like every disappearing message, left out
+of chat downloads and backups, notified only as "<person> sent a disappearing message" and not forwardable. Audit:
+`message_from_app`.
+
+**`phones.forwarding_into`** — Chat asks when a person opens a chat's ⋯ menu, as that person (`my_room` true for
+their own My room). Phones answers the phones that forward into that chat now **and** that the person may Check
+under Phones' rules (owner, admin, or a member of that chat). Chat adds **📱 Check <name>** for each, opening
+`/<repository id>_household_phones` + `page` + `<id>` (worked out like the Assistant's page, only while Phones is
+on the bus), keeps the answer 60 s per (person, chat), and shows nothing when Phones doesn't answer within a few
+seconds — the menu never waits for it.
 
 ### 6.4 Checklist → Todo list (Household Docs → Household Todo; Docs spec §17.16)
 | Kind | Direction | Data |

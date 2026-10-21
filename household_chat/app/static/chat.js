@@ -253,7 +253,7 @@ function chatMenu(anchor) {
   const c = convById(state.current) || state.detail;
   const d = state.detail;
   const mine = d.members.find((m) => m.id === state.me.id) || {};
-  menu(anchor, [
+  const m = menu(anchor, [
     { label: c.kind === "group" ? "👥 Group info" : "ℹ Info", run: () => chatInfoDialog() },
     canCallIn(c) ? { label: "📹 Video call", run: () => startCall(c, "video") } : null,
     { label: "📌 Pinned messages", run: () => pinsDialog() },
@@ -270,6 +270,24 @@ function chatMenu(anchor) {
     c.kind === "group" ? { label: "Leave group", danger: true, run: () => leaveGroup(c) } : null,
     c.kind === "group" && mine.role === "owner" ? { label: "Delete group…", danger: true, run: () => deleteGroupDialog(c) } : null,
   ]);
+  addPhoneItems(m, c);
+}
+// "📱 Check <phone>" for each phone the Household Phones app forwards into this chat (and this person may check):
+// added when the answer comes — the server asks Phones and keeps the answer a minute; the menu never waits for it.
+const PHONE_URL = /^\/[a-z0-9]{1,16}_household_phones#\/[A-Za-z0-9_\/-]*$/;
+async function addPhoneItems(m, c) {
+  let phones = [];
+  try { phones = (await api(`api/conversations/${encodeURIComponent(c.id)}/phones`)).phones || []; } catch (e) { return; }
+  if (!phones.length || !m.isConnected || state.current !== c.id) return;
+  let after = m.querySelector("button");
+  for (const p of phones) {
+    if (typeof p.url !== "string" || !PHONE_URL.test(p.url) || !p.name) continue;
+    const b = h("button", { type: "button", role: "menuitem", onclick: () => { closeMenus(); ConnectedApps.openAppPage(p.url); } }, "📱 Check " + p.name);
+    if (after) after.after(b); else m.prepend(b);
+    after = b;
+  }
+  const r = m.getBoundingClientRect();                  // taller now: keep it on the screen
+  if (r.bottom > window.innerHeight - 6) m.style.top = Math.max(6, window.innerHeight - m.offsetHeight - 6) + "px";
 }
 
 // ---------- messages ----------
@@ -430,6 +448,7 @@ function messageEl(m, grouped, ctx, isLastMine) {
   if (!mine && !grouped && c.kind === "group") bubble.appendChild(h("div", { class: "author " + colorOf(m.author) }, m.author));
   if (m.forwarded) bubble.appendChild(h("div", { class: "fwd" }, "↪ Forwarded"));
   if (m.replyTo) bubble.appendChild(replyQuote(m.replyTo));
+  if (m.fromApp && !m.deleted) bubble.appendChild(appFromEl(m.fromApp));
   if (m.deleted) bubble.appendChild(h("div", { class: "fmt" }, h("em", null, "Message deleted")));
   else {
     if (m.kind === "poll" && m.poll) bubble.appendChild(pollEl(m));
@@ -488,7 +507,7 @@ async function jumpTo(id) {
 function canEdit(m) {
   const win = state.me.app.editWindowMinutes;
   const c = convById(state.current) || state.detail;
-  return m.userId === state.me.id && (m.kind === "text" || m.kind === "file") && !m.deleted && win > 0 && !c.readOnly &&
+  return m.userId === state.me.id && (m.kind === "text" || m.kind === "file") && !m.fromApp && !m.deleted && win > 0 && !c.readOnly &&
     (Date.now() - toDate(m.createdAt)) < win * 60000;
 }
 function myRole() { const d = state.detail; const me = d && d.members.find((x) => x.id === state.me.id); return me ? me.role : "member"; }
@@ -685,6 +704,16 @@ function voicePlayer(a) {
   const wrap = h("div", { class: "voice" + (a.voice && heard === false && a.uploadedBy !== state.me.id ? " unheard" : ""), "data-att": a.id }, btn, bar, time, speed, audio,
     a.voice ? null : h("span", { class: "hint ellipsis" }, a.name));
   return wrap;
+}
+
+// ---------- plain-text messages another household app posted (Household Phones' forwarded texts) ----------
+// The app's badge, then its label ("Asha's Pixel · Messages · 14:02"); the text below is an ordinary message.
+function appFromEl(f) {
+  const icon = f.icon || "🔗";
+  let label = String(f.label || "");
+  if (label.startsWith(icon)) label = label.slice(icon.length).trim();
+  return h("div", { class: "app-from", title: "Posted by the " + (f.badge || "other") + " app" },
+    h("span", { class: "app-badge" }, icon + " " + (f.badge || "App")), label ? h("span", { class: "app-from-label" }, label) : null);
 }
 
 // ---------- cards shared from other household apps (SPEC §15.11) ----------

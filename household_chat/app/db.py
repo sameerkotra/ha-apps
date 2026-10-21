@@ -145,6 +145,17 @@ CREATE TABLE IF NOT EXISTS app_cards (
   created_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_app_cards_app ON app_cards(app, message_id);
+-- a plain-text message another household app posted for a person (chat.message.post: Household Phones' forwarded
+-- texts, APP_MESSAGES_SPEC §6.3): the message itself is an ordinary 'text' row; this says which app and its label
+CREATE TABLE IF NOT EXISTS app_posts (
+  message_id INTEGER PRIMARY KEY REFERENCES messages(id) ON DELETE CASCADE,
+  app TEXT NOT NULL,                         -- the sending app's slug (household_phones)
+  badge TEXT NOT NULL,                       -- "Phones"
+  icon TEXT NOT NULL,                        -- "📱"
+  label TEXT NOT NULL,                       -- the sender line: "📱 Asha's Pixel · Messages · 14:02"
+  bus_id TEXT,                               -- the app message it came in
+  created_at TEXT NOT NULL
+);
 -- voice calls (§15.12): one row per call that rang; its note in the chat is message_id (kind 'call')
 CREATE TABLE IF NOT EXISTS calls (
   id TEXT PRIMARY KEY,

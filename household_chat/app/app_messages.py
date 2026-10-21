@@ -1,7 +1,8 @@
 """Messages from the other household apps (APP_MESSAGES_SPEC.md §6.3; SPEC §15.11).
 
 Household Docs asks Chat for the chats a person may post in (`chat.chats.list`) and posts a card for them
-(`chat.card`). Every request is checked against Chat's own rules exactly as if that person did it in the app
+(`chat.card`); Household Phones posts the texts a phone forwards (`chat.message.post`), and Chat asks it which
+phones forward into a chat (`phones.forwarding_into`, for the chat menu's "📱 Check <phone>"). Every request is checked against Chat's own rules exactly as if that person did it in the app
 (`requested_by` is the actor; who sent the message never matters), inside the transaction that records the
 answer (app/common/app_bus.py). Live updates and notifications go out after that commit.
 
@@ -11,10 +12,14 @@ outbox runs in the 20-second housekeeping tick.
 import json
 import logging
 import re
+import secrets
+import threading
+import time
+from datetime import timedelta
 
 from fastapi import HTTPException
 
-from . import chats, config, db, tools
+from . import chats, config, db, settings, tools
 from .common import app_bus as bus
 
 logger = logging.getLogger("app_messages")
@@ -23,6 +28,11 @@ SLUG = "household_chat"
 ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 MAX_ANSWER = 7000          # bytes of the ack's result; the whole event must stay under 8 KB
 LIST_MAX = 50
+POST_MAX = 4000            # characters of a chat.message.post text
+LABEL_MAX = 80
+DISAPPEAR = {"1h": 3600, "1d": 86400, "7d": 604800, "30d": 2592000}
+# the apps that may post plain-text messages (chat.message.post): slug → (its Admin → App settings switch, its icon)
+POSTERS = {"household_phones": ("phones_may_post", "📱")}
 
 
 # ---------- checks ----------
@@ -164,6 +174,142 @@ def on_card(msg, conn):
     return result
 
 
+@bus.handler("chat.message.post")
+def on_message_post(msg, conn):
+    """One plain-text message from another app (Household Phones' forwarded texts) into a chat, as `requested_by`
+    — checked like a message they type, at the same rate limit as cards. `disappear_after` may be set even for a
+    child (their phone forwarding into their own room must work); in a disappearing chat the shorter time applies."""
+    _restoring()
+    poster = POSTERS.get(msg.from_app)
+    if poster is None or not settings.get(poster[0], conn):
+        raise bus.Nack("not_allowed", "app")
+    d = msg.data
+    user = _actor(conn, d)
+    cid, mine = d.get("chat_id"), d.get("my_room", False)
+    if mine is None:
+        mine = False
+    if not isinstance(mine, bool):
+        raise bus.Nack("invalid", "my_room")
+    if mine == (cid is not None):                                   # exactly one of the two
+        raise bus.Nack("invalid", "chat_id")
+    if mine:
+        cid = chats.ensure_personal(conn, user["id"])
+    elif not isinstance(cid, str) or not ID_RE.match(cid):
+        raise bus.Nack("invalid", "chat_id")
+    conv = chats.conv_row(conn, cid)
+    if conv is None or chats.member_row(conn, cid, user["id"]) is None:
+        raise bus.Nack("not_found", "chat")
+    if not chats.can_post(conn, conv, user["id"]):
+        raise bus.Nack("not_allowed", "read_only")
+    label = _text(d, "label", LABEL_MAX, required=True)
+    text = d.get("text")
+    if not isinstance(text, str):
+        raise bus.Nack("invalid", "text")
+    text = text.replace("\r\n", "\n").replace("\r", "\n").strip()
+    if not 1 <= len(text) <= POST_MAX or "\x00" in text:
+        raise bus.Nack("invalid", "text")
+    after = d.get("disappear_after")
+    if after is not None and after not in DISAPPEAR:
+        raise bus.Nack("invalid", "disappear_after")
+    times = [t for t in (DISAPPEAR.get(after), conv["disappear_seconds"]) if t]
+    try:
+        chats.message_limit.take(user["id"])                       # the same 30 a minute as typing (and cards)
+    except HTTPException:
+        raise bus.Nack("busy", "rate") from None
+    out = chats.Outbox()
+    mid = chats.post_app_message(conn, out, conv, user, text, min(times) if times else None, {
+        "app": msg.from_app, "badge": _badge(conn, msg, {}), "icon": poster[1], "label": label}, bus_id=msg.id)
+    db.audit(conn, "message_from_app", user["id"], cid, user["id"])
+    msg.after_commit(out.flush)
+    return {"message_id": mid, "chat_id": cid}
+
+
+# ---------- asking Household Phones (the chat menu's "📱 Check <phone>") ----------
+PHONES = "household_phones"
+FORWARDING_INTO = "phones.forwarding_into"
+PHONES_WAIT = 4.0          # seconds the page's request waits for the answer; then nothing is shown
+PHONES_CACHE = 60          # seconds an answer is reused, per (person, chat)
+PHONE_PAGE_RE = re.compile(r"^#/[A-Za-z0-9_/-]{0,60}$")
+_phones_lock = threading.Lock()
+_phones_cache: dict = {}   # (user id, chat id) → (monotonic time, [phones])
+_phones_waiting: dict = {}  # ref → (answered, holder)
+
+
+def _on_phones_answer(msg, conn):
+    with _phones_lock:
+        w = _phones_waiting.get(msg.ref)
+    if w:
+        w[1]["msg"] = msg
+        w[0].set()
+
+
+bus.on_reply("phones:", _on_phones_answer)
+
+
+def _phones_out(result, panel: str) -> list:
+    """Phones' answer as the page gets it, each with its page in Home Assistant; anything malformed left out."""
+    if not isinstance(result, dict) or not isinstance(result.get("phones"), list):
+        return []
+    page = result.get("page")
+    if not isinstance(page, str) or not PHONE_PAGE_RE.match(page):
+        return []
+    out = []
+    for p in result["phones"][:20]:
+        if not isinstance(p, dict) or not isinstance(p.get("id"), str) or not ID_RE.match(p["id"]):
+            continue
+        name = p.get("name")
+        if not isinstance(name, str) or not name.strip():
+            continue
+        owner = p.get("owner_name")
+        out.append({"id": p["id"], "name": " ".join(name.split())[:LABEL_MAX],
+                    "ownerName": " ".join(owner.split())[:LABEL_MAX] if isinstance(owner, str) else None,
+                    "url": panel + page + p["id"]})
+    return out
+
+
+def phones_forwarding_into(user_id: str, cid: str, my_room: bool) -> list:
+    """The phones that forward into chat `cid` and that `user_id` may check, asked of Household Phones as that
+    person: [] when Phones isn't on the bus or doesn't answer in PHONES_WAIT seconds. Answers are kept 60 s."""
+    key = (user_id, cid)
+    now = time.monotonic()
+    with _phones_lock:
+        hit = _phones_cache.get(key)
+        if hit and now - hit[0] < PHONES_CACHE:
+            return hit[1]
+    panel = app_page(PHONES)
+    if panel is None or not bus.available(PHONES, FORWARDING_INTO):
+        return []
+    ref = "phones:" + secrets.token_hex(8)
+    answered, holder = threading.Event(), {}
+    with _phones_lock:
+        _phones_waiting[ref] = (answered, holder)
+    try:
+        try:
+            bus.send(PHONES, FORWARDING_INTO, {"requested_by": user_id, "chat_id": cid, "my_room": bool(my_room)},
+                     ref=ref, expires_in=timedelta(seconds=30))
+            bus.run_outbox_once()                                   # now, not at the next housekeeping tick
+        except (bus.BusError, ValueError) as e:
+            logger.info("Couldn't ask Household Phones: %s", e)
+            return []
+        if not answered.wait(PHONES_WAIT):
+            return []
+    finally:
+        with _phones_lock:
+            _phones_waiting.pop(ref, None)
+    answer = holder["msg"]
+    phones = _phones_out(answer.result, panel) if answer.kind == "ack" else []
+    with _phones_lock:
+        if len(_phones_cache) > 500:
+            _phones_cache.clear()
+        _phones_cache[key] = (time.monotonic(), phones)
+    return phones
+
+
+def forget_phones() -> None:
+    with _phones_lock:
+        _phones_cache.clear()
+
+
 # ---------- the Household Assistant (tools.py; HOUSEHOLD_ASSISTANT_SPEC §5–6) ----------
 tools.tools.install(bus)
 
@@ -204,14 +350,19 @@ ASSISTANT = "household_assistant"
 _OWN_PAGE = re.compile(r"/(?:app/)?([0-9a-f]{8}|local)_household_chat")
 
 
-def assistant_page() -> str | None:
-    """The Household Assistant's sidebar page for the ➕ menu's "Ask the assistant" (HOUSEHOLD_ASSISTANT_SPEC §10,
-    phase 5), or None: only while the assistant is on the bus (said hello in the last 24 hours), and only when this
-    app knows its own page — apps installed from one repository share its id, so the assistant's page is
-    "/<that id>_household_assistant"."""
+def app_page(slug: str) -> str | None:
+    """Another household app's sidebar page, or None: only while that app is on the bus (said hello in the last 24
+    hours), and only when this app knows its own page — apps installed from one repository share its id, so the
+    other app's page is "/<that id>_<its slug>"."""
     if not bus.default.started:
         return None
-    if not any(a["slug"] == ASSISTANT and a["active"] for a in bus.apps()):
+    if not any(a["slug"] == slug and a["active"] for a in bus.apps()):
         return None
     m = _OWN_PAGE.fullmatch(config.INGRESS_URL or "")
-    return f"/{m.group(1)}_{ASSISTANT}" if m else None
+    return f"/{m.group(1)}_{slug}" if m else None
+
+
+def assistant_page() -> str | None:
+    """The Household Assistant's sidebar page for the ➕ menu's "Ask the assistant" (HOUSEHOLD_ASSISTANT_SPEC §10,
+    phase 5), or None (app_page)."""
+    return app_page(ASSISTANT)
