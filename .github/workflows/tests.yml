@@ -29,6 +29,7 @@ jobs:
           - { app: household_assistant, python: "3.12" }
           - { app: household_chat, python: "3.12" }
           - { app: household_docs, python: "3.12" }
+          - { app: household_phones, python: "3.12" }
           - { app: household_proxy, python: "3.12" }
           - { app: household_todo, python: "3.12" }
           - { app: household_vault, python: "3.12" }

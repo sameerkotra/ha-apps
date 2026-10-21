@@ -1,0 +1,119 @@
+/* Shared file: edit common/static/settings.css and run tools/sync_common.py; don't edit this copy. sha256=c4ed48f98ca5c9bfbd38de2d1cb147c019e2405ce903eb39f30f24a210c36911 */
+/* settings.css — Admin → App settings (common/static/settings.js) and Admin → People (common/static/people.js).
+ * Shared: common/static/settings.css. Uses only the theme variables of common/themes.css (and the app's
+ * --accent), so it looks the same in every app and every theme. Load it after themes.css.
+ */
+
+/* ---------- App settings ---------- */
+.sp-page [hidden], .pp-page [hidden] { display: none !important; }
+.sp-page { display: flex; flex-direction: column; gap: 14px; }
+.sp-intro, .sp-footer { color: var(--text-dim); font-size: .88rem; line-height: 1.5; }
+.sp-intro p, .sp-footer p { margin: 0 0 6px; }
+.sp-jump { display: flex; flex-wrap: wrap; gap: 6px; }
+.sp-jump a { font-size: .8rem; padding: 4px 10px; border-radius: 999px; background: var(--panel-alt); color: var(--text-dim);
+  border: 1px solid var(--border); text-decoration: none; }
+.sp-jump a:hover { color: var(--text); }
+.sp-group { margin: 0; scroll-margin-top: 12px; }
+.sp-card { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 16px 18px; }
+.sp-group > .sp-title { margin: 0 0 4px; font-size: 1.02rem; }
+.sp-group-help { margin: 0 0 6px; color: var(--text-dim); font-size: .85rem; line-height: 1.45; max-width: 75ch; }
+.sp-extra { margin: 8px 0; }
+.sp-field { display: grid; gap: 5px; padding: 12px 0; border-top: 1px solid var(--border); min-width: 0; }
+.sp-group > .sp-title + .sp-field, .sp-group > .sp-group-help + .sp-field { border-top: 0; }
+.sp-field > label, .sp-text > label { font-weight: 600; color: var(--text); }
+.sp-label { display: inline-flex; flex-wrap: wrap; align-items: baseline; gap: 6px; }
+.sp-help { color: var(--text-dim); font-size: .8rem; line-height: 1.45; max-width: 75ch; overflow-wrap: anywhere; }
+.sp-help:empty { display: none; }
+.sp-error { color: var(--danger); font-size: .82rem; }
+.sp-error:empty { display: none; }
+.sp-invalid input, .sp-invalid select { border-color: var(--danger) !important; }
+.sp-changed { color: var(--warn); font-size: .72rem; font-weight: 700; text-transform: uppercase; letter-spacing: .03em; }
+.sp-restart { color: var(--warn); background: var(--warn-soft); border-radius: 999px; padding: 1px 8px; font-size: .72rem; font-weight: 600; }
+.sp-field input[type=text], .sp-field input[type=url], .sp-field input[type=password], .sp-field select { max-width: 460px; width: 100%; box-sizing: border-box; }
+.sp-field input.sp-wide { max-width: 640px; }
+.sp-field input.sp-num { max-width: 160px; }
+.sp-field input.sp-short { max-width: 110px; }
+.sp-inline { display: block; }
+.sp-secret-box { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.sp-secret-box input { flex: 1 1 240px; max-width: 460px; }
+.sp-checks { display: flex; flex-wrap: wrap; gap: 6px 16px; }
+.sp-checks label { display: inline-flex; gap: 6px; align-items: center; font-weight: 400; }
+.sp-bool { grid-template-columns: 1fr auto; align-items: start; column-gap: 16px; }
+.sp-bool .sp-text { display: grid; gap: 4px; min-width: 0; }
+.sp-bool .sp-error { grid-column: 1 / -1; }
+.sp-disabled > label, .sp-disabled .sp-text > label, .sp-disabled input, .sp-disabled select { opacity: .55; }
+.sp-off-note { color: var(--text-dim); font-style: italic; }
+
+/* the switch */
+.sp-switch { position: relative; display: inline-block; width: 44px; height: 24px; flex: none; cursor: pointer; margin-top: 2px; }
+.sp-switch input { position: absolute; opacity: 0; width: 100%; height: 100%; margin: 0; cursor: pointer; z-index: 1; }
+.sp-switch .sp-track { position: absolute; inset: 0; border-radius: 999px; background: var(--panel-alt); border: 1px solid var(--border); }
+.sp-switch .sp-thumb { position: absolute; top: 2px; left: 2px; width: 18px; height: 18px; border-radius: 50%; background: var(--text-dim);
+  transition: transform .15s, background .15s; }
+.sp-switch input:checked + .sp-track { background: var(--accent); border-color: var(--accent); }
+.sp-switch input:checked + .sp-track .sp-thumb { transform: translateX(20px); background: var(--accent-contrast); }
+.sp-switch input:focus-visible + .sp-track { outline: 2px solid var(--accent); outline-offset: 2px; }
+.sp-switch input:disabled + .sp-track { opacity: .5; }
+
+/* the save bar (it follows the page while there are unsaved changes) */
+.sp-bar.sp-dirty { position: sticky; bottom: calc(env(safe-area-inset-bottom, 0px) + 10px); z-index: 5;
+  box-shadow: 0 4px 18px rgba(0, 0, 0, .18); }
+.sp-bar { display: flex; gap: 10px;
+  align-items: center; justify-content: flex-end; flex-wrap: wrap; padding: 10px 14px; background: var(--panel);
+  border: 1px solid var(--border); border-radius: 12px; }
+.sp-bar-text { flex: 1 1 200px; display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.sp-note { color: var(--warn); font-size: .82rem; font-weight: 600; }
+.sp-note:empty { display: none; }
+.sp-status { color: var(--text-dim); font-size: .85rem; }
+.sp-status.ok { color: var(--ok); }
+.sp-status.err { color: var(--danger); }
+
+/* a folder setting's "in use now" / check result */
+.sp-folder { display: grid; gap: 6px; }
+.sp-folder-row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.sp-folder-row input { flex: 1 1 260px; max-width: 520px; }
+.sp-check { border: 1px solid var(--border); border-radius: 10px; padding: 8px 12px; background: var(--panel-alt); font-size: .88rem; }
+.sp-check.good { border-color: var(--ok); }
+.sp-check.warn { border-color: var(--warn); }
+.sp-check.bad { border-color: var(--danger); }
+.sp-check .sp-help { margin-top: 2px; }
+.sp-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; background: var(--danger); }
+.sp-dot.ok { background: var(--ok); }
+
+/* ---------- Admin → People ---------- */
+.pp-page { display: flex; flex-direction: column; gap: 12px; }
+.pp-intro { color: var(--text-dim); font-size: .88rem; line-height: 1.5; }
+.pp-intro p { margin: 0 0 6px; }
+.pp-list { display: flex; flex-direction: column; gap: 10px; }
+.pp-person { padding: 12px 14px; display: grid; gap: 8px; }
+.pp-head { display: flex; gap: 12px; align-items: flex-start; flex-wrap: wrap; }
+.pp-who { flex: 1 1 220px; min-width: 0; }
+.pp-name { font-weight: 600; }
+.pp-badge { display: inline-block; margin-left: 6px; padding: 0 8px; border-radius: 999px; font-size: .72rem; font-weight: 600;
+  background: var(--panel-alt); border: 1px solid var(--border); color: var(--text-dim); vertical-align: 1px; }
+.pp-badge.accent { color: var(--accent); border-color: var(--accent); }
+.pp-badge.warn { color: var(--warn); border-color: var(--warn); }
+.pp-sub { color: var(--text-dim); font-size: .8rem; margin-top: 2px; overflow-wrap: anywhere; }
+.pp-controls { display: flex; gap: 14px; align-items: center; flex-wrap: wrap; }
+.pp-toggle { display: inline-flex; gap: 8px; align-items: center; font-size: .85rem; color: var(--text-dim); }
+.pp-actions { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+.pp-block { border-top: 1px solid var(--border); padding-top: 8px; }
+.pp-line { display: flex; gap: 8px; align-items: flex-start; flex-wrap: wrap; }
+.pp-line + .pp-line { margin-top: 6px; }
+.pp-label { color: var(--text-dim); font-size: .8rem; min-width: 56px; padding-top: 3px; }
+.pp-chips { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; min-width: 0; flex: 1; }
+.pp-chip { display: inline-flex; gap: 6px; align-items: center; padding: 2px 10px; border-radius: 999px; font-size: .82rem;
+  background: var(--panel-alt); border: 1px solid var(--border); color: var(--text); max-width: 100%; overflow-wrap: anywhere; }
+.pp-chip.phone { border-color: var(--accent-dim); }
+.pp-chip.warn { border-color: var(--warn); color: var(--warn); }
+.pp-chip .pp-chip-hint { color: var(--text-dim); font-size: .75rem; }
+.pp-chip button { background: none; border: 0; color: var(--text-dim); cursor: pointer; padding: 0 2px; font-size: .85rem; line-height: 1; }
+.pp-chip button:hover { color: var(--danger); }
+.pp-hint { color: var(--text-dim); font-size: .82rem; }
+.pp-add { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; margin-top: 8px; }
+.pp-add input, .pp-add select { flex: 1 1 200px; max-width: 320px; }
+.pp-result { font-size: .82rem; color: var(--text-dim); }
+.pp-result:empty { display: none; }
+.pp-warn { color: var(--warn); font-size: .85rem; }
+.pp-empty { color: var(--text-dim); padding: 12px 0; }
+.pp-person.highlight { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-dim); }

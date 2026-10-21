@@ -1,0 +1,52 @@
+name: "Household Phones"
+version: "1.0.0"
+slug: household_phones
+description: >-
+  Know whether the household's phones are on and reachable: each phone checks
+  in through the Home Assistant Companion app, Home Assistant asks a silent one
+  to report, and Check now says within seconds. Optionally forwards a phone's
+  messages (one-time codes) into Household Chat.
+url: https://github.com/sameerkotra/ha-apps
+arch:
+  - amd64
+  - aarch64
+  - armv7
+  - armhf
+  - i386
+startup: application
+boot: auto
+init: true
+
+# Ingress-only: no ports are published to the host or LAN. The only way to
+# reach this app is through the Supervisor's authenticated ingress proxy,
+# which is what makes trusting X-Remote-User-* safe.
+ingress: true
+ingress_port: 8106
+panel_icon: mdi:cellphone-check
+panel_title: Phones
+# false = visible to every Home Assistant user: everyone sees their own
+# phone (Phone mode); admins also see every phone (Admin mode).
+panel_admin: false
+
+# Lets the app call the Home Assistant Core API through the Supervisor
+# (http://supervisor/core/api/ and ws://supervisor/core/websocket, with the
+# auto-injected SUPERVISOR_TOKEN): the device and entity registries and the
+# states of the Companion app's devices, their check-in events, the
+# notify.mobile_app_* "please report" command, the people and their phones
+# (alerts), optional sensors, and the household app messages (Household Chat,
+# the Household Assistant). No network ping and no host network.
+homeassistant_api: true
+hassio_api: false
+auth_api: false
+docker_api: false
+full_access: false
+apparmor: true
+
+# admin_users (who is an admin) is the only option. Everything else is set in
+# the app under Admin → App settings.
+options:
+  admin_users: []
+
+schema:
+  admin_users:
+    - "str"

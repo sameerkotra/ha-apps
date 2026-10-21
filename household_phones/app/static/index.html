@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>Household Phones</title>
+<script src="common/theme-boot.js?v=1.0.0"></script>
+<link rel="stylesheet" href="common/themes.css?v=1.0.0">
+<link rel="stylesheet" href="common/settings.css?v=1.0.0">
+<link rel="stylesheet" href="style.css?v=1.0.0">
+</head>
+<body>
+<header class="topbar" id="topbar">
+  <button type="button" id="homeBtn" class="brand" title="My phone"><span aria-hidden="true">📱</span> Phones</button>
+  <nav class="topnav" id="topnav" aria-label="Pages">
+    <button type="button" class="tab active" data-view="my" aria-current="page"><span class="tab-icon" aria-hidden="true">📱</span><span class="tab-label">My phone</span></button>
+    <button type="button" class="tab" data-view="phones" id="phonesTab" hidden><span class="tab-icon" aria-hidden="true">📋</span><span class="tab-label">All phones</span></button>
+    <button type="button" class="tab" data-view="admin" id="adminTab" hidden><span class="tab-icon" aria-hidden="true">🛡️</span><span class="tab-label">Admin</span></button>
+  </nav>
+  <div class="topbar-right">
+    <select id="theme-select" class="theme-select" title="Theme" aria-label="Theme"></select>
+    <button type="button" id="userBtn" class="btn-ghost user-btn" title="You and the theme" aria-haspopup="menu" aria-expanded="false"><span id="userName">—</span> <span aria-hidden="true">▾</span></button>
+  </div>
+</header>
+<div id="noAdminBanner" class="banner" hidden></div>
+<div id="startingBanner" class="banner" hidden>⏳ Starting — waiting for phones to check in. No phone is marked Offline until then.</div>
+<div id="lostBanner" class="banner warn" hidden></div>
+
+<main id="myView" class="column">
+  <div id="meError" hidden></div>
+  <div id="myBody" aria-live="polite"></div>
+</main>
+
+<main id="mineView" class="column" hidden>
+  <div class="page-head"><button type="button" class="btn-ghost back-btn" data-back>← My phone</button></div>
+  <div id="mineBody"></div>
+</main>
+
+<main id="checkView" class="column" hidden>
+  <div class="page-head"><button type="button" class="btn-ghost back-btn" data-back>← Back</button></div>
+  <div id="checkBody" aria-live="polite"></div>
+</main>
+
+<main id="phonesView" class="column wide" hidden>
+  <div class="row-between"><h2 class="view-title">All phones</h2>
+    <span class="head-actions"><button type="button" id="refreshBtn" class="btn-secondary">↻ Read Home Assistant again</button></span></div>
+  <div id="phonesBody" aria-live="polite"></div>
+</main>
+
+<main id="phoneView" class="column wide" hidden>
+  <div class="page-head"><button type="button" class="btn-ghost back-btn" data-back>← All phones</button></div>
+  <div id="phoneBody"></div>
+</main>
+
+<main id="adminView" class="column wide" hidden>
+  <div class="row-between admin-head"><h2 class="view-title">🛡️ Admin</h2></div>
+  <nav class="tabs" id="adminTabs" aria-label="Admin">
+    <button type="button" class="tab active" data-tab="settings" aria-current="page">App settings</button>
+    <button type="button" class="tab" data-tab="people">People</button>
+    <button type="button" class="tab" data-tab="tests">Tests</button>
+    <button type="button" class="tab" data-tab="storage">Storage</button>
+  </nav>
+  <section id="tab-settings" class="tab-body"></section>
+  <section id="tab-people" class="tab-body" hidden></section>
+  <section id="tab-tests" class="tab-body" hidden></section>
+  <section id="tab-storage" class="tab-body" hidden>
+    <div class="card">
+      <h3>Backups</h3>
+      <p class="hint">A copy of the whole database: the phones and their settings, history, people and App settings.
+        It holds no forwarded message (the app never keeps any); the App-messages signing key is left out.</p>
+      <p><a id="downloadDb" class="btn-secondary" href="api/admin-storage-download-db">Download a backup</a></p>
+    </div>
+    <div class="danger-zone">
+      <h3>Restore</h3>
+      <p class="hint">Replaces every phone, setting and history with the backup's. It asks first.</p>
+      <label class="btn-danger-outline">Restore a backup… <input type="file" id="importDb" accept=".db" hidden></label>
+    </div>
+  </section>
+</main>
+
+<div id="toastRoot" class="toast-root"></div>
+<div id="modalRoot"></div>
+<script src="common/ui.js?v=1.0.0"></script>
+<script src="common/settings.js?v=1.0.0"></script>
+<script src="common/people.js?v=1.0.0"></script>
+<script src="common/backnav.js?v=1.0.0"></script>
+<script src="common/whoami.js?v=1.0.0"></script>
+<script src="common/deeplink.js?v=1.0.0"></script>
+<script src="app.js?v=1.0.0"></script>
+</body>
+</html>

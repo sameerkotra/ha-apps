@@ -4,7 +4,7 @@
 > aren't affiliated with or endorsed by Home Assistant or Nabu Casa. They were built with Claude,
 > Anthropic's AI model, and are provided as-is: try them out first, and keep your own backups.
 
-Thirteen apps for a household that already runs Home Assistant. Each one opens from the Home Assistant
+Fourteen apps for a household that already runs Home Assistant. Each one opens from the Home Assistant
 sidebar, uses everyone's Home Assistant login (no extra accounts or passwords), and keeps its data on
 your own Home Assistant.
 
@@ -22,6 +22,7 @@ your own Home Assistant.
 | [Household Arcade](household_arcade) | 🤖 Optional | Classic games for the whole household, played from the sidebar or the phone: 48 games, from Snake and Falling Blocks to Gem Swap, Sudoku, Checkers, Ludo, Carrom and Chess. Race someone on the same game, play live on two phones (Snake Duel, Paddle Duel, Tank Battle, Carrom), or take turns over days (board games, Ludo, Chess) with your-move notifications. Personal bests, a household leaderboard, six looks, and optional time limits for children. |
 | [Household Assistant](household_assistant) | 🤖 Optional | Ask in plain words about what the other apps know — today's tasks, this month's spending, the shopping list, a note — and get a short answer with links back to each app. The common questions are answered in a second or two without any AI (quick answers); an AI model answers the rest. Each app answers only what the person could see in it, once its admin allows it; changes are only proposed and need a tap. |
 | [Household Proxy](household_proxy) | — | **New.** Open the web pages of things on your home network — Komodo, a NAS, Pi-hole, a printer — inside Home Assistant, from wherever Home Assistant reaches, with its sign-in only: no ports, tunnels or extra domains. Each site is open to admins, everyone or chosen people. Sites can be watched (web page, port or ping), with alerts and a sensor each, and a stuck device restarted with a smart plug. Add only software you run and keep updated: a site opened here runs on Home Assistant's own address. |
+| [Household Phones](household_phones) | — | **New.** Know whether the household's phones are on and reachable: each phone checks in through the Home Assistant Companion app, Home Assistant asks a silent one to report, and **Check now** says within seconds. Offline, low-battery and restart alerts with quiet hours and pauses; everyone sees what admins see about their phone. Optionally forwards a phone's messages (one-time codes) into Household Chat as disappearing messages, never stored by the app. |
 | [Household AI](household_ai) | — | **64-bit only.** An AI model on the Home Assistant machine's own CPU — no GPU, no second computer — for the apps above: download models with their size and memory in front of you, keep one loaded in the day, and share it fairly (the assistant first). The apps use it as an ordinary Ollama address. Slow on a CPU: seconds for a short answer, minutes for a receipt photo. |
 
 **AI** — 🤖 **Needed**: the app's main job uses an AI model, so it needs one set up before it is useful (Finance

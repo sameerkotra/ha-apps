@@ -1,0 +1,252 @@
+"""The app's SQLite database, /data/phones.db (spec/SPEC.md §13).
+
+People (from Home Assistant's identity headers), the phones found in Home Assistant with their settings and status,
+each phone's history, the Check-now log, the time and target chat of each forward (never its text), alerts waiting
+for a quiet time to end, and the App settings. Each request gets its own short-lived connection; WAL lets reads and
+writes overlap. `secure_delete` overwrites deleted rows, so nothing removed lingers in the file's free pages.
+"""
+import os
+import sqlite3
+import threading
+
+from . import config
+from .common import backup_core, db_core
+
+os.makedirs(config.DATA_DIR, exist_ok=True)
+
+_import_lock = threading.Lock()  # serializes a database-file swap against concurrent writers
+
+
+def _connect() -> sqlite3.Connection:
+    return db_core.connect(config.DB_PATH, timeout=10,
+                           pragmas=("foreign_keys = ON", "synchronous = NORMAL", "secure_delete = ON"))
+
+
+def get_conn():
+    """Commits when the block ends, rolls back on an error, always closes (app/common/db_core.py)."""
+    return db_core.transaction(_connect)
+
+
+SCHEMA = """
+PRAGMA journal_mode = WAL;
+
+-- Everyone who has opened the app (Home Assistant identity). is_child: set by an admin (Admin → People); a child's
+-- phone can be watched without the child pausing it (§9). quiet_*: the person's own alert quiet hours ("" = the
+-- household's from App settings).
+CREATE TABLE IF NOT EXISTS users (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    username TEXT,
+    is_child INTEGER NOT NULL DEFAULT 0,
+    quiet_start TEXT NOT NULL DEFAULT '',
+    quiet_end TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+);
+-- Extra notify services an admin adds for a person under Admin → People (common/people_admin.py).
+CREATE TABLE IF NOT EXISTS user_notify (
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    service TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    created_by TEXT,
+    PRIMARY KEY (user_id, service)
+);
+
+-- A Home Assistant Companion-app device (§2). Times are epoch seconds unless the column says _at TEXT.
+CREATE TABLE IF NOT EXISTS phones (
+    id TEXT PRIMARY KEY,                  -- the app's own short id (links: #/check/<id>)
+    device_id TEXT UNIQUE,                -- Home Assistant's device registry id (NULL once retired)
+    ha_name TEXT NOT NULL DEFAULT '',     -- the device's name in Home Assistant
+    name TEXT,                            -- display name set here (NULL: "<owner>'s <model>")
+    manufacturer TEXT, model TEXT, os_name TEXT, os_version TEXT, app_version TEXT,
+    kind TEXT NOT NULL DEFAULT 'phone' CHECK (kind IN ('phone', 'tablet', 'ignored')),
+    kind_confirmed INTEGER NOT NULL DEFAULT 0,
+    watched INTEGER NOT NULL DEFAULT 1,
+    interval_min INTEGER,                 -- NULL: the household's check-in interval
+    owner_id TEXT,                        -- Home Assistant user id
+    owner_by_admin INTEGER NOT NULL DEFAULT 0,
+    notify_service TEXT,                  -- override of mobile_app_<device> (bare name)
+    first_seen REAL NOT NULL,
+    in_registry INTEGER NOT NULL DEFAULT 1,
+    retired INTEGER NOT NULL DEFAULT 0,
+    replaced_by TEXT,
+    keep_unused INTEGER NOT NULL DEFAULT 0,
+    -- check-ins and the "please report" requests (§3)
+    last_checkin REAL,
+    last_spontaneous REAL,                -- the last check-in that wasn't an answer to a request
+    requests_sent INTEGER NOT NULL DEFAULT 0,
+    last_request_at REAL,
+    request_error TEXT,                   -- NULL, or why the last request failed
+    request_error_kind TEXT,              -- 'cant_check' / 'signed_out'
+    answers_requests INTEGER,             -- learnt: NULL unknown, 1 seen answering a request
+    overdue_from REAL,                    -- Check now got no reply: watched as overdue from then
+    status TEXT NOT NULL DEFAULT 'unknown',
+    status_reason TEXT,
+    status_since REAL,
+    late_since REAL,
+    -- pauses (§3.1, §9): kind 'alerts' (status stays visible) or 'watching' (adults: nothing is asked or shown)
+    pause_kind TEXT CHECK (pause_kind IN ('alerts', 'watching')),
+    pause_until REAL,                     -- NULL with pause_until_online
+    pause_until_online INTEGER NOT NULL DEFAULT 0,
+    pause_reason TEXT,
+    pause_by TEXT,
+    quiet_start TEXT NOT NULL DEFAULT '', -- the owner's daily quiet times for this phone ("23:00"–"06:00")
+    quiet_end TEXT NOT NULL DEFAULT '',
+    share_place INTEGER NOT NULL DEFAULT 0,
+    stop_requested_at REAL,
+    -- what the alerts remember
+    battery INTEGER,                      -- the battery level at the last check-in
+    charging INTEGER,
+    last_reboot TEXT,
+    low_battery_sent INTEGER NOT NULL DEFAULT 0,
+    charge_reminded_on TEXT,              -- the date of the last charging reminder
+    -- forwarding (§6): only the owner switches it on
+    fwd_on INTEGER NOT NULL DEFAULT 0,
+    fwd_target TEXT NOT NULL DEFAULT 'my_room' CHECK (fwd_target IN ('my_room', 'chat')),
+    fwd_chat_id TEXT,
+    fwd_chat_name TEXT,
+    fwd_chat_kind TEXT,
+    fwd_members TEXT,                     -- JSON list of the chat's member ids (asked from Chat), for Check-now rights
+    fwd_members_at REAL,
+    fwd_disappear TEXT,                   -- '1h' / '1d' / '7d' / '30d' (NULL: the household's default)
+    fwd_apps TEXT,                        -- JSON list of package names (NULL: the household's default)
+    fwd_filter TEXT NOT NULL DEFAULT 'codes' CHECK (fwd_filter IN ('codes', 'words', 'all')),
+    fwd_words TEXT,                       -- JSON list
+    fwd_all_confirmed INTEGER NOT NULL DEFAULT 0,
+    fwd_quiet_start TEXT NOT NULL DEFAULT '',
+    fwd_quiet_end TEXT NOT NULL DEFAULT '',
+    fwd_quiet_mode TEXT NOT NULL DEFAULT 'hold' CHECK (fwd_quiet_mode IN ('hold', 'drop')),
+    fwd_error TEXT,                       -- why Household Chat refused the last forward (NULL: fine)
+    fwd_ok_at REAL,                       -- when Chat last took a forward
+    redacted_at REAL,                     -- Android hid a code's text (§6.1): a checklist item until fixed
+    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+);
+
+-- Each phone's history (kept N days): status changes, restarts, Check now, pauses, alerts, battery at each change.
+CREATE TABLE IF NOT EXISTS history (
+    id INTEGER PRIMARY KEY,
+    phone_id TEXT NOT NULL REFERENCES phones(id) ON DELETE CASCADE,
+    at REAL NOT NULL,
+    kind TEXT NOT NULL,                   -- status / restart / check / pause / alert / forward_on / owner / …
+    text TEXT NOT NULL,
+    by_user TEXT,
+    battery INTEGER
+);
+CREATE INDEX IF NOT EXISTS history_phone ON history (phone_id, at);
+
+-- Check now (§4): who asked, when, and the result. No forwarded text.
+CREATE TABLE IF NOT EXISTS checks (
+    id TEXT PRIMARY KEY,
+    phone_id TEXT NOT NULL REFERENCES phones(id) ON DELETE CASCADE,
+    started REAL NOT NULL,
+    by_user TEXT,
+    by_name TEXT NOT NULL,
+    via TEXT NOT NULL DEFAULT 'app',      -- app / chat / assistant / home_assistant
+    state TEXT NOT NULL DEFAULT 'waiting' CHECK (state IN ('waiting', 'online', 'no_reply', 'cant_ask')),
+    reason TEXT,
+    replied REAL,
+    finished REAL,
+    joined INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS checks_phone ON checks (phone_id, started);
+
+-- Forwards (§6): the time and the target chat only — never the text, title or sender.
+CREATE TABLE IF NOT EXISTS forwards (
+    phone_id TEXT NOT NULL REFERENCES phones(id) ON DELETE CASCADE,
+    at REAL NOT NULL,
+    chat_name TEXT NOT NULL,
+    kind TEXT NOT NULL DEFAULT 'message'  -- message / redacted / summary / test
+);
+CREATE INDEX IF NOT EXISTS forwards_phone ON forwards (phone_id, at);
+
+-- When each alert last went out for a phone (the cooldown), and alerts held by the phone's quiet times.
+CREATE TABLE IF NOT EXISTS alert_state (
+    phone_id TEXT NOT NULL REFERENCES phones(id) ON DELETE CASCADE,
+    alert TEXT NOT NULL,
+    last_sent REAL,
+    held INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (phone_id, alert)
+);
+-- Alerts for one person waiting for their quiet hours to end. The message is the alert's own text (no forwards).
+CREATE TABLE IF NOT EXISTS alert_queue (
+    id INTEGER PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    phone_id TEXT,
+    alert TEXT NOT NULL,
+    title TEXT NOT NULL,
+    message TEXT NOT NULL,
+    due REAL NOT NULL
+);
+
+-- Requests to Household Chat whose answers the page polls (the chats an owner may forward into).
+CREATE TABLE IF NOT EXISTS bus_requests (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    phone_id TEXT,
+    kind TEXT NOT NULL,
+    state TEXT NOT NULL DEFAULT 'pending',
+    result TEXT,
+    error TEXT,
+    created REAL NOT NULL
+);
+
+-- The app's own facts (start-up time, lost contact): key → JSON.
+CREATE TABLE IF NOT EXISTS app_state (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+);
+
+-- Admin → App settings (app/settings.py). value is JSON.
+CREATE TABLE IF NOT EXISTS app_settings (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    updated_by TEXT
+);
+"""
+
+# Columns added after their table was first made (older databases and restored backups get them at start-up).
+MIGRATIONS: dict = {}
+
+# Bumped by every init_db() (start-up, restore): caches (settings) drop what they hold when it changes.
+generation = 0
+
+
+def init_db():
+    global generation
+    with get_conn() as conn:
+        conn.executescript(SCHEMA)
+        db_core.add_missing_columns(conn, MIGRATIONS)
+    generation += 1
+
+
+SNAPSHOT_PREFIX = "household-phones-backup-"       # copies a browser never finished downloading are swept hourly
+
+
+def backup_to_tempfile(after=None) -> str:
+    """A complete, consistent copy of the live database (WAL included) in a temp file; the caller deletes it."""
+    return db_core.snapshot_to_tempfile(_connect, prefix=SNAPSHOT_PREFIX, after=after)
+
+
+REQUIRED_TABLES = {"users", "phones", "history", "app_settings"}
+
+
+def validate_backup_file(path: str) -> None:
+    """ValueError with a readable message unless `path` is this app's database."""
+    db_core.validate_file(path, REQUIRED_TABLES, app_name=config.APP_TITLE)
+
+
+def import_from_tempfile(tmp_path: str) -> None:
+    """Swap the live database for an already-validated file, then bring it up to date."""
+    backup_core.restore_file(tmp_path, config.DB_PATH, get_conn, migrate=init_db, lock=_import_lock)
+
+
+def state_get(conn, key: str, default=None):
+    import json
+    row = conn.execute("SELECT value FROM app_state WHERE key = ?", (key,)).fetchone()
+    return json.loads(row[0]) if row else default
+
+
+def state_set(conn, key: str, value) -> None:
+    import json
+    conn.execute("INSERT INTO app_state (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                 (key, json.dumps(value)))

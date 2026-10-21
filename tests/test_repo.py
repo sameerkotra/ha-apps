@@ -32,8 +32,11 @@ ASSISTANT_VERSION = "1.7.1"
 # Household Proxy: the thirteenth app, home-network sites opened inside Home Assistant (household_proxy/spec/SPEC.md).
 PROXY = "household_proxy"
 PROXY_VERSION = "0.7.1"
+# Household Phones: the fourteenth app, the household's phones through the Companion app (household_phones/spec/SPEC.md).
+PHONES = "household_phones"
+PHONES_VERSION = "1.0.0"
 NEWER = ((ARCADE, ARCADE_VERSION), (RECEIPTS, RECEIPTS_VERSION), (DOCS, DOCS_VERSION),
-         (ASSISTANT, ASSISTANT_VERSION), (PROXY, PROXY_VERSION))
+         (ASSISTANT, ASSISTANT_VERSION), (PROXY, PROXY_VERSION), (PHONES, PHONES_VERSION))
 # Household AI: the twelfth app, the model server the AI apps can share (household_ai/spec/SPEC.md). Unlike the
 # others it has an admin-only panel and a declared (unpublished) port, so it has its own checks here.
 HOUSEHOLD_AI = "household_ai"
@@ -90,7 +93,7 @@ class RepositoryTests(unittest.TestCase):
         self.assertIn("Unofficial apps", text[:600])
         self.assertIn("Claude", text[:600])
         self.assertIn(REPO_URL, text)
-        for slug in ADDONS + (FINANCE, ARCADE, RECEIPTS, DOCS, ASSISTANT, HOUSEHOLD_AI, PROXY):
+        for slug in ADDONS + (FINANCE, ARCADE, RECEIPTS, DOCS, ASSISTANT, HOUSEHOLD_AI, PROXY, PHONES):
             self.assertIn(f"]({slug})", text, slug)
         self.assertIn("](LICENSE)", text)
         self.assertIn("](SECURITY.md)", text)
@@ -126,7 +129,7 @@ class RepositoryTests(unittest.TestCase):
 
     def test_user_facing_text_says_app_not_add_on(self):
         """Home Assistant 2026.2 renamed add-ons to apps; what people read says "app"."""
-        for slug in ADDONS + (FINANCE, ARCADE, RECEIPTS, DOCS, ASSISTANT, HOUSEHOLD_AI, PROXY):
+        for slug in ADDONS + (FINANCE, ARCADE, RECEIPTS, DOCS, ASSISTANT, HOUSEHOLD_AI, PROXY, PHONES):
             for name in ("README.md", "DOCS.md", "CHANGELOG.md", os.path.join("translations", "en.yaml")):
                 with self.subTest(f"{slug}/{name}"):
                     text = read(slug, name).replace("ha-apps", "")
@@ -199,7 +202,7 @@ class RepositoryTests(unittest.TestCase):
         self.assertIn("Claude", readme[:600])
         self.assertIn("[Household AI](household_ai) | — | **64-bit only.**", read("README.md"))
         self.assertIn("Household AI", read("SECURITY.md"))
-        for slug in ADDONS + (FINANCE, ARCADE, RECEIPTS, DOCS, ASSISTANT, PROXY):   # no other app publishes a port
+        for slug in ADDONS + (FINANCE, ARCADE, RECEIPTS, DOCS, ASSISTANT, PROXY, PHONES):   # no other app publishes a port
             self.assertNotRegex(read(slug, "config.yaml"), r"(?m)^ports:")
 
     def test_arcade_is_a_normal_release(self):
@@ -241,6 +244,13 @@ class RepositoryTests(unittest.TestCase):
         self.assertIn("[Household Proxy](household_proxy)", read("README.md"))
         self.assertIn("Household Proxy", read("SECURITY.md"))
         self.assertIn("household_proxy", read(".github", "workflows", "tests.yml"))
+
+    def test_household_phones(self):
+        config = read(PHONES, "config.yaml")
+        self.assertRegex(config, r"(?m)^homeassistant_api: true")
+        self.assertNotRegex(config, r"(?m)^host_network:")              # no ping: everything goes through the Companion app
+        self.assertIn("[Household Phones](household_phones)", read("README.md"))
+        self.assertIn("household_phones", read(".github", "workflows", "tests.yml"))
 
 
 if __name__ == "__main__":

@@ -40,7 +40,7 @@ print("RESULT " + json.dumps(out))
 # household_ai_docker isn't here: it has no login and no ingress by design (a plain Docker container whose
 # pages have no sign-in; other apps reach its API with optional access keys).
 APPS = ["calorie_tracker", "family_tree", "household_ai", "household_arcade", "household_assistant", "household_chat",
-        "household_docs", "household_proxy", "household_todo", "household_vault", "receipt_price_intelligence",
+        "household_docs", "household_phones", "household_proxy", "household_todo", "household_vault", "receipt_price_intelligence",
         "splitpot"]
 
 
