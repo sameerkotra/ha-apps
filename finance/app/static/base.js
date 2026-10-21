@@ -371,6 +371,16 @@
         }
         sync();
         if (wide && wide.addEventListener) wide.addEventListener("change", sync);
+        // A page that redraws part of itself in place (Categories after a rule is saved or tested) brings the fold
+        // back closed, and on a wide screen its summary is hidden — so open any fold that appears later too.
+        window.syncDesktopFolds = sync;
+        if (window.MutationObserver) {
+            new MutationObserver(function (records) {
+                for (var i = 0; i < records.length; i++) {
+                    if (records[i].addedNodes.length) { sync(); return; }
+                }
+            }).observe(document.body, { childList: true, subtree: true });
+        }
     })();
 
     // <form data-enter-clicks="button-id">: Enter in any field clicks that button instead of submitting the form.

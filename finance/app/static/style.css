@@ -1638,10 +1638,15 @@ button.btn-danger { font-family: inherit; }
 .restart-btn, .q-danger, .bulk-delete { color: var(--danger); border: 1px solid var(--danger); background: transparent; }
 .summary-strip > a.kpi { text-decoration: none; color: inherit; }
 .summary-strip > a.kpi:hover { border-color: var(--accent-dim); }
-.row-actions { white-space: nowrap; }
-.row-actions > * { margin: 0.1rem 0.15rem 0.1rem 0; }
+/* Row buttons stay whole but wrap onto a second line when the table is narrow (tables clip what sticks out). */
+.row-actions { white-space: normal; }
+.row-actions > * { display: inline-block; white-space: nowrap; margin: 0.1rem 0.15rem 0.1rem 0; }
 .acct-name { font-weight: 600; }
 .acct-sub { display: block; }
+.acct-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 0.15rem 0.5rem; margin-top: 0.2rem; }
+.acct-latest { display: block; font-size: 0.75rem; font-weight: 400; white-space: nowrap; }
+.accounts-table .acct-link { margin-left: 0.4rem; font-size: 0.8rem; white-space: nowrap; }
+.accounts-table td.row-actions { text-align: right; }
 .acct-badges { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; margin: 0 0 1rem; }
 .manage-row { display: flex; flex-wrap: wrap; gap: 0.75rem; align-items: center; margin: 0.75rem 0; }
 .group-row > td { padding: 0 !important; border-bottom: 0 !important; background: transparent !important; }

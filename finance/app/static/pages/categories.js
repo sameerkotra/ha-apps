@@ -130,6 +130,7 @@
         var tab = new URL(resp.url || window.location.href, window.location.href).searchParams.get("tab") || currentTab();
         root.innerHTML = fresh.innerHTML;
         enhance(root);
+        if (window.syncDesktopFolds) window.syncDesktopFolds();      // the Rules filters stay shown on a wide screen
         showTab(tab, false);
         if (window.history && history.replaceState && resp.url) {
             var url = new URL(resp.url, window.location.href);

@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.14.3
+
+- **Accounts fits the screen again.** Type and preferred upload now sit under the account's name, and the latest transaction under the count, so **Transactions** and **Upload** are no longer cut off at the right; on a narrow window the two buttons stack instead of running off the edge.
+- **The Rules filters stay put.** After adding, editing or testing a rule, the **All / Mine / Built in**, **Spending / Income** and category filters disappeared on a computer until the page was reloaded; they now stay shown.
+
 ## 1.14.2
 
 - Shared code updated (back navigation and page helpers); nothing visible changes.

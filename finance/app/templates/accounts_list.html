@@ -62,11 +62,7 @@
     <thead>
         <tr>
             <th>Account</th>
-            <th class="col-secondary">Type</th>
-            <th class="col-secondary">Latest transaction</th>
             <th class="col-secondary num">Transactions</th>
-            <th class="col-secondary">Preferred upload</th>
-            <th class="col-secondary" data-no-sort>Website</th>
             {% if due %}<th>Next statement</th>{% endif %}
             {% if payment_due %}<th>Payment due</th>{% endif %}
             <th data-no-sort><span class="visually-hidden">Actions</span></th>
@@ -78,19 +74,15 @@
             <td class="col-desc" data-label="Account">
                 <a href="account?id={{ a.id }}{{ amp }}" class="acct-name">{{ a.name }}</a>
                 {% if a.is_archived %}<span class="status-badge">archived</span>{% endif %}
+                {% if a.website_url %}<a href="{{ a.website_url }}" target="_blank" rel="noopener noreferrer" class="acct-link" title="Open the bank's website">Website &#8599;</a>{% endif %}
                 {% if a.bank_name or a.account_number_last4 %}<span class="hint acct-sub">{{ a.bank_name or "" }}{% if a.account_number_last4 %} ····{{ a.account_number_last4 }}{% endif %}</span>{% endif %}
-                <span class="phone-only hint">{{ a.type.replace('_', ' ') }} &middot; latest {{ a.latest_txn_date or "—" }}</span>
+                {# Type and preferred upload sit under the name (they used to be two more columns, which pushed the
+                   buttons off the edge in Home Assistant's frame) #}
+                <span class="acct-meta"><span class="type-badge type-{{ a.type }}">{{ a.type.replace('_', ' ') }}</span>
+                    <span class="hint" data-label="Preferred upload">{% if a.preferred_upload_method == "pdf" %}PDF only{% elif a.preferred_upload_method == "csv" %}CSV only{% elif a.preferred_upload_method == "qfx" %}QFX only{% else %}Any{% endif %}</span></span>
+                <span class="phone-only hint">latest {{ a.latest_txn_date or "—" }}</span>
             </td>
-            <td class="col-secondary" data-label="Type"><span class="type-badge type-{{ a.type }}">{{ a.type.replace('_', ' ') }}</span></td>
-            <td class="col-secondary" data-label="Latest transaction">{{ a.latest_txn_date or "—" }}</td>
-            <td class="col-secondary num" data-label="Transactions">{{ a.txn_count }}</td>
-            <td class="col-secondary" data-label="Preferred upload">
-                {% if a.preferred_upload_method == "pdf" %}PDF only
-                {% elif a.preferred_upload_method == "csv" %}CSV only
-                {% elif a.preferred_upload_method == "qfx" %}QFX only
-                {% else %}Any{% endif %}
-            </td>
-            <td class="col-secondary" data-label="Website">{% if a.website_url %}<a href="{{ a.website_url }}" target="_blank" rel="noopener noreferrer" class="acct-link">Open &#8599;</a>{% else %}&mdash;{% endif %}</td>
+            <td class="col-secondary num" data-label="Transactions">{{ a.txn_count }}<span class="hint acct-latest">Latest transaction {{ a.latest_txn_date or "—" }}</span></td>
             {% if due %}{% set d = due.get(a.id, ("", "")) %}<td data-label="Next statement" class="col-full next-statement {{ d[1] }}">{{ d[0] }}</td>{% endif %}
             {% if payment_due %}{% set p = payment_due.get(a.id, ("", "")) %}<td data-label="Payment due" class="col-full payment-due {{ p[1] }}">{{ p[0] }}</td>{% endif %}
             <td class="col-full row-actions" data-label="">
