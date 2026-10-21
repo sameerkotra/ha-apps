@@ -1,8 +1,9 @@
 """Sensors in Home Assistant (optional, off by default; spec/SPEC.md §7 "Sensors in Home Assistant").
 
 - `binary_sensor.phones_<phone>_online` (device_class connectivity): on while the phone is Online, with its status,
-  battery and last check-in as attributes — never a phone whose owner paused being watched (then: unavailable).
-- `sensor.phones_online_count`: watched phones online, with the total.
+  battery and last check-in as attributes — never a phone whose owner paused being watched or is in their
+  do-not-monitor hours (then: unavailable). Only monitored phones.
+- `sensor.phones_online_count`: monitored phones online, with the total.
 
 **Check-now buttons:** a `button.` entity can't be made through Home Assistant's REST API (a state posted there has
 no press action), so Check now from a dashboard or an automation is an **event** instead:
@@ -15,7 +16,7 @@ sensor_publisher); turned off, they are removed.
 """
 import logging
 
-from . import config, db, monitor, phones, settings
+from . import config, db, dnm, monitor, phones, settings
 from .common import ha_people, sensor_publisher
 
 logger = logging.getLogger("ha_sensors")
@@ -33,13 +34,14 @@ def items(now: float | None = None) -> list:
     now = config.clock() if now is None else now
     out, online, total = [], 0, 0
     with db.get_conn() as conn:
-        rows = conn.execute("SELECT * FROM phones WHERE retired = 0 AND watched = 1 AND kind != 'ignored'").fetchall()
+        rows = conn.execute("SELECT * FROM phones WHERE retired = 0 AND monitored = 1").fetchall()
         for p in rows:
             eid = f"binary_sensor.phones_{slug(conn, p)}_online"
             name = phones.display_name(conn, p)
-            if monitor.watching_paused(p, now):
+            hidden = "paused" if monitor.watching_paused(p, now) else "not_monitored" if dnm.active(p, now) else None
+            if hidden:
                 out.append((eid, "unavailable", {"friendly_name": f"{name} online", "device_class": "connectivity",
-                                                 "status": "paused"}))
+                                                 "status": hidden}))
                 continue
             total += 1
             on = p["status"] == "online"

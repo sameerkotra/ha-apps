@@ -106,13 +106,13 @@ button:disabled { opacity: 0.45; cursor: default; }
 .dot.online { background: var(--online); }
 .dot.late, .dot.cant_check { background: var(--late); }
 .dot.offline, .dot.app_not_reporting { background: var(--down); }
-.dot.paused { background: var(--info); }
+.dot.paused, .dot.dnm { background: var(--info); }
 .badge { display: inline-block; padding: 1px 9px; border-radius: 10px; font-size: 0.8rem; font-weight: 600;
   background: var(--panel-alt); color: var(--text-dim); white-space: nowrap; }
 .badge.online { background: color-mix(in srgb, var(--online) 20%, transparent); color: var(--online); }
 .badge.late, .badge.cant_check { background: color-mix(in srgb, var(--late) 22%, transparent); color: var(--late); }
 .badge.offline, .badge.app_not_reporting { background: color-mix(in srgb, var(--down) 20%, transparent); color: var(--down); }
-.badge.paused { background: var(--info-soft); color: var(--info); }
+.badge.paused, .badge.dnm { background: var(--info-soft); color: var(--info); }
 .status-line { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: 2px 0; }
 .facts { display: flex; flex-wrap: wrap; gap: 6px 16px; margin: 6px 0 0; color: var(--text-dim); font-size: .92rem; }
 .facts b { color: var(--text); font-weight: 600; }
@@ -133,6 +133,15 @@ button:disabled { opacity: 0.45; cursor: default; }
 .new-device .grow { flex: 1; min-width: 160px; }
 .card.new-device select { width: auto; max-width: 100%; }
 .my-card .btn-primary, .card-head > .btn-primary { white-space: nowrap; }
+.available-row { flex-wrap: wrap; }
+.available-row .row-main { min-width: 180px; }
+.card.welcome { border-color: var(--accent); }
+
+/* do-not-monitor hours */
+.dnm-list { display: flex; flex-direction: column; gap: 10px; margin-top: 8px; }
+.dnm-window { border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; display: flex; flex-direction: column; gap: 8px; }
+.day-chips .chip-btn.day { min-width: 46px; padding: 6px 8px; }
+.day-chips .chip-btn.on { background: var(--accent); color: var(--accent-contrast); border-color: var(--accent); }
 
 /* the Check-now card */
 .check-card { text-align: left; }
@@ -140,6 +149,7 @@ button:disabled { opacity: 0.45; cursor: default; }
 .check-title.online { color: var(--online); }
 .check-title.no_reply { color: var(--late); }
 .check-title.cant_ask { color: var(--down); }
+.check-title.dnm { color: var(--info); }
 .progress { height: 6px; border-radius: 3px; background: var(--panel-alt); overflow: hidden; margin: 10px 0; }
 .progress > span { display: block; height: 100%; background: var(--accent); transition: width .5s linear; }
 .just-forwarded { margin-top: 10px; padding: 8px 10px; border-radius: 8px; background: var(--ok-soft); }
@@ -197,6 +207,7 @@ details.fold[open] > summary { margin-bottom: 6px; }
 .modal { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 14px 18px;
   width: min(560px, 100%); max-height: 88vh; overflow: auto; }
 .modal h3 { display: flex; justify-content: space-between; align-items: center; margin-top: 0; }
+.modal .actions { display: flex; justify-content: flex-end; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
 
 /* phones: the tabs become a bottom bar; the theme moves into the name button's menu */
 @media (max-width: 760px) {

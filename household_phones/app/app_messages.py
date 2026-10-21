@@ -114,7 +114,7 @@ def on_check_event(event: dict) -> None:
     def run():
         from . import checknow, phones
         with db.get_conn() as conn:
-            rows = conn.execute("SELECT * FROM phones WHERE retired = 0").fetchall()
+            rows = conn.execute("SELECT * FROM phones WHERE retired = 0 AND monitored = 1").fetchall()
             hit = next((p for p in rows if p["id"] == want or phones_slug(conn, p) == want
                         or (p["ha_name"] or "").lower() == want), None)
         if hit is None:
@@ -157,10 +157,10 @@ def forwarding_into(msg, conn):
         user = auth.user_dict(row) if row else {"id": uid, "name": "", "username": None, "is_child": False,
                                                  "is_admin": auth.is_admin(uid, "", None)}
         if my_room:
-            rows = conn.execute("SELECT * FROM phones WHERE retired = 0 AND fwd_on = 1 AND fwd_target = 'my_room' "
+            rows = conn.execute("SELECT * FROM phones WHERE retired = 0 AND monitored = 1 AND fwd_on = 1 AND fwd_target = 'my_room' "
                                 "AND owner_id = ?", (uid,)).fetchall()
         else:
-            rows = conn.execute("SELECT * FROM phones WHERE retired = 0 AND fwd_on = 1 AND fwd_target = 'chat' "
+            rows = conn.execute("SELECT * FROM phones WHERE retired = 0 AND monitored = 1 AND fwd_on = 1 AND fwd_target = 'chat' "
                                 "AND fwd_chat_id = ?", (chat_id,)).fetchall()
         for p in rows:
             if checknow.may_check(p, user):

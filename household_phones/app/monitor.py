@@ -6,9 +6,11 @@
 - **Requests**: a phone silent for interval + "ask after" is sent `command_update_sensors`; again after "wait for a
   reply"; Offline after the set number of requests (interval + 12 minutes at the defaults). iPhones are never asked.
 - **Status** (`compute`, a pure function the tests drive): online / late / offline / app_not_reporting / cant_check,
-  plus the overlays paused (alerts or watching) and unknown (not watched, just found).
-- **False alarms**: the start-up grace, lost contact with most phones at once, Can't check when the request itself
-  failed, pauses and daily quiet times.
+  plus paused (alerts or watching), dnm (the owner's do-not-monitor hours, dnm.py) and unknown (not monitored: no
+  admin added it).
+- **False alarms**: the start-up grace (also after a do-not-monitor window and after an admin adds a phone), lost
+  contact with most phones at once, Can't check when the request itself failed, pauses.
+- **Not monitored** devices are left alone entirely: never asked, no check-ins written, no alerts, no history.
 
 `tick()` runs every 30 seconds (and soon after a check-in): it decides under one database connection, then sends
 requests and alerts with none open.
@@ -18,7 +20,7 @@ import math
 import threading
 import time
 
-from . import alerts, config, db, phones, settings
+from . import alerts, config, db, dnm, phones, settings
 
 logger = logging.getLogger("monitor")
 
@@ -30,7 +32,7 @@ REPORTED = {"last": None}                  # when a state_reported event last ca
 REPORTED_FRESH_S = 30 * 60
 WRITE_EVERY_S = 20
 STATUS_LABEL = {"online": "Online", "late": "Late", "offline": "Offline", "app_not_reporting": "App not reporting",
-                "cant_check": "Can't check", "paused": "Paused", "unknown": "Unknown"}
+                "cant_check": "Can't check", "paused": "Paused", "unknown": "Unknown", "dnm": "Not monitored"}
 REASON_TEXT = {
     "signed_out": "The Companion app seems signed out or uninstalled — open it on the phone and sign in.",
     "sensor_off": "A needed sensor is off on the phone (Battery level) — Companion app → Settings → Manage sensors.",
@@ -77,24 +79,36 @@ def alerts_paused(p, now: float) -> bool:
 
 
 def runs(p) -> bool:
-    """Is this device watched at all (a watched phone or tablet, not ignored or retired)?"""
-    return bool(p["watched"]) and p["kind"] != "ignored" and not p["retired"]
+    """Is this device monitored at all (an admin added it, and it isn't retired)?"""
+    return bool(p["monitored"]) and not p["retired"]
 
 
 def base_time(p, t: Timing) -> float:
-    base = p["last_checkin"] or p["first_seen"]
+    """From when the phone counts as silent: its last check-in, or when an admin added it if that is later."""
+    base = max([x for x in (p["last_checkin"], p["monitored_since"]) if x] or [p["first_seen"]])
     if p["overdue_from"]:                     # Check now got no reply: watched as overdue from then (§4)
         base = min(base, p["overdue_from"] - t.online_for)
     return base
 
 
-def compute(p, now: float, s: dict, started: float, *, sensor_off: bool = False) -> tuple[str, str | None]:
+def dnm_now(p, now: float) -> tuple[dict | None, float | None]:
+    """(the do-not-monitor window on now, or None; seconds since the last one ended, or None)."""
+    on = dnm.active(p, now)
+    return on, (None if on else dnm.since_end(p, now))
+
+
+def compute(p, now: float, s: dict, started: float, *, sensor_off: bool = False,
+            dnm_state: tuple | None = None) -> tuple[str, str | None]:
     """(status, reason) of one phone. The machine's own status: 'paused' only while watching is paused (an alerts
-    pause is an overlay the pages add, `display`)."""
+    pause is an overlay the pages add, `display`); 'dnm' during the owner's do-not-monitor hours. `dnm_state`:
+    dnm_now()'s answer (worked out here when not given)."""
     if not runs(p):
-        return "unknown", "not_watched"
+        return "unknown", "not_monitored"
     if watching_paused(p, now):
         return "paused", "watching"
+    on, after = dnm_state if dnm_state is not None else dnm_now(p, now)
+    if on:
+        return "dnm", None
     t = timing(p, s)
     since = now - base_time(p, t)
     if since <= t.online_for:
@@ -109,17 +123,27 @@ def compute(p, now: float, s: dict, started: float, *, sensor_off: bool = False)
         st, reason = "app_not_reporting", "signed_out"
     elif st == "offline" and sensor_off:
         st, reason = "app_not_reporting", "sensor_off"
-    elif st == "online" and answering_only(p, now, t):
+    elif st == "online" and answering_only(p, now, t, after):
         st, reason = "app_not_reporting", "answers_only"
-    if st == "offline" and now - started < t.grace:
+    if st == "offline" and (now - started < t.grace or in_grace_after(p, now, t, after)):
         st = "late"                           # the start-up grace: never Offline yet (§3.1)
     return st, reason
 
 
-def answering_only(p, now: float, t: Timing) -> bool:
-    """It has answered requests but not reported by itself for a long while (battery optimisation, force-stop)."""
+def in_grace_after(p, now: float, t: Timing, after: float | None) -> bool:
+    """Within interval + start-up grace after a do-not-monitor window ended, or after an admin added the phone."""
+    if after is not None and after < t.grace:
+        return True
+    return bool(p["monitored_since"]) and now - p["monitored_since"] < t.grace
+
+
+def answering_only(p, now: float, t: Timing, after: float | None = None) -> bool:
+    """It has answered requests but not reported by itself for a long while (battery optimisation, force-stop).
+    Time spent in do-not-monitor hours, or before an admin added it, doesn't count."""
     window = max(3 * t.interval, 3600)
     if not p["answers_requests"] or now - p["first_seen"] < window:
+        return False
+    if (after is not None and after < window) or (p["monitored_since"] and now - p["monitored_since"] < window):
         return False
     spont = p["last_spontaneous"]
     return spont is None or now - spont > window
@@ -128,7 +152,12 @@ def answering_only(p, now: float, t: Timing) -> bool:
 def display(p, now: float) -> dict:
     """What the pages show: the status, with an alerts pause on top."""
     st = p["status"] or "unknown"
-    label = "Not watched" if p["status_reason"] == "not_watched" else STATUS_LABEL.get(st, st)
+    label = "Not monitored" if not runs(p) else STATUS_LABEL.get(st, st)
+    on = dnm.active(p, now) if runs(p) else None
+    if on:
+        st, label = "dnm", f"Not monitored (until {on['untilText']})"
+    elif st == "dnm":
+        st, label = "unknown", "Unknown"          # the window just ended: the next round works it out
     out = {"status": st, "label": label, "reason": p["status_reason"],
            "reasonText": REASON_TEXT.get(p["status_reason"] or "") or (p["request_error"] if st == "cant_check" else None),
            "paused": None}
@@ -150,10 +179,6 @@ def until_text(p) -> str:
     return f"until {d.strftime('%H:%M') if same_day else d.strftime('%a %H:%M')}"
 
 
-def in_phone_quiet(p, now: float) -> bool:
-    return alerts.in_quiet(p["quiet_start"], p["quiet_end"], config.local(now))
-
-
 # --------------------------------------------------------------------------------------------- check-ins
 
 def checkin(pid: str, ts: float, now: float | None = None, *, force: bool = False) -> bool:
@@ -167,8 +192,8 @@ def checkin(pid: str, ts: float, now: float | None = None, *, force: bool = Fals
             return False
     with db.get_conn() as conn:
         p = conn.execute("SELECT * FROM phones WHERE id = ?", (pid,)).fetchone()
-        if p is None:
-            return False
+        if p is None or not runs(p) or dnm.active(p, now):
+            return False                      # not monitored (now): nothing is written
         waiting = conn.execute("SELECT 1 FROM checks WHERE phone_id = ? AND state = 'waiting'", (pid,)).fetchone()
         if p["last_checkin"] is not None and ts <= p["last_checkin"] and not waiting:
             with _lock:
@@ -279,6 +304,8 @@ def send_request(pid: str, source=None, now: float | None = None, *, count: bool
     with db.get_conn() as conn:
         p = conn.execute("SELECT * FROM phones WHERE id = ?", (pid,)).fetchone()
     service = phones.notify_service(p) if p else None
+    if p is not None and (not runs(p) or dnm.active(p, now)):
+        return ha_source.CommandResult(False, "cant_check", "Not monitored right now.")   # never asked (§2, §3.1)
     if p is None or phones.is_ios(p):
         return ha_source.CommandResult(False, "cant_check", "iPhones can't be asked to report.")
     if not service:
@@ -298,11 +325,17 @@ def send_request(pid: str, source=None, now: float | None = None, *, count: bool
 
 # --------------------------------------------------------------------------------------------- the tick
 
-def _lost_contact(rows, statuses: dict, now: float, s: dict) -> tuple[bool, int, int, float | None]:
-    """(lost, silent, watched, since): half or more of the watched phones (at least the minimum) went quiet within
-    the same window."""
+def _lost_contact(rows, statuses: dict, now: float, s: dict, dnm_states: dict | None = None
+                  ) -> tuple[bool, int, int, float | None]:
+    """(lost, silent, monitored, since): half or more of the monitored phones (at least the minimum) went quiet within
+    the same window. Phones in do-not-monitor hours, or just out of them (the grace), don't count."""
+    dnm_states = dnm_states or {}
+
+    def counted(p):
+        on, after = dnm_states.get(p["id"], (None, None))
+        return not on and not in_grace_after(p, now, timing(p, s), after)
     active = [p for p in rows if runs(p) and not watching_paused(p, now) and not alerts_paused(p, now)
-              and not phones.is_ios(p)]
+              and not phones.is_ios(p) and counted(p)]
     total = len(active)
     times = sorted(statuses[p["id"]][2] for p in active
                    if statuses[p["id"]][0] in ("late", "offline", "cant_check") and statuses[p["id"]][2])
@@ -335,17 +368,18 @@ def tick(now: float | None = None, source=None, *, again: bool = True) -> dict:
                              "pause_by = NULL WHERE id = ?", (p["id"],))
                 phones.history(conn, p["id"], "pause", "Pause ended.", now=now)
         rows = conn.execute("SELECT * FROM phones WHERE retired = 0").fetchall()
-        statuses = {}
+        statuses, dnm_states = {}, {}
         for p in rows:
             off = phones.sensor_enabled(p["id"], "battery_level") is False
-            st, reason = compute(p, now, s, started, sensor_off=off)
+            dnm_states[p["id"]] = dnm_now(p, now) if runs(p) else (None, None)
+            st, reason = compute(p, now, s, started, sensor_off=off, dnm_state=dnm_states[p["id"]])
             late_since = p["late_since"]
-            if st == "online" or st in ("unknown", "paused"):
+            if st in ("online", "unknown", "paused", "dnm"):
                 late_since = None
             elif late_since is None:
                 late_since = now
             statuses[p["id"]] = (st, reason, late_since)
-        lost, silent, total, since = _lost_contact(rows, statuses, now, s)
+        lost, silent, total, since = _lost_contact(rows, statuses, now, s, dnm_states)
         was_lost = db.state_get(conn, "lost_contact")
         if lost and not was_lost:
             db.state_set(conn, "lost_contact", {"since": since, "silent": silent, "total": total, "at": now})
@@ -367,20 +401,22 @@ def tick(now: float | None = None, source=None, *, again: bool = True) -> dict:
             if changed:
                 conn.execute("UPDATE phones SET status = ?, status_reason = ?, status_since = ?, late_since = ? WHERE id = ?",
                              (st, reason, now, late_since, pid))
-                if not (p["status"] == "unknown" and st == "unknown"):
+                if not (p["status"] == "unknown" and st == "unknown") and st != "dnm" and runs(p):
                     text = f"{STATUS_LABEL.get(st, st)}" + (f" — {REASON_TEXT[reason]}" if reason in REASON_TEXT else "")
                     phones.history(conn, pid, "status", text, battery=battery, now=now)
                 out["changed"].append((pid, p["status"], st))
             elif late_since != p["late_since"]:
                 conn.execute("UPDATE phones SET late_since = ? WHERE id = ?", (late_since, pid))
-            muted = alerts_paused(p, now) or watching_paused(p, now) or not runs(p)
-            quiet = in_phone_quiet(p, now)
+            dnm_on = st == "dnm"
+            muted = alerts_paused(p, now) or watching_paused(p, now) or not runs(p) or dnm_on
+            if dnm_on or not runs(p):         # do-not-monitor hours: nothing held for later either (§3.1)
+                for a in ("offline", "battery"):
+                    if alerts.held(conn, pid, a):
+                        alerts.set_held(conn, pid, a, False)
             # -- alerts on a change
             if changed and not muted:
                 if st == "offline" and alerts.enabled("offline"):
                     if lost:                  # lost contact: held until contact returns (§3.1)
-                        alerts.set_held(conn, pid, "offline", True)
-                    elif quiet:
                         alerts.set_held(conn, pid, "offline", True)
                     else:
                         to_alert.append(("offline", pid, offline_text(conn, p, name)))
@@ -394,8 +430,8 @@ def tick(now: float | None = None, source=None, *, again: bool = True) -> dict:
                 r = conn.execute("SELECT last_sent FROM alert_state WHERE phone_id = ? AND alert = 'app'", (pid,)).fetchone()
                 if since_st is not None and now - since_st >= t.offline_after and not (r and r["last_sent"] and r["last_sent"] >= since_st):
                     to_alert.append(("app", pid, app_text(p, name, reason)))
-            # -- held offline alerts: released when the phone's quiet time ends / contact returns, if still offline
-            if not muted and st == "offline" and not lost and not quiet and alerts.held(conn, pid, "offline"):
+            # -- held offline alerts: released when contact returns, if still offline
+            if not muted and st == "offline" and not lost and alerts.held(conn, pid, "offline"):
                 alerts.set_held(conn, pid, "offline", False)
                 to_alert.append(("offline", pid, offline_text(conn, p, name)))
             if st != "offline" and alerts.held(conn, pid, "offline") and not lost:
@@ -411,7 +447,9 @@ def tick(now: float | None = None, source=None, *, again: bool = True) -> dict:
                     to_request.append(pid)
         # -- what the sensors say (restarts, battery), and the nightly charging reminder
         for p in rows:
-            if runs(p) and not watching_paused(p, now):
+            if statuses[p["id"]][0] == "dnm":
+                quietly_note_restart(conn, p)
+            elif runs(p) and not watching_paused(p, now):
                 to_alert += observe(conn, p, now)
         to_alert += charge_reminders(conn, rows, now, statuses)
     for pid in to_request:
@@ -448,6 +486,14 @@ def app_text(p, name: str, reason: str | None) -> str:
     return f"{name}: the HA app stopped reporting" + (f" — {short}" if short else "") + "."
 
 
+def quietly_note_restart(conn, p) -> None:
+    """During do-not-monitor hours: a restart is remembered without a history row or an alert, so none goes out
+    about it once the hours end."""
+    reboot = phones.last_reboot(p["id"])
+    if reboot and reboot != p["last_reboot"]:
+        conn.execute("UPDATE phones SET last_reboot = ? WHERE id = ?", (reboot, p["id"]))
+
+
 def observe(conn, p, now: float) -> list:
     """Restarts and the battery, from the phone's latest states."""
     out = []
@@ -479,16 +525,8 @@ def observe(conn, p, now: float) -> list:
             if p["low_battery_sent"]:
                 conn.execute("UPDATE phones SET low_battery_sent = 0 WHERE id = ?", (pid,))
         elif level < pct and not chg and not p["low_battery_sent"] and alerts.enabled("battery") and not muted:
-            if in_phone_quiet(p, now):
-                alerts.set_held(conn, pid, "battery", True)
-            else:
-                conn.execute("UPDATE phones SET low_battery_sent = 1 WHERE id = ?", (pid,))
-                out.append(("battery", pid, f"{name} is at {level}% and not charging."))
-        if not in_phone_quiet(p, now) and alerts.held(conn, pid, "battery"):
-            alerts.set_held(conn, pid, "battery", False)
-            if level < pct and not chg and not p["low_battery_sent"]:
-                conn.execute("UPDATE phones SET low_battery_sent = 1 WHERE id = ?", (pid,))
-                out.append(("battery", pid, f"{name} is at {level}% and not charging."))
+            conn.execute("UPDATE phones SET low_battery_sent = 1 WHERE id = ?", (pid,))
+            out.append(("battery", pid, f"{name} is at {level}% and not charging."))
     return out
 
 

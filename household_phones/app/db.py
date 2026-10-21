@@ -60,7 +60,9 @@ CREATE TABLE IF NOT EXISTS phones (
     manufacturer TEXT, model TEXT, os_name TEXT, os_version TEXT, app_version TEXT,
     kind TEXT NOT NULL DEFAULT 'phone' CHECK (kind IN ('phone', 'tablet', 'ignored')),
     kind_confirmed INTEGER NOT NULL DEFAULT 0,
-    watched INTEGER NOT NULL DEFAULT 1,
+    monitored INTEGER NOT NULL DEFAULT 0,  -- an admin added it to monitoring (§2): nothing happens to it otherwise
+    monitored_since REAL,                 -- when it was added (the grace before it can be Offline)
+    welcome INTEGER NOT NULL DEFAULT 0,   -- 1: show the owner "Your phone is now monitored" until they close it
     interval_min INTEGER,                 -- NULL: the household's check-in interval
     owner_id TEXT,                        -- Home Assistant user id
     owner_by_admin INTEGER NOT NULL DEFAULT 0,
@@ -89,8 +91,8 @@ CREATE TABLE IF NOT EXISTS phones (
     pause_until_online INTEGER NOT NULL DEFAULT 0,
     pause_reason TEXT,
     pause_by TEXT,
-    quiet_start TEXT NOT NULL DEFAULT '', -- the owner's daily quiet times for this phone ("23:00"–"06:00")
-    quiet_end TEXT NOT NULL DEFAULT '',
+    dnm_windows TEXT,                     -- the owner's do-not-monitor hours: JSON [{days: [0-6, Mon=0], start, end,
+                                          -- pauseForwarding}] in Home Assistant's time zone (§3.1)
     share_place INTEGER NOT NULL DEFAULT 0,
     stop_requested_at REAL,
     -- what the alerts remember
@@ -205,7 +207,52 @@ CREATE TABLE IF NOT EXISTS app_settings (
 """
 
 # Columns added after their table was first made (older databases and restored backups get them at start-up).
-MIGRATIONS: dict = {}
+MIGRATIONS: dict = {"phones": [
+    ("monitored", "INTEGER NOT NULL DEFAULT 0"),
+    ("monitored_since", "REAL"),
+    ("welcome", "INTEGER NOT NULL DEFAULT 0"),
+    ("dnm_windows", "TEXT"),
+]}
+
+ALL_DAYS = [0, 1, 2, 3, 4, 5, 6]
+
+
+def migrate_1_1(conn, added: list) -> dict:
+    """Databases from 1.0.0 (and their backups), once: phones aren't monitored by default any more, and the daily
+    quiet times become do-not-monitor hours. Returns what it did (the tests).
+
+    - **Monitored:** only the devices an admin had explicitly taken on — confirmed under New devices, edited (name,
+      owner, interval, notify service) or marked as replacing another — and that were still watched. Devices that were
+      watched only because discovery guessed "phone" become not monitored.
+    - **Quiet times** (offline and battery alerts held) become a do-not-monitor window on every day, same times
+      (not on a child's phone: children can't set do-not-monitor hours).
+    """
+    import json
+    out = {"monitored": 0, "unmonitored": 0, "windows": 0}
+    cols = db_core.columns(conn, "phones")
+    if "phones.monitored" in added and "watched" in cols:
+        rows = conn.execute("SELECT id, watched, kind, kind_confirmed, owner_by_admin, name, interval_min, "
+                            "notify_service FROM phones WHERE retired = 0").fetchall()
+        for p in rows:
+            explicit = bool(p["kind_confirmed"] or p["owner_by_admin"] or p["name"] or p["interval_min"]
+                            or p["notify_service"])
+            keep = bool(p["watched"]) and p["kind"] != "ignored" and explicit
+            conn.execute("UPDATE phones SET monitored = ?, monitored_since = ?, status = CASE WHEN ? THEN status "
+                         "ELSE 'unknown' END, status_reason = CASE WHEN ? THEN status_reason ELSE 'not_monitored' END "
+                         "WHERE id = ?", (int(keep), None, int(keep), int(keep), p["id"]))
+            out["monitored" if keep else "unmonitored"] += 1
+    if "phones.dnm_windows" in added and "quiet_start" in cols:
+        children = "SELECT id FROM users WHERE is_child = 1"
+        for p in conn.execute("SELECT id, quiet_start, quiet_end FROM phones WHERE quiet_start != '' AND quiet_end != '' "
+                              f"AND (owner_id IS NULL OR owner_id NOT IN ({children}))").fetchall():
+            if p["quiet_start"] != p["quiet_end"]:
+                conn.execute("UPDATE phones SET dnm_windows = ? WHERE id = ?", (json.dumps(
+                    [{"days": ALL_DAYS, "start": p["quiet_start"], "end": p["quiet_end"], "pauseForwarding": False}]),
+                    p["id"]))
+                out["windows"] += 1
+        conn.execute("UPDATE phones SET quiet_start = '', quiet_end = ''")
+        conn.execute("DELETE FROM alert_state WHERE held = 1 AND alert = 'battery'")
+    return out
 
 # Bumped by every init_db() (start-up, restore): caches (settings) drop what they hold when it changes.
 generation = 0
@@ -215,7 +262,9 @@ def init_db():
     global generation
     with get_conn() as conn:
         conn.executescript(SCHEMA)
-        db_core.add_missing_columns(conn, MIGRATIONS)
+        added = db_core.add_missing_columns(conn, MIGRATIONS)
+        if added:
+            migrate_1_1(conn, added)
     generation += 1
 
 

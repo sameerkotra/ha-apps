@@ -14,7 +14,7 @@ import secrets
 
 from fastapi import HTTPException
 
-from . import config, db, monitor, phones, settings
+from . import config, db, dnm, monitor, phones, settings
 
 logger = logging.getLogger("checknow")
 
@@ -40,6 +40,8 @@ def chat_member(p, user_id: str) -> bool:
 
 
 def may_check(p, user: dict) -> bool:
+    if not monitor.runs(p):
+        return False                          # a device no admin added: nobody checks it (§2)
     if user.get("is_admin") or (p["owner_id"] and p["owner_id"] == user["id"]):
         return True
     return bool(settings.get("check_by_chat_members")) and chat_member(p, user["id"])
@@ -49,8 +51,8 @@ def checkable(conn, user: dict) -> list:
     """Other people's phones this person may Check now because they're in its forwarding chat (My phone's cards)."""
     if not settings.get("check_by_chat_members") or not settings.get("forwarding_allowed"):
         return []
-    rows = conn.execute("SELECT * FROM phones WHERE retired = 0 AND fwd_on = 1 AND fwd_target = 'chat' AND "
-                        "(owner_id IS NULL OR owner_id != ?)", (user["id"],)).fetchall()
+    rows = conn.execute("SELECT * FROM phones WHERE retired = 0 AND monitored = 1 AND fwd_on = 1 AND "
+                        "fwd_target = 'chat' AND (owner_id IS NULL OR owner_id != ?)", (user["id"],)).fetchall()
     return [p for p in rows if chat_member(p, user["id"])]
 
 
@@ -60,11 +62,14 @@ def start(pid: str, user: dict | None, *, via: str = "app", by_name: str | None 
     now = config.clock() if now is None else now
     with db.get_conn() as conn:
         p = phones.get(conn, pid)
-        if p is None or (user is not None and not may_check(p, user)):
+        if p is None or not monitor.runs(p) or (user is not None and not may_check(p, user)):
             raise HTTPException(404, "No such phone (or you can't check it).")
         if monitor.watching_paused(p, now) and not (user and user["id"] == p["owner_id"]):
             raise HTTPException(409, f"Paused by {phones.first_name(phones.owner_name(conn, p['owner_id']))} "
                                      f"{monitor.until_text(p)}.".replace("  ", " "))
+        on = dnm.active(p, now)
+        if on:                                # do-not-monitor hours: nobody's Check now asks (§3.1)
+            raise HTTPException(409, not_monitored_text(conn, p, on, user))
         recent = conn.execute("SELECT id FROM checks WHERE phone_id = ? AND started > ? ORDER BY started DESC LIMIT 1",
                               (pid, now - JOIN_S)).fetchone()
         if recent:
@@ -92,6 +97,12 @@ def start(pid: str, user: dict | None, *, via: str = "app", by_name: str | None 
             conn.execute("UPDATE checks SET state = 'cant_ask', reason = ?, finished = ? WHERE id = ? AND state = 'waiting'",
                          (res.reason or res.kind, now, cid))
     return cid
+
+
+def not_monitored_text(conn, p, on: dict, user: dict | None) -> str:
+    """"Not monitored right now — Asha set do-not-monitor hours until 07:00"."""
+    who = "you" if user and user["id"] == p["owner_id"] else phones.first_name(phones.owner_name(conn, p["owner_id"]))
+    return f"Not monitored right now — {who} set do-not-monitor hours until {on['untilText']}."
 
 
 def finish_due(now: float | None = None) -> int:

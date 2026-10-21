@@ -1,5 +1,6 @@
-"""Admin mode (spec/SPEC.md §5, §8): All phones, a phone's settings, App settings, People (children), the alerts'
-Test buttons, a test forward, and Storage (backup and restore)."""
+"""Admin mode (spec/SPEC.md §5, §8): All phones (the monitored phones, and the Available devices an admin adds to
+monitoring), a phone's settings, App settings, People (children), the alerts' Test buttons, a test forward, and Storage
+(backup and restore)."""
 import os
 
 from fastapi import APIRouter, Body, Depends, File, HTTPException, UploadFile
@@ -11,33 +12,43 @@ from ..common import backup_core, ha_client, ha_notify, people_admin
 
 router = APIRouter(prefix="/api")
 
-PROBLEM_ORDER = {"offline": 0, "app_not_reporting": 1, "cant_check": 2, "late": 3, "paused": 5, "online": 6, "unknown": 7}
+PROBLEM_ORDER = {"offline": 0, "app_not_reporting": 1, "cant_check": 2, "late": 3, "paused": 5, "dnm": 5, "online": 6,
+                 "unknown": 7}
+KIND_GUESS = {"phone": "Phone", "tablet": "Tablet", "ignored": "Watch or other device"}
+
+
+def available(conn, p, s: dict) -> dict:
+    """A device no admin added (Available devices): what discovery knows, with its kind guess and owner."""
+    return {"id": p["id"], "name": s["name"], "owner": s["owner"], "ownerId": p["owner_id"], "kind": p["kind"],
+            "kindGuess": KIND_GUESS.get(p["kind"], p["kind"]), "model": p["model"], "manufacturer": p["manufacturer"],
+            "osName": p["os_name"], "inRegistry": bool(p["in_registry"]), "nameOwn": p["name"],
+            "intervalOwn": p["interval_min"]}
 
 
 @router.get("/admin/phones")
 def all_phones(admin: dict = Depends(require_admin)):
-    """All phones: the summary strip, new devices, not used lately, phones (problems first), tablets, ignored."""
+    """All phones: the summary strip, not used lately, the monitored phones (problems first) and tablets, and the
+    Available devices no admin has added yet (watches and other devices last)."""
     now = config.clock()
     unused_s = settings.get("unused_days") * 86400
     with db.get_conn() as conn:
         rows = conn.execute("SELECT * FROM phones WHERE retired = 0 ORDER BY first_seen").fetchall()
         items = [(p, views.summary(conn, p, now, viewer=admin)) for p in rows]
+        avail = [available(conn, p, s) for p, s in items if not p["monitored"]]
         lost = db.state_get(conn, "lost_contact")
     def order(x):
         return (PROBLEM_ORDER.get(x[1]["status"], 9), x[1]["name"].lower())
-    watched = [s for p, s in items if p["kind"] != "ignored" and p["watched"]]
-    paused = sum(1 for s in watched if s.get("paused") or s["status"] == "paused")
-    strip = {"phones": len([s for p, s in items if p["kind"] == "phone"]),
-             "online": sum(1 for s in watched if s["status"] == "online"),
-             "offline": sum(1 for s in watched if s["status"] in ("offline", "app_not_reporting")),
-             "late": sum(1 for s in watched if s["status"] in ("late", "cant_check")), "paused": paused}
-    new = [s for p, s in items if not p["kind_confirmed"]]
+    items = [(p, s) for p, s in items if p["monitored"]]
+    paused = sum(1 for p, s in items if s.get("paused") or s["status"] in ("paused", "dnm"))
+    strip = {"phones": len(items),
+             "online": sum(1 for p, s in items if s["status"] == "online"),
+             "offline": sum(1 for p, s in items if s["status"] in ("offline", "app_not_reporting")),
+             "late": sum(1 for p, s in items if s["status"] in ("late", "cant_check")), "paused": paused}
     unused = [s for p, s in items if not p["keep_unused"] and now - (p["last_checkin"] or p["first_seen"]) > unused_s]
-    return {"summary": strip, "lostContact": lost,
-            "new": new, "unused": unused,
-            "phones": [s for p, s in sorted(items, key=order) if p["kind"] == "phone"],
+    avail.sort(key=lambda a: (a["kind"] == "ignored", not a["inRegistry"], a["name"].lower()))
+    return {"summary": strip, "lostContact": lost, "unused": unused, "available": avail,
+            "phones": [s for p, s in sorted(items, key=order) if p["kind"] != "tablet"],
             "tablets": [s for p, s in sorted(items, key=order) if p["kind"] == "tablet"],
-            "ignored": [s for p, s in items if p["kind"] == "ignored"],
             "checkins": "events" if monitor.reported_events_seen(now) else "polling",
             "haLoaded": phones.LIVE.loaded_at is not None, "connected": app_messages.connected_apps()}
 
@@ -54,49 +65,19 @@ def refresh(admin: dict = Depends(require_admin)):
 
 @router.put("/admin/phones/{pid}")
 def edit_phone(pid: str, body: dict = Body(...), admin: dict = Depends(require_admin)):
-    """{name?, kind?, watched?, intervalMin?: null|5|10|15, ownerId?: null|id, notifyService?: null|text, confirm?}"""
+    """A monitored phone's settings: {name?, kind?: phone|tablet, intervalMin?: null|5|10|15, ownerId?: null|id,
+    notifyService?: null|text}. Adding to and stopping monitoring have their own routes."""
     body = body if isinstance(body, dict) else {}
-    keys = {"name", "kind", "watched", "intervalMin", "ownerId", "notifyService", "confirm"}
+    keys = {"name", "kind", "intervalMin", "ownerId", "notifyService"}
     if set(body) - keys:
         raise HTTPException(422, f"Unknown field(s): {', '.join(sorted(set(body) - keys))}.")
     with db.get_conn() as conn:
         p = phones.get(conn, pid)
         if p is None:
             raise HTTPException(404, "No such phone.")
-        sets, notes = {}, []
-        if "name" in body:
-            name = " ".join(str(body["name"] or "").split())[:60]
-            sets["name"] = name or None
-        if "kind" in body:
-            if body["kind"] not in phones.KINDS:
-                raise HTTPException(422, "kind is phone, tablet or ignored.")
-            if body["kind"] != p["kind"]:
-                sets["kind"] = body["kind"]
-                notes.append(f"Kind: {body['kind']}.")
-                if "watched" not in body:
-                    sets["watched"] = 1 if body["kind"] == "phone" else (p["watched"] if body["kind"] == "tablet" else 0)
-            sets["kind_confirmed"] = 1
-        if body.get("confirm") is True:
-            sets["kind_confirmed"] = 1
-        if "watched" in body:
-            if not isinstance(body["watched"], bool):
-                raise HTTPException(422, "watched is true or false.")
-            if int(body["watched"]) != p["watched"]:
-                sets["watched"] = int(body["watched"])
-                notes.append("Watched." if body["watched"] else f"Stopped watching (by {admin['name']}).")
-                if not body["watched"]:
-                    sets["stop_requested_at"] = None
-        if "intervalMin" in body:
-            if body["intervalMin"] not in (None, 5, 10, 15):
-                raise HTTPException(422, "The interval is 15, 10 or 5 minutes, or the household's.")
-            sets["interval_min"] = body["intervalMin"]
-        if "ownerId" in body:
-            oid = body["ownerId"]
-            if oid is not None and (not isinstance(oid, str) or not conn.execute("SELECT 1 FROM users WHERE id = ?", (oid,)).fetchone()):
-                raise HTTPException(422, "Choose someone who has opened the app.")
-            if oid != p["owner_id"]:
-                sets.update(owner_id=oid, owner_by_admin=1, fwd_on=0)       # forwarding is the owner's own choice
-                notes.append(f"Owner set to {phones.owner_name(conn, oid) or 'nobody'} by {admin['name']}.")
+        if not p["monitored"]:
+            raise HTTPException(409, "Add it to monitoring first.")
+        sets, notes = _phone_fields(conn, p, body, admin)
         if "notifyService" in body:
             svc = body["notifyService"]
             if svc in (None, ""):
@@ -115,6 +96,104 @@ def edit_phone(pid: str, body: dict = Body(...), admin: dict = Depends(require_a
     monitor.WAKE.set()
     from .api import phone
     return phone(pid, admin)
+
+
+def _phone_fields(conn, p, body: dict, admin: dict) -> tuple[dict, list]:
+    """The columns to set from {name, kind, intervalMin, ownerId} (shared by Edit and Add to monitoring), and the
+    history notes. HTTPException 422."""
+    sets, notes = {}, []
+    if "name" in body:
+        name = " ".join(str(body["name"] or "").split())[:60]
+        sets["name"] = name or None
+    if "kind" in body:
+        if body["kind"] not in ("phone", "tablet"):
+            raise HTTPException(422, "kind is phone or tablet.")
+        if body["kind"] != p["kind"]:
+            sets["kind"] = body["kind"]
+            notes.append(f"Kind: {body['kind']}.")
+        sets["kind_confirmed"] = 1
+    if "intervalMin" in body:
+        if body["intervalMin"] not in (None, 5, 10, 15):
+            raise HTTPException(422, "The interval is 15, 10 or 5 minutes, or the household's.")
+        sets["interval_min"] = body["intervalMin"]
+    if "ownerId" in body:
+        oid = body["ownerId"]
+        known = oid is None or (isinstance(oid, str) and (oid == p["owner_id"] or conn.execute(
+            "SELECT 1 FROM users WHERE id = ?", (oid,)).fetchone()))
+        if not known:
+            raise HTTPException(422, "Choose someone who has opened the app.")
+        if oid != p["owner_id"]:
+            sets.update(owner_id=oid, owner_by_admin=1, fwd_on=0)       # forwarding is the owner's own choice
+            notes.append(f"Owner set to {phones.owner_name(conn, oid) or 'nobody'} by {admin['name']}.")
+    return sets, notes
+
+
+@router.post("/admin/phones/{pid}/monitor")
+def add_to_monitoring(pid: str, body: dict = Body(...), admin: dict = Depends(require_admin)):
+    """Add to monitoring (§2): {ownerId, name, kind: phone|tablet, intervalMin} in one go. From then on it is asked
+    to report when overdue, its alerts go out and its history is kept; its owner gets My phone, and decides about
+    forwarding there."""
+    body = body if isinstance(body, dict) else {}
+    keys = {"name", "kind", "intervalMin", "ownerId"}
+    if set(body) - keys:
+        raise HTTPException(422, f"Unknown field(s): {', '.join(sorted(set(body) - keys))}.")
+    if body.get("kind") not in ("phone", "tablet"):
+        raise HTTPException(422, "Choose Phone or Tablet.")
+    now = config.clock()
+    with db.get_conn() as conn:
+        p = phones.get(conn, pid)
+        if p is None:
+            raise HTTPException(404, "No such phone.")
+        if p["monitored"]:
+            raise HTTPException(409, "It is already monitored.")
+        sets, notes = _phone_fields(conn, p, body, admin)
+        owner = sets.get("owner_id", p["owner_id"])
+        sets.update(monitored=1, monitored_since=now, kind_confirmed=1, welcome=1 if owner else 0, status="unknown",
+                    status_reason=None, status_since=now, late_since=None, requests_sent=0, overdue_from=None,
+                    request_error=None, request_error_kind=None, stop_requested_at=None, low_battery_sent=0,
+                    last_reboot=phones.last_reboot(pid) or p["last_reboot"])      # no "restarted" alert for the past
+        level, chg = phones.battery(pid), phones.charging(pid)
+        if level is not None:
+            sets.update(battery=level, charging=None if chg is None else int(chg))
+        conn.execute("UPDATE phones SET " + ", ".join(f"{k} = ?" for k in sets) + " WHERE id = ?", (*sets.values(), pid))
+        phones.history(conn, pid, "owner", f"Added to monitoring by {admin['name']}.", by=admin["id"], now=now)
+        for n in notes:
+            phones.history(conn, pid, "owner", n, by=admin["id"], now=now)
+    monitor.WAKE.set()
+    from .api import phone
+    return phone(pid, admin)
+
+
+@router.post("/admin/phones/{pid}/unmonitor")
+def stop_monitoring(pid: str, body: dict = Body(...), admin: dict = Depends(require_admin)):
+    """Stop monitoring {keepHistory: bool}: it goes back to Available devices. Forwarding stops (the owner decides
+    again if it is added back). keepHistory false deletes its history, Check-now log and forward times too."""
+    keep = (body or {}).get("keepHistory") if isinstance(body, dict) else None
+    if not isinstance(keep, bool):
+        raise HTTPException(422, "Say whether to keep its history (keepHistory: true or false).")
+    now = config.clock()
+    with db.get_conn() as conn:
+        p = phones.get(conn, pid)
+        if p is None:
+            raise HTTPException(404, "No such phone.")
+        conn.execute("UPDATE phones SET monitored = 0, monitored_since = NULL, welcome = 0, fwd_on = 0, fwd_error = NULL, "
+                     "pause_kind = NULL, pause_until = NULL, pause_until_online = 0, pause_reason = NULL, pause_by = NULL, "
+                     "stop_requested_at = NULL, status = 'unknown', status_reason = 'not_monitored', status_since = ?, "
+                     "late_since = NULL, requests_sent = 0, overdue_from = NULL, request_error = NULL, "
+                     "request_error_kind = NULL WHERE id = ?", (now, pid))
+        conn.execute("DELETE FROM alert_queue WHERE phone_id = ?", (pid,))
+        conn.execute("DELETE FROM alert_state WHERE phone_id = ?", (pid,))
+        if keep:
+            phones.history(conn, pid, "owner", f"Monitoring stopped by {admin['name']} (history kept).", by=admin["id"],
+                           now=now)
+        else:
+            for t in ("history", "checks", "forwards"):
+                conn.execute(f"DELETE FROM {t} WHERE phone_id = ?", (pid,))
+            conn.execute("UPDATE phones SET last_checkin = NULL, last_spontaneous = NULL, last_request_at = NULL, "
+                         "battery = NULL, charging = NULL, answers_requests = NULL, redacted_at = NULL WHERE id = ?",
+                         (pid,))
+    monitor.WAKE.set()
+    return all_phones(admin)
 
 
 @router.post("/admin/phones/{pid}/keep")
@@ -224,9 +303,10 @@ def admin_person(uid: str, body: dict = Body(...), admin: dict = Depends(require
         if child and auth.user_dict(r)["is_admin"]:
             raise HTTPException(409, f"{r['name']} is an admin, and admins can't be marked as children.")
         conn.execute("UPDATE users SET is_child = ? WHERE id = ?", (int(child), uid))
-        if child:            # a child can't pause being watched (§9)
+        if child:            # a child can't pause being watched, nor have do-not-monitor hours (§9)
             conn.execute("UPDATE phones SET pause_kind = NULL, pause_until = NULL WHERE owner_id = ? AND "
                          "pause_kind = 'watching'", (uid,))
+            conn.execute("UPDATE phones SET dnm_windows = NULL WHERE owner_id = ?", (uid,))
     return admin_people(admin=admin)
 
 

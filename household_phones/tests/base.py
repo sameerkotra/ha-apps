@@ -79,13 +79,18 @@ class PhonesCase(unittest.TestCase):
             ha_people._cache.update(at=10**12, people=[{"entityId": f"person.{p['name'].lower()}", "state": "home",
                                                          "picture": None, **p} for p in people])
 
-    def add(self, name="Asha Pixel", user_id="u-asha", **kw) -> str:
-        """A Companion-app device in Home Assistant, discovered: its phone id."""
+    def add(self, name="Asha Pixel", user_id="u-asha", *, monitored=True, **kw) -> str:
+        """A Companion-app device in Home Assistant, discovered: its phone id. `monitored` (the default here): as if
+        an admin had added it long ago (no grace after adding); False leaves it under Available devices."""
         self.ha.add_device(name, user_id=user_id, **kw)
         res = phones.refresh(self.ha)
         self.assertTrue(res["ok"])
         with db.get_conn() as conn:
-            return conn.execute("SELECT id FROM phones WHERE ha_name = ?", (name,)).fetchone()["id"]
+            pid = conn.execute("SELECT id FROM phones WHERE ha_name = ?", (name,)).fetchone()["id"]
+            if monitored:
+                conn.execute("UPDATE phones SET monitored = 1, kind_confirmed = 1, status_reason = NULL WHERE id = ?",
+                             (pid,))
+        return pid
 
     def row(self, pid):
         with db.get_conn() as conn:

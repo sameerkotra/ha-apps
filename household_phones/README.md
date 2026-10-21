@@ -11,6 +11,7 @@ Assistant account: each person sees their own phone, admins see every phone. Opt
 one-time code…) are forwarded into Household Chat as disappearing messages. See the Documentation tab (DOCS.md) for
 the full guide.
 
+- **Only the phones an admin adds** are monitored; each owner can set **do-not-monitor hours**.
 - **My phone** — your phone's status, battery and last restart, a setup checklist, and exactly what admins can see.
 - **Check now** — "please respond" on demand: online, battery, network and the last forward, in seconds.
 - **All phones** (admins) — every phone's status, battery and network, and every sensor Home Assistant has for it.
@@ -18,5 +19,6 @@ the full guide.
   quiet hours and pauses; one alert when Home Assistant loses contact with all phones at once.
 - **Forward my messages** — the owner's choice: a phone's texts or codes into Household Chat, disappearing after an
   hour by default. The text is never stored by this app.
-- **Open about watching** — pause being watched, who checked your phone, and a request to stop watching.
+- **Open about monitoring** — pause being watched, do-not-monitor hours, who checked your phone, and a request to
+  stop monitoring.
 - **Admin** — App settings, people (children), alert tests, backup and restore.

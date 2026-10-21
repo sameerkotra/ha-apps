@@ -282,32 +282,6 @@ class Pauses(PhonesCase):
         page = self.get(f"/api/phones/{pid}", KID).json()
         self.assertTrue(page["adminsSee"])                                # still sees what admins see
 
-    def test_phone_quiet_times_hold_offline_alert(self):
-        self.people([{"name": "Ann", "userId": "u-ann", "phones": [{"label": "Ann", "tracker": "x", "service": "mobile_app_ann"}]}])
-        pid = self.add()
-        # T0 is 08:00 UTC; quiet 07:00–09:00
-        self.put(f"/api/phones/{pid}/mine", {"quietStart": "07:00", "quietEnd": "09:00"}, ASHA)
-        self.report(pid)
-        self.advance(30)
-        self.tick()
-        self.assertEqual(statuses(self, pid), "offline")
-        self.assertFalse([s for s in self.sent if "Offline" in s[1]])
-        self.advance(31)                                                  # 09:01, still offline
-        self.tick()
-        self.assertEqual(len([s for s in self.sent if "Offline" in s[1]]), 1)
-
-    def test_phone_quiet_alert_dropped_when_back_in_time(self):
-        self.people([{"name": "Ann", "userId": "u-ann", "phones": [{"label": "Ann", "tracker": "x", "service": "mobile_app_ann"}]}])
-        pid = self.add()
-        self.put(f"/api/phones/{pid}/mine", {"quietStart": "07:00", "quietEnd": "08:45"}, ASHA)
-        self.report(pid)
-        self.advance(30)
-        self.tick()
-        self.report(pid)                                                  # back at 08:30
-        self.advance(16)
-        self.tick()
-        self.assertFalse([s for s in self.sent if "Offline" in s[1]])
-
 
 class History(PhonesCase):
     def test_status_changes_are_kept_and_pruned(self):

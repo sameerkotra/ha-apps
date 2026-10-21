@@ -5,7 +5,7 @@ Assistant through the Home Assistant **Companion app**, by itself; Home Assistan
 is overdue, and **Check now** asks at once and shows the answer within seconds. Everyone opens the app from the
 sidebar with their own Home Assistant account: in **Phone mode** each person sees their own phone(s), and exactly what
 admins can see about them; in **Admin mode** admins see every phone and everything Home Assistant knows about it.
-Optionally, a phone's owner can forward its messages (a one-time code, a text) into **Household Chat** as
+No phone is monitored until an admin adds it. Optionally, a phone's owner can forward its messages (a one-time code, a text) into **Household Chat** as
 disappearing messages.
 
 There is no network ping: everything goes through the Companion app.
@@ -18,9 +18,13 @@ There is no network ping: everything goes through the Companion app.
 2. Add your Home Assistant user name to `admin_users` on the app's **Configuration** tab, save and restart the app —
    until then every page shows **No admin yet** with the name to add.
 3. Each person installs the **Home Assistant Companion app** on their phone and signs in to this Home Assistant. The
-   phone appears in **All phones** within a few minutes, under **New devices**: confirm its kind (Phone, Tablet or
-   Ignored). Its owner is the person whose Companion app registered it; correct it on the phone's page if needed.
-4. Each person opens **Phones** once, looks at **My phone**, and works through its **setup checklist**.
+   phone appears in **All phones** within a few minutes, under **Available devices** — not monitored yet: nothing
+   is asked of it and no alert goes out about it.
+4. An admin presses **Add to monitoring** on the phones to monitor and, in one dialog, checks the owner (the person
+   whose Companion app registered it), name, kind (Phone or Tablet) and check-in interval.
+5. Each person opens **Phones**, sees "Your phone is now monitored — set up forwarding if you want it" on **My
+   phone**, and works through the **setup checklist**. A phone that isn't added shows only "Your phone isn't
+   monitored — ask an admin".
 
 **How the app sees you** (the menu under your name, top right) shows who the app thinks you are and why you are (or
 aren't) an admin.
@@ -54,26 +58,48 @@ reports every minute (more battery) and is never asked.
 - **Can't check** — the request itself failed (Home Assistant couldn't reach the push service). Never counted as
   Offline: check remote access / Nabu Casa.
 - **Paused** — alerts are paused, or the owner paused being watched.
-- **Unknown** — just found, or not watched.
+- **Not monitored (until 07:00)** — the owner's do-not-monitor hours.
+- **Unknown** — just added, or not monitored.
 
 ### Avoiding false alarms
 
 - **After Home Assistant or this app starts**, no phone is marked Offline (and no offline alert goes out) until one
-  interval plus 12 minutes has passed; the page says "Starting — waiting for phones to check in".
-- **Lost contact:** when half or more of the watched phones (and at least 2) go quiet within 10 minutes, the problem
+  interval plus 12 minutes has passed; the page says "Starting — waiting for phones to check in". The same grace
+  applies to a phone just added to monitoring, and when its do-not-monitor hours end.
+- **Lost contact:** when half or more of the monitored phones (and at least 2) go quiet within 10 minutes, the problem
   is almost certainly at home (Home Assistant lost the internet, or the push service is down). The admins get **one**
   alert — "Home Assistant has lost contact with the phones (5 of 6 silent since 14:02)" — as a Home Assistant
   notification and on their phones; the single offline alerts wait until contact returns, and then only the phones
   still silent are reported.
 - **Pause alerts** for a phone (its owner or an admin): for 1, 4 or 12 hours, until a time, or until it's back online.
   Its status stays visible and Check now still works.
-- **Daily quiet times** (the owner, on the phone's page): e.g. 23:00–06:00 when it's often switched off. Offline and
-  battery alerts wait, and go out only if it is still offline when the quiet time ends.
+- **Do-not-monitor hours** (the owner, on the phone's page): see below.
+
+### Do-not-monitor hours
+
+The phone's owner can set times when it isn't monitored at all: one or more windows, each with days of the week and
+a start and end time in Home Assistant's time zone — e.g. Mon–Fri 22:00–07:00 and Sat–Sun 23:00–09:00 (a window
+can run past midnight). During a window:
+
+- no "please report" is sent, and **Check now** says "Not monitored right now — Asha set do-not-monitor hours until
+  07:00";
+- no alert of any kind goes out, and none is kept for later;
+- nothing is added to its history;
+- admins see only **Not monitored (until 07:00)** — no battery, network or other details.
+
+When a window ends, the phone gets the start-up grace (interval + 12 minutes) before it can be Offline. **Forwarding**
+goes on during a window if it's on (your own choice), unless you tick **Also pause forwarding** for that window.
+Admins see that you have do-not-monitor hours ("Not monitored weekdays 22:00–07:00") but can't change them. An admin
+App setting allows them (on by default) and limits them to 12 hours a day; the editor shows the limit. Children's
+phones can't have them. (They replace 1.0's daily quiet times, which were turned into a window on every day.)
 
 ## My phone
 
-Your phone's status ("Online · last check-in 6 min ago"), battery and charging, network and last restart, with
-**Check now**. **Settings, checklist and log** opens the phone's own page:
+Your monitored phone's status ("Online · last check-in 6 min ago"), battery and charging, network and last restart,
+with **Check now**. A phone of yours that no admin has added shows only "Your phone isn't monitored — ask an admin"
+(or, if it replaces an older monitored phone of yours, **Replaces <old phone>**). Right after an admin adds your
+phone, a card says "Your phone is now monitored — set up forwarding if you want it", with the checklist.
+**Settings, checklist and log** opens the phone's own page:
 
 - **Pause** — alerts (above), or **pause being watched** for up to 24 hours (adults only; App setting): no requests,
   no alerts, and admins see only "Paused by <you> until 18:00".
@@ -83,12 +109,12 @@ Your phone's status ("Online · last check-in 6 min ago"), battery and charging,
   so a phone where nothing changed might not answer otherwise — ticked once the phone has answered a request);
   battery use *Unrestricted*; and for forwarding on Android 15+, letting the Home Assistant app read one-time codes.
 - **Forward my messages** — see below.
-- **Quiet times for this phone.**
+- **Do-not-monitor hours** — see above.
 - **What admins see** — the exact list, **Share my last place** (off by default: the zone is shown to admins and in
   offline alerts only when on), **Who checked your phone** and **Alerts about your phone**.
 - **A new phone?** — when you have an older phone too: **Replaces <old phone>** moves its name, settings, forwarding
   and history here and retires the old one.
-- **Stop watching my phone** — sends the admins a request.
+- **Stop monitoring my phone** — sends the admins a request.
 
 Below your phones: **Phones that forward into your chats** — a **Check <owner>'s phone** button for each phone that
 forwards into a chat you're in (you see only the Check-now result), and your own **quiet hours for alerts you
@@ -113,26 +139,31 @@ and the **Household Assistant** ("check Asha's phone") open.
 
 ## All phones (admins)
 
-A summary strip (phones, online, offline, late, paused), **New devices** to confirm, **Not used lately** (no check-in
-for 30 days: **Keep** or **Remove** — its history goes with it; nothing is removed by itself), then the phones,
-problems first: status and last check-in, owner and model, battery, network and app version, with ⋯ (Check now, Pause
-alerts, Edit, Stop watching). Tablets come after; ignored devices behind **Show ignored**. **Read Home Assistant
+A summary strip of the monitored phones (monitored, online, offline, late, paused), **Not used lately** (no check-in
+for 30 days: **Keep** or **Remove** — its history goes with it; nothing is removed by itself), then the monitored
+phones, problems first: status and last check-in, owner and model, battery, network and app version, the owner's
+do-not-monitor hours, with ⋯ (Check now, Pause alerts, Edit, Stop monitoring). Tablets come after. Then **Available
+devices**: every Companion-app device not monitored, with a guess of its kind (phone, tablet, or watch and the like),
+and **Add to monitoring** (owner, name, kind and interval in one dialog). **Stop monitoring** asks whether to keep or
+delete the phone's history, switches forwarding off, and puts it back under Available devices. **Read Home Assistant
 again** reads the devices now (it also happens every few minutes and whenever Home Assistant's devices change).
 
 A **phone's page** shows the device (manufacturer, model, Android/iOS version, Companion app version, owner, kind),
-its settings (name, kind, watched, its own interval, owner, and the notify service if Home Assistant names it
+its settings (name, kind, its own interval, owner, and the notify service if Home Assistant names it
 differently from `notify.mobile_app_<device name>`), **every enabled sensor** grouped (Battery, Network, Activity,
 Storage, Location zone, Last reboot and updates, Other — notification texts are never shown), the sensors that are
 **off on the phone**, and its **history** (status changes, restarts, Check now, pauses and alerts, with the battery
-at each change). A phone whose owner paused being watched shows only "Paused by …".
+at each change). A phone whose owner paused being watched shows only "Paused by …"; one in its do-not-monitor hours only "Not
+monitored (until …)".
 
 ## Forwarding messages into Household Chat
 
 The phone's **Last notification** sensor (Android) changes with every new notification: each one from an allowed app
 is forwarded at once as one Chat message, e.g. "📱 Asha's Pixel · Messages · 14:02", then the sender and the text.
 
-- **Only the owner** switches **Forward my messages** on, on their phone's page; an admin can't do it for someone else
-  (and the admin's App setting can switch forwarding off for the whole household).
+- **Only the owner** switches **Forward my messages** on, on their phone's page, once an admin has added the phone to
+  monitoring; an admin can't do it for someone else (and the admin's App setting can switch forwarding off for the
+  whole household). It keeps working during your do-not-monitor hours unless a window pauses it.
 - **Where:** your own 📌 My room by default, or a group or direct chat you belong to (an admin can limit this). For a
   group the page shows how many people will see your forwards; a small group just for this ("Phone codes") is best.
 - **Disappears after** 1 hour by default (1 day, 7 days or 30 days).
@@ -183,7 +214,8 @@ In App settings, each alert on or off with its recipients (admins, the phone's o
 - **Charging reminder at night** (off by default) — at 22:00, each phone below 30% and not charging; optionally to
   the phone itself too.
 
-Each alert goes once per phone per 30 minutes (cooldown), waits for the recipient's quiet hours (theirs from My
+Alerts are only about monitored phones, and never during their do-not-monitor hours. Each alert goes once per phone
+per 30 minutes (cooldown), waits for the recipient's quiet hours (theirs from My
 phone, or the household's), and never goes to the phone it is about (except the charging reminder, if chosen). It is
 delivered to the recipients' phones (Home Assistant → Settings → People → Track device, plus any extra notify service
 added under Admin → People), as a Home Assistant notification, and/or into each recipient's 📌 My room in Household
@@ -192,9 +224,12 @@ forward to your own My room.
 
 ## Who can see what, and where your data goes
 
-- Everyone sees their own phones and exactly what admins see about them; admins see every phone except while its
-  owner pauses being watched. People in a phone's forwarding chat see only Check now's result.
-- **Children** (marked under Admin → People) can't pause being watched; they still see what admins see and the log.
+- Only the phones an admin added are monitored. Everyone sees their own phones and exactly what admins see about them
+  (including that admins see your do-not-monitor hours but can't change them); admins see every monitored phone
+  except while its owner pauses being watched or is in their do-not-monitor hours. People in a phone's forwarding chat
+  see only Check now's result.
+- **Children** (marked under Admin → People) can't pause being watched or set do-not-monitor hours; they still see
+  what admins see and the log.
 - The zone is shown only when the owner turns on **Share my last place**; coordinates never.
 - Forwarded texts go only into Household Chat; this app keeps the time and the chat. Nothing leaves your Home
   Assistant except the Companion app's push for "please report" (through its push service) and what you post into
@@ -204,7 +239,7 @@ forward to your own My room.
 
 ### App settings (Admin → App settings)
 
-- **Phones:** guess the kind of new devices (on); "Not used lately" after 30 days.
+- **Phones:** guess the kind of devices (on); "Not used lately" after 30 days.
 - **Check-in:** interval (15, 10 or 5 minutes), ask after (2 minutes overdue), wait for a reply (5 minutes), requests
   before Offline (2), start-up grace (12 minutes after one interval), recognise lost contact (on: half the phones,
   at least 2, within 10 minutes).
@@ -214,7 +249,8 @@ forward to your own My room.
   last place in offline alerts (off), cooldown (30 minutes), delivery, quiet hours.
 - **Forwarding:** allowed (on), default disappear time (1 hour), which chats owners may choose, the default messaging
   apps, the starting filter for a group (codes only).
-- **Transparency:** adults may pause being watched (on), longest pause (24 hours).
+- **Transparency:** adults may pause being watched (on), longest pause (24 hours), owners may set do-not-monitor
+  hours (on), at most 12 hours a day.
 - **History:** kept 7 days.
 - **Home Assistant:** sensors in Home Assistant (off), answer the Household Assistant (on), the App-messages signing
   key (the same in every household app).
@@ -228,9 +264,9 @@ Restart the app after changing it.
 
 ### Sensors in Home Assistant (optional, off by default)
 
-- `binary_sensor.phones_<phone>_online` (connectivity): on while the phone is Online; attributes status, battery,
-  last check-in. Unavailable while its owner pauses being watched.
-- `sensor.phones_online_count`: watched phones online (attribute `total`).
+- `binary_sensor.phones_<phone>_online` (connectivity, monitored phones): on while the phone is Online; attributes
+  status, battery, last check-in. Unavailable while its owner pauses being watched or is in do-not-monitor hours.
+- `sensor.phones_online_count`: monitored phones online (attribute `total`).
 - **Check now from Home Assistant:** Home Assistant doesn't let an app create a button entity through its API, so
   instead fire the event `household_phones_check_now` with the phone's id (from its address, `#/phone/<id>`) or the
   `<phone>` part of its sensor's entity id. The result comes back as the event `household_phones_check_result`
@@ -252,8 +288,9 @@ switch is turned off.
 ### The Household Assistant
 
 "Is my phone online?", "which phones are offline?", "what's Asha's phone battery?" and "check Asha's phone" (runs
-Check now and links to the result). Admins can ask about any phone, everyone else about their own and the phones that
-forward into their chats; a paused phone answers "paused by <owner>". Forwarded messages are never answered.
+Check now and links to the result). Admins can ask about any monitored phone, everyone else about their own and the
+phones that forward into their chats; a paused phone answers "paused by <owner>", one in do-not-monitor hours "not
+monitored until 07:00". Forwarded messages are never answered.
 
 ## Backups
 
@@ -265,6 +302,7 @@ Assistant's own backups include the app's data too.
 
 - **A phone doesn't appear:** the Companion app must be installed and signed in to this Home Assistant (Settings →
   Devices & services → Mobile App lists it). **Read Home Assistant again** on All phones.
+- **"Your phone isn't monitored":** an admin adds it under All phones → Available devices → Add to monitoring.
 - **Can't check:** Home Assistant couldn't send the request — check remote access (Home Assistant Cloud / Nabu Casa,
   or your own remote address) and that the Companion app can reach Home Assistant away from home.
 - **App not reporting (signed out):** open the Companion app and sign in again. If Home Assistant names the phone's

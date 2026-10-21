@@ -2,9 +2,9 @@
  *
  * Views (the address's #fragment, so a reload stays where it was):
  *   #/               My phone: your phones, and Check <owner>'s phone for phones that forward into your chats
- *   #/mine/<id>      one of your phones: pauses, quiet times, the setup checklist, what admins see, the log, forwarding
+ *   #/mine/<id>      one of your phones: pauses, do-not-monitor hours, the checklist, what admins see, the log, forwarding
  *   #/check/<id>     Check now's live result (Household Chat and the Household Assistant link here)
- *   #/phones         admins: All phones
+ *   #/phones         admins: All phones (the monitored ones, and Available devices to add to monitoring)
  *   #/phone/<id>     admins: a phone's page (every sensor, history, its settings)
  *   #/admin/<tab>    admins: App settings, People, Tests, Storage
  * Everything is built with DOM nodes (UI.h): names and texts are never parsed as HTML.
@@ -20,7 +20,7 @@
   const toast = (msg, error) => UI.toast(msg, { error: !!error });
   const openModal = (title, content, opts) => UI.openModal(title, content, Object.assign({ escape: "stack" }, opts || {}));
 
-  const state = { me: null, view: "my", adminTab: "settings", timers: [], showIgnored: false };
+  const state = { me: null, view: "my", adminTab: "settings", timers: [] };
   const isAdmin = () => !!(state.me && state.me.user.isAdmin);
 
   HouseholdTheme.bindSelect($("#theme-select"));
@@ -172,12 +172,13 @@
     try { r = await api("api/my"); } catch (e) { mount(clear(box), UI.errorBox(e, openMy)); return; }
     if (state.view !== "my") return;
     clear(box);
-    if (!r.phones.length) {
+    if (!r.phones.length && !r.unmonitored.length) {
       add(box, UI.empty("No phone of yours yet",
-        "Install the Home Assistant Companion app on your phone and sign in to this Home Assistant: your phone shows up " +
-        "here within a few minutes. (A phone of yours listed under someone else? Ask an admin to set its owner.)"));
+        "Install the Home Assistant Companion app on your phone and sign in to this Home Assistant, then ask an admin " +
+        "to add it to monitoring. (A phone of yours listed under someone else? Ask an admin to set its owner.)"));
     }
     for (const s of r.phones) add(box, myCard(s));
+    for (const u of r.unmonitored) add(box, unmonitoredCard(u));
     if (r.others.length) {
       add(box, h("h3", { class: "section-title" }, "Phones that forward into your chats"));
       for (const o of r.others) {
@@ -202,8 +203,23 @@
     } catch (e) { /* the next round tries again */ }
   }
 
+  // a phone of yours no admin has added: only that, no details (§2)
+  function unmonitoredCard(u) {
+    return h("div", { class: "card my-card unmonitored" },
+      h("div", { class: "phone-name" }, u.name),
+      h("p", { class: "note" }, "Your phone isn't monitored — ask an admin."),
+      u.replaces.length ? h("div", null, h("p", { class: "hint small" }, "Or, if it replaces an older phone of yours, its monitoring and settings move over:"),
+        h("div", { class: "chips" }, u.replaces.map((o) => h("button", { type: "button", class: "chip-btn", onclick: async () => {
+          if (!await UI.confirmDialog(`Replaces ${o.name}?`, `${o.name}'s name, settings, forwarding rules and history move to this phone, and it is monitored instead.`, { okLabel: "Replace" })) return;
+          try { await api(`api/phones/${u.id}/replaces`, { method: "POST", body: { old: o.id } }); toast("Done"); openMy(); }
+          catch (e) { toast(e.message, true); }
+        } }, `Replaces ${o.name}`)))) : null);
+  }
+
   function myCard(s) {
     return h("div", { class: "card my-card", dataset: { id: s.id } },
+      s.welcome ? h("p", { class: "note" }, "Your phone is now monitored — set up forwarding if you want it. ",
+        h("a", { href: `#/mine/${s.id}` }, "Open the checklist ›")) : null,
       h("div", { class: "card-head" },
         h("div", null, h("div", { class: "phone-name" }, s.name), statusLine(s)),
         h("button", { type: "button", class: "btn-primary", onclick: () => runCheck(s.id) }, "Check now")),
@@ -211,7 +227,7 @@
       s.paused ? h("p", { class: "note" }, s.paused.kind === "watching" ? `You paused being watched ${s.paused.untilText}.`
         : `Alerts paused ${s.paused.untilText}.`) : null,
       facts([batteryText(s), s.network ? `📶 ${s.network}` : null, s.lastReboot ? `🔄 last restart ${s.lastReboot.replace("T", " ").slice(0, 16)}` : null,
-        s.forwarding ? "💬 forwarding on" : null]),
+        s.forwarding ? "💬 forwarding on" : null, s.dnmText ? `🌙 ${s.dnmText}` : null]),
       h("div", { class: "card-actions" }, h("a", { class: "btn-secondary", href: `#/mine/${s.id}` }, "Settings, checklist and log ›")));
   }
 
@@ -233,9 +249,13 @@
     const box = $("#mineBody");
     UI.loading(box);
     let p;
-    try { p = await api(`api/phones/${id}`); } catch (e) { mount(clear(box), UI.errorBox(e, () => openMine(id))); return; }
+    try { p = await api(`api/phones/${id}`); }
+    catch (e) {
+      if (e.status === 409) { mount(clear(box), UI.empty("Not monitored", e.message, { label: "‹ My phone", onclick: () => go("#/") })); return; }
+      mount(clear(box), UI.errorBox(e, () => openMine(id))); return;
+    }
     if (state.view !== "mine") return;
-    if (!p.mine) { replace(`#/phone/${id}`); return; }
+    if (!p.mine || !p.monitored) { replace(`#/phone/${id}`); return; }
     renderMine(p);
   }
 
@@ -249,20 +269,18 @@
         h("button", { type: "button", class: "btn-primary", onclick: () => runCheck(p.id) }, "Check now")),
         p.reasonText ? h("p", { class: "note warn" }, p.reasonText) : null,
         facts([batteryText(p), p.network ? `📶 ${p.network}` : null, p.lastReboot ? `🔄 last restart ${String(p.lastReboot).replace("T", " ").slice(0, 16)}` : null])),
+      p.welcome ? welcomeCard(p, todo) : null,
       pauseCard(p, again),
-      checklistCard(p, todo),
+      p.welcome ? null : checklistCard(p, todo),
       forwardingCard(p, again),
-      h("div", { class: "card" }, h("h3", null, "🔕 Quiet times for this phone"),
-        quietForm(p.quietStart, p.quietEnd, async (qs, qe) => {
-          await api(`api/phones/${p.id}/mine`, { method: "PUT", body: { quietStart: qs, quietEnd: qe } }); toast("Saved");
-        }, "When it is often switched off (e.g. 23:00–06:00): offline and battery alerts wait, and go out only if it is still offline when the quiet time ends.")),
+      dnmCard(p),
       transparencyCard(p, again),
       p.replaceable.length ? replaceCard(p, again) : null,
-      h("div", { class: "danger-zone" }, h("h3", null, "Stop watching my phone"),
-        h("p", { class: "hint" }, p.stopRequested ? "You asked the admins to stop watching this phone." :
-          "Sends the admins a request to stop watching this phone altogether."),
+      h("div", { class: "danger-zone" }, h("h3", null, "Stop monitoring my phone"),
+        h("p", { class: "hint" }, p.stopRequested ? "You asked the admins to stop monitoring this phone." :
+          "Sends the admins a request to stop monitoring this phone altogether."),
         p.stopRequested ? null : h("button", { type: "button", class: "btn-danger-outline", onclick: async () => {
-          if (!await UI.confirmDialog("Ask to stop watching?", "The admins get your request; they decide.", { okLabel: "Send the request" })) return;
+          if (!await UI.confirmDialog("Ask to stop monitoring?", "The admins get your request; they decide.", { okLabel: "Send the request" })) return;
           try { renderMine(await api(`api/phones/${p.id}/stop-request`, { method: "POST" })); toast("Sent to the admins"); }
           catch (e) { toast(e.message, true); }
         } }, "Send the request")));
@@ -279,6 +297,74 @@
         qs.value = ""; qe.value = "";
         try { await save("", ""); } catch (e) { toast(e.message, true); }
       } }, "No quiet time")));
+  }
+
+  // just added by an admin: what happens now, and the next step (forwarding is the owner's own choice)
+  function welcomeCard(p, todo) {
+    return h("div", { class: "card welcome" }, h("h3", null, "✅ Your phone is now monitored — set up forwarding if you want it"),
+      h("p", { class: "hint" }, "An admin added this phone. It checks in by itself; work through the checklist so that works. " +
+        "Forwarding your messages into Household Chat is up to you: it stays off unless you switch it on below."),
+      checklistCard(p, todo, true),
+      h("div", { class: "card-actions" },
+        h("button", { type: "button", class: "btn-primary", onclick: () => {
+          const f = document.getElementById("forwarding-card");
+          if (f) f.scrollIntoView({ behavior: "smooth", block: "start" });
+        } }, "Set up forwarding"),
+        h("button", { type: "button", class: "btn-ghost", onclick: async () => {
+          try { renderMine(await api(`api/phones/${p.id}/mine`, { method: "PUT", body: { welcomeSeen: true } })); }
+          catch (e) { toast(e.message, true); }
+        } }, "Got it")));
+  }
+
+  // ---------- do-not-monitor hours (the owner's own; admins only see that they exist) ----------
+  const DAY_NAMES = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+  function dnmCard(p) {
+    const d = p.dnm;
+    const c = h("div", { class: "card", id: "dnm-card" }, h("h3", null, "🌙 Do-not-monitor hours"));
+    if (!d.allowed) {
+      add(c, h("p", { class: "hint" }, "Not available for this phone: turned off in this household, or it's a child's phone."));
+      return c;
+    }
+    if (d.active) add(c, h("p", { class: "note" }, `Not monitored right now, until ${d.active.untilText}${d.active.pauseForwarding ? " — forwarding paused too" : ""}.`));
+    add(c, h("p", { class: "hint one-line" }, `Times when this phone isn't monitored at all. At most ${d.maxHours} hours a day.`),
+      h("details", { class: "about" }, h("summary", null, "What happens then"),
+        h("p", { class: "hint" }, "No \"please report\" requests and no Check now; no alerts, not even later; nothing in its history. " +
+          "Admins see only \"Not monitored (until 07:00)\" and that you set these hours — they can't change them. " +
+          "Forwarding goes on unless you pause it for that window. Afterwards it gets the same grace as after a restart before it can be Offline.")));
+    const rows = h("div", { class: "dnm-list" });
+    const list = d.windows.map((w) => Object.assign({}, w, { days: w.days.slice() }));
+    const draw = () => {
+      clear(rows);
+      if (!list.length) add(rows, h("p", { class: "hint" }, "None: it's monitored all the time."));
+      list.forEach((w, i) => {
+        const start = h("input", { type: "time", value: w.start, "aria-label": "From", onchange: () => { w.start = start.value; } });
+        const end = h("input", { type: "time", value: w.end, "aria-label": "Until", onchange: () => { w.end = end.value; } });
+        const pf = h("input", { type: "checkbox", checked: w.pauseForwarding, onchange: () => { w.pauseForwarding = pf.checked; } });
+        add(rows, h("div", { class: "dnm-window" },
+          h("div", { class: "chips day-chips", role: "group", "aria-label": "Days" }, DAY_NAMES.map((n, di) => h("button", {
+            type: "button", class: "chip-btn day" + (w.days.includes(di) ? " on" : ""), "aria-pressed": w.days.includes(di) ? "true" : "false",
+            onclick: (e) => {
+              const on = !w.days.includes(di);
+              w.days = on ? w.days.concat([di]).sort() : w.days.filter((x) => x !== di);
+              e.currentTarget.classList.toggle("on", on);
+              e.currentTarget.setAttribute("aria-pressed", on ? "true" : "false");
+            } }, n))),
+          h("div", { class: "grid2" }, field("From", start), field("Until", end, "Earlier than From: runs past midnight.")),
+          h("label", { class: "check" }, pf, "Also pause forwarding"),
+          h("div", { class: "card-actions" }, h("button", { type: "button", class: "btn-ghost", onclick: () => { list.splice(i, 1); draw(); } }, "Remove this window"))));
+      });
+    };
+    draw();
+    add(c, rows, h("div", { class: "card-actions" },
+      h("button", { type: "button", class: "btn-secondary", onclick: () => {
+        if (list.length >= 7) { toast("At most 7 windows", true); return; }
+        list.push({ days: [0, 1, 2, 3, 4], start: "22:00", end: "07:00", pauseForwarding: false }); draw();
+      } }, "+ Add a window"),
+      h("button", { type: "button", class: "btn-primary", onclick: async () => {
+        try { renderMine(await api(`api/phones/${p.id}/dnm`, { method: "PUT", body: { windows: list } })); toast("Saved"); }
+        catch (e) { toast(e.message, true); }
+      } }, "Save")));
+    return c;
   }
 
   function pauseCard(p, again) {
@@ -316,9 +402,9 @@
     return c;
   }
 
-  function checklistCard(p, todo) {
+  function checklistCard(p, todo, inner) {
     const mark = (ok) => ok === true ? "✅" : ok === false ? "⚠️" : "•";
-    return h("details", { class: "card", open: todo ? true : null },
+    return h("details", { class: inner ? "fold" : "card", open: todo || inner ? true : null },
       h("summary", { class: "h3-like" }, h("strong", null, `🧰 Setup checklist${todo ? ` — ${todo} to fix` : ""}`)),
       h("ul", { class: "checklist" }, p.checklist.map((c) => h("li", null, h("span", { class: "mark", "aria-label": c.ok === true ? "done" : c.ok === false ? "to fix" : "check" }, mark(c.ok)),
         h("div", null, h("div", { class: "item-title" }, c.title), h("div", { class: "hint small" }, c.help),
@@ -356,7 +442,7 @@
   const DISAPPEAR = [["1h", "1 hour"], ["1d", "1 day"], ["7d", "7 days"], ["30d", "30 days"]];
   function forwardingCard(p, again) {
     const f = p.forwarding;
-    const c = h("div", { class: "card" }, h("h3", null, "💬 Forward my messages"));
+    const c = h("div", { class: "card", id: "forwarding-card" }, h("h3", null, "💬 Forward my messages"));
     if (p.ios) { add(c, h("p", { class: "hint" }, "iPhones can't forward messages: the Companion app has no Last notification sensor there.")); return c; }
     if (!f.allowed) { add(c, h("p", { class: "hint" }, "Forwarding is turned off in this household.")); return c; }
     const save = async (body, msg) => {
@@ -448,6 +534,11 @@
     let cid;
     try { cid = (await api(`api/phones/${id}/check`, { method: "POST" })).check; }
     catch (e) {
+      if (e.status === 409 && /^Not monitored right now/.test(e.message)) {
+        mount(clear(box), h("div", { class: "card check-card" }, h("div", { class: "check-title dnm", role: "status" }, "🌙 Not monitored right now"),
+          h("p", null, e.message), h("p", { class: "hint" }, "Nothing is sent to the phone during do-not-monitor hours.")));
+        return;
+      }
       if (e.status === 429 || e.status === 409) {
         try {
           const last = await api(`api/check/${id}/latest`);
@@ -526,17 +617,13 @@
   function renderPhones(r) {
     const box = clear($("#phonesBody"));
     const s = r.summary;
-    add(box, h("div", { class: "summary-strip", "aria-label": `${s.phones} phones, ${s.online} online, ${s.offline} offline, ${s.paused} paused` },
-      kpi("Phones", s.phones), kpi("Online", s.online, "pos"), kpi("Offline", s.offline, s.offline ? "neg" : ""),
+    add(box, h("div", { class: "summary-strip", "aria-label": `${s.phones} monitored, ${s.online} online, ${s.offline} offline, ${s.paused} paused or in do-not-monitor hours` },
+      kpi("Monitored", s.phones), kpi("Online", s.online, "pos"), kpi("Offline", s.offline, s.offline ? "neg" : ""),
       kpi("Late", s.late), kpi("Paused", s.paused)));
     if (r.lostContact) {
       add(box, h("p", { class: "note bad" }, `Home Assistant has lost contact with the phones (${r.lostContact.silent} of ${r.lostContact.total} silent since ${hhmm(r.lostContact.since)}). Offline alerts wait until contact returns.`));
     }
     if (!r.haLoaded) add(box, h("p", { class: "note warn" }, "Home Assistant's devices haven't been read yet (or can't be: is the app running inside Home Assistant?)."));
-    if (r.new.length) {
-      add(box, h("h3", { class: "section-title" }, `New devices (${r.new.length})`));
-      add(box, h("div", { class: "strip-cards" }, r.new.map((p) => newDevice(p))));
-    }
     if (r.unused.length) {
       add(box, h("h3", { class: "section-title" }, "Not used lately"));
       add(box, h("div", { class: "card" }, r.unused.map((p) => h("div", { class: "new-device" },
@@ -548,8 +635,9 @@
         } }, "Remove")))));
     }
     if (!r.phones.length && !r.tablets.length) {
-      add(box, UI.empty("No phones yet", "Phones appear once the Home Assistant Companion app is installed and signed in on them.",
-        { label: "↻ Read Home Assistant again", onclick: () => $("#refreshBtn").click() }));
+      add(box, r.available.length ? UI.empty("No phone is monitored yet", "Add the phones to monitor from Available devices below: nothing is asked of a device, and no alert goes out about it, until you do.")
+        : UI.empty("No phones yet", "Phones appear once the Home Assistant Companion app is installed and signed in on them.",
+          { label: "↻ Read Home Assistant again", onclick: () => $("#refreshBtn").click() }));
     }
     const list = (title, items) => {
       if (!items.length) return;
@@ -558,11 +646,11 @@
     };
     list("Phones", r.phones);
     list("Tablets", r.tablets);
-    if (r.ignored.length) {
-      const b = h("button", { type: "button", class: "link-btn", onclick: () => { state.showIgnored = !state.showIgnored; renderPhones(r); } },
-        state.showIgnored ? "Hide ignored" : `Show ignored (${r.ignored.length})`);
-      add(box, h("p", null, b));
-      if (state.showIgnored) list("Ignored", r.ignored);
+    if (r.available.length) {
+      add(box, h("div", { class: "card", id: "available" }, h("div", { class: "ui-group-head" }, h("span", null, "Available devices"),
+        h("span", { class: "ui-group-total" }, String(r.available.length))),
+        h("p", { class: "hint one-line" }, "Found in Home Assistant, not monitored: never asked to report, no alerts, no history."),
+        h("div", { class: "phone-list" }, r.available.map(availableRow))));
     }
     add(box, h("details", { class: "about" }, h("summary", null, "Setup notes"),
       h("p", null, `Check-ins come from ${r.checkins === "events" ? "Home Assistant's state_reported events" : "a once-a-minute look at the phones' last_reported times (Home Assistant hasn't sent state_reported events)"}.`),
@@ -571,15 +659,58 @@
       h("p", null, r.connected.chat ? "Household Chat is connected." : "Household Chat isn't connected: forwarding and 📱 Check phone in Chat need it.")));
   }
 
-  function newDevice(p) {
-    const kind = h("select", { "aria-label": `Kind of ${p.name}` }, [["phone", "Phone (watched)"], ["tablet", "Tablet (shown, not watched)"], ["ignored", "Ignored (hidden)"]]
-      .map(([v, l]) => h("option", { value: v, selected: v === p.kind ? true : null }, l)));
-    return h("div", { class: "card new-device" },
-      h("div", { class: "grow" }, h("div", { class: "phone-name" }, p.name), h("div", { class: "dim small" }, [p.manufacturer, p.model, p.owner ? `owner ${p.owner}` : "no owner yet"].filter(Boolean).join(" · "))),
-      kind, h("button", { type: "button", class: "btn-primary", onclick: async () => {
-        try { await api(`api/admin/phones/${p.id}`, { method: "PUT", body: { kind: kind.value, confirm: true } }); loadPhones(); }
-        catch (e) { toast(e.message, true); }
-      } }, "Confirm"));
+  function availableRow(a) {
+    return h("div", { class: "phone-row available-row" },
+      h("div", { class: "row-main" }, h("div", { class: "phone-name" }, a.name),
+        h("div", { class: "dim small" }, [`${a.kindGuess} (guess)`, a.owner ? `owner ${a.owner}` : "no owner yet", [a.manufacturer, a.model].filter(Boolean).join(" "),
+          a.inRegistry ? null : "gone from Home Assistant"].filter(Boolean).join(" · "))),
+      h("button", { type: "button", class: "btn-secondary", onclick: () => addDialog(a) }, "Add to monitoring"));
+  }
+
+  // Add to monitoring: owner (from discovery), name, kind and interval in one go
+  async function addDialog(a, after) {
+    const people = await peopleList();
+    const opts = people.map((p) => [p.id, p.name]);
+    if (a.ownerId && !opts.some(([id]) => id === a.ownerId)) opts.unshift([a.ownerId, a.owner || "The person Home Assistant says"]);
+    const owner = h("select", null, [h("option", { value: "" }, "Nobody")].concat(opts.map(([id, n]) =>
+      h("option", { value: id, selected: id === a.ownerId ? true : null }, n))));
+    const name = h("input", { type: "text", maxlength: "60", value: a.nameOwn || "", placeholder: a.name });
+    const kind = h("select", null, [["phone", "Phone"], ["tablet", "Tablet"]].map(([v, l]) =>
+      h("option", { value: v, selected: (a.kind === "tablet" ? "tablet" : "phone") === v ? true : null }, l)));
+    const interval = h("select", null, [["", "The household's"], ["15", "15 minutes"], ["10", "10 minutes"], ["5", "5 minutes"]]
+      .map(([v, l]) => h("option", { value: v, selected: String(a.intervalOwn || "") === v ? true : null }, l)));
+    let dlg = null;
+    const ok = h("button", { type: "button", class: "btn-primary", onclick: async () => {
+      ok.disabled = true;
+      try {
+        await api(`api/admin/phones/${a.id}/monitor`, { method: "POST", body: { ownerId: owner.value || null, name: name.value,
+          kind: kind.value, intervalMin: interval.value ? Number(interval.value) : null } });
+        dlg.close(); toast(`${name.value || a.name} is monitored`); (after || loadPhones)();
+      } catch (e) { ok.disabled = false; toast(e.message, true); }
+    } }, "Add to monitoring");
+    dlg = openModal(`Add ${a.name} to monitoring`, h("div", { class: "form" },
+      h("p", { class: "hint" }, `Home Assistant's guess: ${a.kindGuess}. From now on it is asked to report when overdue, its alerts go out and its history is kept. Its owner sees it on My phone and decides about forwarding there.`),
+      field("Owner", owner, "Who Home Assistant says registered it; change it if that's wrong."),
+      field("Name", name, "Empty: \"<owner>'s <model>\"."),
+      h("div", { class: "grid2" }, field("Kind", kind), field("Check-in interval", interval)),
+      h("div", { class: "actions" }, h("button", { type: "button", class: "btn-ghost", onclick: () => dlg.close() }, "Cancel"), ok)));
+  }
+
+  // Stop monitoring: back to Available devices; keep or delete its history (asked)
+  function stopDialog(s, after) {
+    let dlg = null;
+    const keep = h("input", { type: "radio", name: "keep-history", value: "keep", checked: true });
+    const drop = h("input", { type: "radio", name: "keep-history", value: "delete" });
+    dlg = openModal(`Stop monitoring ${s.name}?`, h("div", { class: "form" },
+      h("p", null, "It goes back to Available devices: no requests, no alerts, no new history. Forwarding stops; if it is added again, its owner decides again."),
+      h("div", { class: "radio-list", role: "radiogroup", "aria-label": "Its history" },
+        h("label", { class: "check" }, keep, "Keep its history (status changes, checks, alerts)"),
+        h("label", { class: "check" }, drop, "Delete its history, Check-now log and forward times")),
+      h("div", { class: "actions" }, h("button", { type: "button", class: "btn-ghost", onclick: () => dlg.close() }, "Cancel"),
+        h("button", { type: "button", class: "btn-danger-outline", onclick: async () => {
+          try { await api(`api/admin/phones/${s.id}/unmonitor`, { method: "POST", body: { keepHistory: keep.checked } }); dlg.close(); toast("No longer monitored"); after(); }
+          catch (e) { toast(e.message, true); }
+        } }, "Stop monitoring"))));
   }
 
   async function adminAction(path, method, body) {
@@ -592,7 +723,8 @@
       h("button", { type: "button", class: "row-open", onclick: () => go(`#/phone/${s.id}`) },
         dot(s.status),
         h("div", { class: "row-main" }, h("div", { class: "phone-name" }, s.name),
-          h("div", { class: "dim small" }, s.hidden ? sub : `${s.label}${s.lastCheckinText ? ` · ${s.lastCheckinText}` : ""} · ${sub}`)),
+          h("div", { class: "dim small" }, s.hidden ? sub : `${s.label}${s.lastCheckinText ? ` · ${s.lastCheckinText}` : ""} · ${sub}`),
+          s.dnmText ? h("div", { class: "dim small" }, `🌙 ${s.dnmText}`) : null),
         s.hidden ? null : h("div", { class: "row-cols" }, h("span", null, batteryText(s) || "—"), h("span", null, s.network || "—"),
           h("span", null, s.appVersion || s.osVersion || ""))),
       moreBtn(`More for ${s.name}`, () => [
@@ -600,11 +732,7 @@
         { label: "⏸️ Pause alerts for 4 hours", disabled: s.hidden || !!s.paused, onclick: async () => {
           try { await api(`api/phones/${s.id}/pause`, { method: "POST", body: { kind: "alerts", hours: 4 } }); loadPhones(); } catch (e) { toast(e.message, true); } } },
         { label: "✏️ Edit", onclick: () => go(`#/phone/${s.id}`) },
-        s.watched ? { label: "Stop watching", danger: true, onclick: async () => {
-          if (!await UI.confirmDialog(`Stop watching ${s.name}?`, "No requests and no alerts for it; it stays listed.", { okLabel: "Stop watching", danger: true })) return;
-          try { await api(`api/admin/phones/${s.id}`, { method: "PUT", body: { watched: false } }); loadPhones(); } catch (e) { toast(e.message, true); } } }
-          : { label: "Watch it", onclick: async () => {
-            try { await api(`api/admin/phones/${s.id}`, { method: "PUT", body: { watched: true } }); loadPhones(); } catch (e) { toast(e.message, true); } } },
+        { label: "Stop monitoring", danger: true, onclick: () => stopDialog(s, () => loadPhones()) },
       ]));
   }
 
@@ -626,12 +754,23 @@
   async function renderPhone(a, whole) {
     const box = clear($("#phoneBody"));
     const again = () => openPhone(a.id);
+    if (!a.monitored) {             // a device no admin added: only what discovery knows, and the way to add it
+      add(box, h("div", { class: "card" }, h("h2", { class: "view-title" }, a.name), statusLine(a),
+        h("p", { class: "hint" }, "Not monitored: it is never asked to report, no alerts go out about it and no history is kept."),
+        facts([[a.manufacturer, a.model].filter(Boolean).join(" "), a.owner ? `owner ${a.owner}` : "no owner yet"]),
+        h("div", { class: "card-actions" }, h("button", { type: "button", class: "btn-primary", onclick: () => addDialog({
+          id: a.id, name: a.name, owner: a.owner, ownerId: a.ownerId, kind: a.kind, kindGuess: a.kind === "tablet" ? "Tablet" : a.kind === "ignored" ? "Watch or other device" : "Phone",
+          nameOwn: null, intervalOwn: a.intervalOwn }, again) }, "Add to monitoring"))));
+      return;
+    }
     add(box, h("div", { class: "card" }, h("div", { class: "card-head" },
       h("div", null, h("h2", { class: "view-title" }, a.name), statusLine(a)),
       a.hidden ? null : h("button", { type: "button", class: "btn-primary", onclick: () => runCheck(a.id) }, "Check now")),
       a.reasonText ? h("p", { class: "note warn" }, a.reasonText) : null,
-      a.stopRequested ? h("p", { class: "note warn" }, `${a.owner || "The owner"} asked to stop watching this phone.`) : null,
-      a.hidden ? h("p", { class: "hint" }, "The owner paused being watched: its status, battery, network and sensors aren't shown until the pause ends.") :
+      a.stopRequested ? h("p", { class: "note warn" }, `${a.owner || "The owner"} asked to stop monitoring this phone.`) : null,
+      a.dnmText ? h("p", { class: "dim" }, `🌙 ${a.dnmText} — the owner's do-not-monitor hours (only they can change them).`) : null,
+      a.hidden ? h("p", { class: "hint" }, a.status === "dnm" ? "Do-not-monitor hours: its status, battery, network and sensors aren't shown, and nothing is asked, until they end."
+        : "The owner paused being watched: its status, battery, network and sensors aren't shown until the pause ends.") :
         facts([batteryText(a), a.network ? `📶 ${a.network}` : null, a.lastReboot ? `🔄 ${String(a.lastReboot).replace("T", " ").slice(0, 16)}` : null,
           a.zone ? `📍 ${a.zone}` : null, a.forwardingTarget ? `💬 forwards into ${a.forwardingTarget}` : null])));
     add(box, card("📱 Device", h("table", { class: "sensor-table" }, [["Manufacturer", a.manufacturer], ["Model", a.model],
@@ -661,24 +800,21 @@
         h("span", null, x.text + (x.battery !== null && x.battery !== undefined ? ` · 🔋 ${x.battery}%` : ""))));
     }
     add(box, hist);
-    add(box, h("div", { class: "danger-zone" }, h("h3", null, "Stop watching or remove"),
-      h("p", { class: "hint" }, "Stop watching: no requests and no alerts for it. Remove: its history is deleted; it comes back as a new device if Home Assistant still has it."),
+    add(box, h("div", { class: "danger-zone" }, h("h3", null, "Stop monitoring or remove"),
+      h("p", { class: "hint" }, "Stop monitoring: it goes back to Available devices (you choose whether its history is kept). Remove: its history is deleted; it comes back under Available devices if Home Assistant still has it."),
       h("div", { class: "card-actions" },
-        a.watched ? h("button", { type: "button", class: "btn-danger-outline", onclick: async () => {
-          try { await api(`api/admin/phones/${a.id}`, { method: "PUT", body: { watched: false } }); again(); } catch (e) { toast(e.message, true); }
-        } }, "Stop watching") : null,
+        h("button", { type: "button", class: "btn-danger-outline", onclick: () => stopDialog(a, () => go("#/phones")) }, "Stop monitoring"),
         h("button", { type: "button", class: "btn-danger-outline", onclick: async () => {
           if (!await UI.confirmDialog(`Remove ${a.name}?`, "Its history is deleted with it.", { okLabel: "Remove", danger: true })) return;
           try { await api(`api/admin/phones/${a.id}`, { method: "DELETE" }); go("#/phones"); } catch (e) { toast(e.message, true); }
         } }, "Remove"))));
-    if (whole && whole.mine) add(box, h("p", null, h("a", { href: `#/mine/${a.id}` }, "Your own settings for this phone ›")));
+    if (whole && whole.mine && whole.monitored) add(box, h("p", null, h("a", { href: `#/mine/${a.id}` }, "Your own settings for this phone ›")));
   }
 
   async function settingsCard(a, again) {
     const people = await peopleList();
     const name = h("input", { type: "text", value: a.name, maxlength: "60" });
-    const kind = h("select", null, [["phone", "Phone"], ["tablet", "Tablet"], ["ignored", "Ignored"]].map(([v, l]) => h("option", { value: v, selected: v === a.kind ? true : null }, l)));
-    const watched = h("input", { type: "checkbox", checked: a.watched });
+    const kind = h("select", null, [["phone", "Phone"], ["tablet", "Tablet"]].map(([v, l]) => h("option", { value: v, selected: v === a.kind ? true : null }, l)));
     const interval = h("select", null, [["", "The household's"], ["15", "15 minutes"], ["10", "10 minutes"], ["5", "5 minutes"]]
       .map(([v, l]) => h("option", { value: v, selected: String(a.intervalOwn || "") === v ? true : null }, l)));
     const owner = h("select", null, [h("option", { value: "" }, "Nobody")].concat(people.map((p) =>
@@ -686,11 +822,10 @@
     const svc = h("input", { type: "text", value: a.notifyService || "", placeholder: a.defaultService || "mobile_app_…" });
     return h("details", { class: "card" }, h("summary", null, h("strong", null, "⚙️ This phone's settings")),
       h("div", { class: "form" }, field("Name", name, "Empty: \"<owner>'s <model>\"."), h("div", { class: "grid2" }, field("Kind", kind), field("Check-in interval", interval)),
-        h("label", { class: "check" }, watched, "Watched (asked to report, alerts)"),
         field("Owner", owner, "Who Home Assistant says registered it; correct it here. Changing the owner switches forwarding off (only the owner switches it on)."),
         field("Notify service", svc, "Only if Home Assistant names this phone's notify service differently."),
         h("div", { class: "card-actions" }, h("button", { type: "button", class: "btn-primary", onclick: async () => {
-          const body = { name: name.value, kind: kind.value, watched: watched.checked, intervalMin: interval.value ? Number(interval.value) : null,
+          const body = { name: name.value, kind: kind.value, intervalMin: interval.value ? Number(interval.value) : null,
             ownerId: owner.value || null, notifyService: svc.value || null };
           try { await api(`api/admin/phones/${a.id}`, { method: "PUT", body }); toast("Saved"); again(); } catch (e) { toast(e.message, true); }
         } }, "Save"))));
@@ -730,7 +865,7 @@
     try { r = await api("api/admin/people" + (refresh ? "?refresh=1" : "")); } catch (e) { mount(clear(box), UI.errorBox(e, () => loadPeople(refresh))); return; }
     PeoplePage.render(box, {
       people: r.people,
-      intro: ["Everyone who has opened this app. Mark a child: a child's phone is watched without the child being able to pause it (they still see what admins see).",
+      intro: ["Everyone who has opened this app. Mark a child: a child's phone is monitored without the child being able to pause it or set do-not-monitor hours (they still see what admins see).",
         "📱 Alerts go to each person's phones from Home Assistant (Settings → People → the person → Track device), never to the phone the alert is about. 🔔 adds an extra notify service and sends a test."],
       checkAgain: async () => { await loadPeople(true); toast("Read from Home Assistant"); },
       person: (p) => ({

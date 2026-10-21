@@ -1,7 +1,7 @@
 """App settings (Admin → App settings), stored in the `app_settings` table (spec/SPEC.md §7).
 
 Admins change them inside the app, without a restart. Per-phone choices (its own interval, kind, owner) are on the
-phone's page; the owner's choices (forwarding, quiet times, pauses) on My phone. Only `admin_users` stays on the
+phone's page; the owner's choices (forwarding, do-not-monitor hours, pauses) on My phone. Only `admin_users` stays on the
 app's Configuration tab.
 """
 import logging
@@ -75,8 +75,9 @@ def _one_line(v: str) -> str:
 
 
 GROUPS = [
-    Group("phones", "📱 Phones", "Devices come from the Home Assistant Companion app. Each one's kind, owner and own "
-                                "interval are on its page (All phones)."),
+    Group("phones", "📱 Phones", "Devices come from the Home Assistant Companion app. None is monitored until an admin "
+                                "adds it (All phones → Available devices); its kind, owner and own interval are on "
+                                "its page."),
     Group("checkin", "⏱️ Check-in", "Each phone reports to Home Assistant by itself; the app asks only a phone that is "
                                     "overdue."),
     Group("checknow", "🔎 Check now", "A \"please respond\" sent on demand."),
@@ -93,8 +94,8 @@ GROUPS = [
 SETTINGS = [
     # -- phones
     Setting("guess_kind", True, "Guess the kind of new devices", group="phones",
-            help="Tablets and watches are recognised by their model; you confirm the kind under New devices. Off: "
-                 "every new device starts as a phone."),
+            help="Tablets and watches are recognised by their model and shown under Available devices; you choose the "
+                 "kind when you add one to monitoring. Off: every device is shown as a phone."),
     Setting("unused_days", 30, "\"Not used lately\" after", group="phones", min=3, max=365, unit="days",
             help="A device that hasn't checked in for this long is listed under Not used lately, with Remove or Keep. "
                  "Nothing is removed by itself."),
@@ -116,7 +117,7 @@ SETTINGS = [
             help="After Home Assistant or this app starts, no phone is marked Offline (and no offline alert goes out) "
                  "until one interval plus this much has passed."),
     Setting("lost_contact_on", True, "Recognise lost contact", group="checkin",
-            help="When half or more of the watched phones go quiet within a few minutes, the problem is almost "
+            help="When half or more of the monitored phones go quiet within a few minutes, the problem is almost "
                  "certainly at home (Home Assistant lost the internet, or the push service is down): one alert to "
                  "admins instead of one per phone."),
     Setting("lost_contact_window_min", 10, "…within", group="checkin", min=2, max=60, unit="minutes",
@@ -190,6 +191,13 @@ SETTINGS = [
                  "18:00\". Children's phones can't be paused this way."),
     Setting("pause_max_hours", 24, "Longest pause", group="transparency", min=1, max=168, unit="hours",
             show_if="adults_may_pause"),
+    Setting("dnm_allowed", True, "Owners may set do-not-monitor hours", group="transparency",
+            help="Each owner can choose hours of the week when their phone isn't monitored (e.g. weekdays 22:00–07:00): "
+                 "no requests, no alerts, and admins see only \"Not monitored (until 07:00)\" and that the hours exist. "
+                 "Admins can't change them. Children's phones can't have them. Off: no phone's hours apply."),
+    Setting("dnm_max_hours", 12, "…at most", group="transparency", min=1, max=20, unit="hours a day",
+            show_if="dnm_allowed",
+            help="So a phone can't be left unmonitored all day. Shown in the owner's editor."),
     # -- history
     Setting("history_days", 7, "Keep history", group="history", min=1, max=90, unit="days",
             help="Status changes, restarts, Check now and pauses on each phone's page; the log on My phone."),

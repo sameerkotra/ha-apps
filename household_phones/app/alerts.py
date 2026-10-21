@@ -8,7 +8,7 @@ blocking: from a thread). An alert's text names the phone, its status and batter
 import logging
 from datetime import datetime, timedelta
 
-from . import auth, config, db, phones, settings
+from . import auth, config, db, dnm, phones, settings
 from .common import ha_notify
 
 logger = logging.getLogger("alerts")
@@ -21,9 +21,8 @@ ALERTS = {
     "restart": ("Restarted", "alert_restart", "alert_restart_to"),
     "battery": ("Battery low", "alert_battery", "alert_battery_to"),
     "charge": ("Charging reminder", "alert_charge", "alert_charge_to"),
-    "request": ("Stop watching request", None, None),
+    "request": ("Stop monitoring request", None, None),
 }
-HELD_BY_PHONE_QUIET = ("offline", "battery")      # held by the phone's own quiet times (§3.1)
 
 
 def _mins(hhmm: str) -> int | None:
@@ -115,6 +114,10 @@ def send(alert: str, phone_id: str | None, message: str, *, to: str | None = Non
     plan, queued, own_service = [], [], None
     with db.get_conn() as conn:
         phone = conn.execute("SELECT * FROM phones WHERE id = ?", (phone_id,)).fetchone() if phone_id else None
+        if not test and phone is not None and (not phone["monitored"] or phone["retired"]):
+            return {"sent": [], "queued": [], "failed": [], "skipped": "not monitored"}
+        if not test and phone is not None and dnm.active(phone, now):
+            return {"sent": [], "queued": [], "failed": [], "skipped": "do-not-monitor hours"}
         if not test and cooling(conn, phone_id, alert, now):
             return {"sent": [], "queued": [], "failed": [], "skipped": "cooldown"}
         people = only if only is not None else recipients(conn, to or (ALERTS[alert][2] and settings.get(ALERTS[alert][2]))
@@ -178,6 +181,8 @@ def release_queue(now: float | None = None) -> int:
         if r["phone_id"]:
             with db.get_conn() as conn:
                 ph = conn.execute("SELECT * FROM phones WHERE id = ?", (r["phone_id"],)).fetchone()
+            if ph is not None and (not ph["monitored"] or dnm.active(ph, now)):
+                continue                      # not monitored (now): dropped, never sent later (§3.1)
             own = phones.notify_service(ph) if ph else None
         services = [s for s in ha_notify.services_for(u) if s != own]
         if services and any(ha_notify.send_to_services(services, r["title"], r["message"]).values()):

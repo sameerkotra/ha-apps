@@ -1,12 +1,13 @@
 """What the pages show about a phone (spec/SPEC.md §3 My phone, §5 Admin mode, §9 transparency): the summary row,
 the owner's page (checklist, what admins see, the log, forwarding), the admin's page (every sensor, history).
 
-A phone whose owner paused being watched shows admins only "Paused by <owner> until …": no status, battery, network
-or sensors (§9).
+A phone whose owner paused being watched shows admins only "Paused by <owner> until …", and one in its owner's
+do-not-monitor hours only "Not monitored (until 07:00)": no status, battery, network or sensors (§9). A device no admin
+has added shows only that it isn't monitored.
 """
 import json
 
-from . import checknow, config, forwarding, monitor, phones, settings
+from . import checknow, config, dnm, forwarding, monitor, phones, settings
 
 
 def ago(ts: float | None, now: float) -> str | None:
@@ -26,13 +27,23 @@ def summary(conn, p, now: float, *, viewer: dict) -> dict:
     """One phone as a list row / card."""
     mine = viewer["id"] == p["owner_id"]
     owner = phones.owner_name(conn, p["owner_id"])
+    monitored = monitor.runs(p)
     out = {"id": p["id"], "name": phones.display_name(conn, p), "owner": owner, "ownerId": p["owner_id"],
-           "mine": mine, "kind": p["kind"], "watched": bool(p["watched"]), "model": p["model"],
-           "manufacturer": p["manufacturer"], "kindConfirmed": bool(p["kind_confirmed"]),
-           "ios": phones.is_ios(p), "inRegistry": bool(p["in_registry"]), "forwarding": bool(p["fwd_on"])}
+           "mine": mine, "kind": p["kind"], "monitored": monitored, "model": p["model"],
+           "manufacturer": p["manufacturer"], "ios": phones.is_ios(p), "inRegistry": bool(p["in_registry"]),
+           "forwarding": bool(p["fwd_on"]) and monitored, "welcome": bool(p["welcome"]) and mine and monitored,
+           "dnmText": dnm.summary(dnm.windows_of(p)) if monitored and dnm.applies() else None}
+    if not monitored:
+        out.update(hidden=True, status="unknown", label="Not monitored", paused=None)
+        return out
     if monitor.watching_paused(p, now) and not mine:
         out.update(hidden=True, status="paused", label=f"Paused by {phones.first_name(owner)} {monitor.until_text(p)}".strip(),
                    paused={"kind": "watching", "untilText": monitor.until_text(p)})
+        return out
+    on = dnm.active(p, now)
+    if on and not mine:                       # do-not-monitor hours: admins see only this line (§9)
+        out.update(hidden=True, status="dnm", label=f"Not monitored (until {on['untilText']})", paused=None,
+                   dnm={"untilText": on["untilText"]})
         return out
     d = monitor.display(p, now)
     level, chg = phones.battery(p["id"]), phones.charging(p["id"])
@@ -107,6 +118,7 @@ def admins_see(p) -> list[str]:
     """§9: exactly what admins can see about this phone."""
     if p["pause_kind"] == "watching":
         return ["While you pause being watched: only \"Paused by you\" and until when — nothing else."]
+    hours = dnm.summary(dnm.windows_of(p)) if dnm.applies() else None
     out = ["Its status and last check-in (Online, Late, Offline…)", "Battery level and whether it's charging",
            "Wi-Fi network name or mobile data", "Last restart", "The phone's model, Android/iOS version and Companion app "
            "version", "Every sensor the Companion app reports, except notification texts",
@@ -114,6 +126,11 @@ def admins_see(p) -> list[str]:
            "Your last place (Home Assistant zone)" if p["share_place"] else "Not your place (Share my last place is off)"]
     if p["fwd_on"]:
         out.append("That it forwards messages and into which chat — never the messages, unless they're in that chat")
+    if hours:
+        out.append(f"That you set do-not-monitor hours (\"{hours}\") — they can't change them. During them: only "
+                   "\"Not monitored (until …)\" — no status, battery, network or sensors")
+    elif dnm.applies():
+        out.append("If you set do-not-monitor hours: that they exist and, during them, only \"Not monitored (until …)\"")
     return out
 
 
@@ -145,9 +162,17 @@ def owner_page(conn, p, now: float, viewer: dict) -> dict:
     out = summary(conn, p, now, viewer=viewer)
     out.update(checklist=checklist(conn, p, now), adminsSee=admins_see(p), log=checknow.log(conn, p["id"]),
                alertsLog=[h for h in history(conn, p["id"], 100) if h["kind"] == "alert"][:30],
-               quietStart=p["quiet_start"], quietEnd=p["quiet_end"], sharePlace=bool(p["share_place"]),
+               dnm=dnm_view(p), welcome=bool(p["welcome"]), sharePlace=bool(p["share_place"]),
                forwarding=forwarding_view(conn, p), stopRequested=bool(p["stop_requested_at"]),
                pause=pause_view(p, now), replaceable=replaceable(conn, p))
+    return out
+
+
+def dnm_view(p) -> dict:
+    """The owner's do-not-monitor hours editor: the windows, whether they may set them, the household's limit."""
+    out = dnm.view(p)
+    on = dnm.active(p, config.clock())
+    out["active"] = {"untilText": on["untilText"], "pauseForwarding": on["pauseForwarding"]} if on else None
     return out
 
 
@@ -176,7 +201,8 @@ def admin_page(conn, p, now: float, viewer: dict) -> dict:
     if p["fwd_on"]:
         out["forwardingTarget"] = forwarding.target_name(p)
     if out.get("hidden"):
-        out.update(sensors=None, history=[h for h in history(conn, p["id"]) if h["kind"] in ("pause", "found", "owner")])
+        keep = ("pause", "found", "owner") if out["monitored"] else ()
+        out.update(sensors=None, history=[h for h in history(conn, p["id"]) if h["kind"] in keep] if keep else [])
         return out
     out.update(sensors=phones.sensors(p["id"], bool(p["share_place"])), history=history(conn, p["id"]),
                checks=checknow.log(conn, p["id"], 20), zone=phones.zone(p["id"]) if p["share_place"] else None)

@@ -3,7 +3,8 @@
 Each `state_changed` of a phone's Last notification sensor is handled on its own, from the event's new state (never
 by reading the sensor again), on a small worker thread: `decide()` (a pure function the tests drive) applies the
 owner's switch, the household's switch, the loop guard, the owner's apps and filter, Android 15's redaction, group
-summaries and long texts; duplicates within 2 minutes are dropped; quiet hours hold (in memory) or drop.
+summaries and long texts; duplicates within 2 minutes are dropped; quiet hours hold (in memory) or drop. Forwarding
+goes on during the owner's do-not-monitor hours (their own choice) unless that window also pauses forwarding.
 
 **The text is never stored**: not in the database, the logs, backups or sensors. It goes straight to Household Chat
 in `chat.message.post` (app_messages.post_forward, sent without the bus's database outbox) as a disappearing message.
@@ -20,7 +21,7 @@ import secrets
 import threading
 from dataclasses import dataclass
 
-from . import alerts, config, db, phones, settings
+from . import alerts, config, db, dnm, phones, settings
 
 logger = logging.getLogger("forwarding")
 
@@ -96,6 +97,8 @@ def allowed(p) -> str | None:
     """Why this phone doesn't forward now (None: it does)."""
     if not settings.get("forwarding_allowed"):
         return "forwarding is off in this household"
+    if not p["monitored"]:
+        return "the phone isn't monitored"
     if not p["fwd_on"]:
         return "forwarding is off for this phone"
     if not p["owner_id"]:
@@ -193,6 +196,9 @@ def release_held(now: float | None = None) -> int:
             continue
         if alerts.in_quiet(p["fwd_quiet_start"], p["fwd_quiet_end"], config.local(now)):
             continue
+        on = dnm.active(p, now)
+        if on and on["pauseForwarding"]:
+            continue
         with _recent_lock:
             items = _held.pop(pid, [])
         for f in items:
@@ -242,6 +248,9 @@ def handle(pid: str, new_state: dict, now: float | None = None) -> str:
     if f.kind == "redacted":
         with db.get_conn() as conn:
             conn.execute("UPDATE phones SET redacted_at = ? WHERE id = ?", (now, pid))
+    on = dnm.active(p, now)
+    if on and on["pauseForwarding"]:          # the owner's do-not-monitor window also pauses forwarding (§3.1)
+        return "paused (do-not-monitor hours)"
     if duplicate(pid, f.text if f.kind != "redacted" else f.label + f.text, now):
         return "duplicate"
     if alerts.in_quiet(p["fwd_quiet_start"], p["fwd_quiet_end"], config.local(now)):

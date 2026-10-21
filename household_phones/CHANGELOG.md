@@ -2,6 +2,15 @@
 
 All notable changes to Household Phones. See the [repository](https://github.com/sameerkotra/ha-apps).
 
+## 1.1.0
+
+- **Phones aren't monitored until an admin adds them.** All phones lists every Companion-app device under **Available devices** with a guess of its kind; **Add to monitoring** sets the owner, name, kind and check-in interval in one step. Until then a device is never asked to report, gets no alerts or history, and its owner sees only "Your phone isn't monitored — ask an admin".
+- **Stop monitoring** puts a phone back under Available devices and asks whether to keep or delete its history.
+- **Forwarding after you're added:** once an admin adds your phone, My phone says "Your phone is now monitored — set up forwarding if you want it", with the checklist. Forwarding stays your own choice.
+- **Do-not-monitor hours** replace daily quiet times: set the days and hours your phone isn't monitored (e.g. weekdays 22:00–07:00). During them nothing is asked, no alert is sent or kept for later, nothing goes into its history, and admins see only "Not monitored (until 07:00)" and that the hours exist — they can't change them. Forwarding keeps working unless you pause it for that window.
+- **New App settings:** owners may set do-not-monitor hours (on), at most 12 hours a day.
+- **Updating from 1.0.0:** devices that were watched only because they were guessed to be phones are no longer monitored; phones an admin had confirmed or edited stay monitored. Your saved quiet times become do-not-monitor hours on every day.
+
 ## 1.0.0
 
 - **First release.** The household's phones through the Home Assistant Companion app: each phone checks in on its own, and Home Assistant asks only a phone that is overdue.

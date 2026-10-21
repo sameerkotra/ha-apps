@@ -182,16 +182,17 @@ def sync(conn, found: list[dict], now: float) -> list[str]:
         if row is None:
             kind = guess_kind(d["device_name"], d["model"], d["manufacturer"]) if guess else "phone"
             pid = new_id(conn)
+            # not monitored: it waits under Available devices until an admin adds it (§2); no history until then
             conn.execute("INSERT INTO phones (id, device_id, ha_name, manufacturer, model, os_name, os_version, "
-                         "app_version, kind, watched, owner_id, first_seen) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+                         "app_version, kind, monitored, owner_id, first_seen, status_reason) "
+                         "VALUES (?,?,?,?,?,?,?,?,?,0,?,?,'not_monitored')",
                          (pid, d["device_id"], d["ha_name"], d["manufacturer"], d["model"], d["os_name"],
-                          d["os_version"], d["app_version"], kind, 1 if kind == "phone" else 0, d["owner_id"], now))
-            history(conn, pid, "found", f"Found in Home Assistant ({d['ha_name']}).", now=now)
+                          d["os_version"], d["app_version"], kind, d["owner_id"], now))
             new.append(pid)
         else:
             pid = row["id"]
             for col, label in (("os_version", "System"), ("app_version", "Companion app")):
-                if d[col] and row[col] and d[col] != row[col]:
+                if row["monitored"] and d[col] and row[col] and d[col] != row[col]:
                     history(conn, pid, "update", f"{label} updated to {d[col]}.", now=now)
             conn.execute("UPDATE phones SET ha_name = ?, manufacturer = ?, model = ?, os_name = ?, "
                          "os_version = COALESCE(?, os_version), app_version = COALESCE(?, app_version), in_registry = 1, "
@@ -405,5 +406,12 @@ def get(conn, pid: str):
 
 
 def mine(conn, user_id: str) -> list:
-    return conn.execute("SELECT * FROM phones WHERE owner_id = ? AND retired = 0 AND kind != 'ignored' "
+    """This person's monitored phones (the only ones with a My phone page)."""
+    return conn.execute("SELECT * FROM phones WHERE owner_id = ? AND retired = 0 AND monitored = 1 "
                         "ORDER BY first_seen", (user_id,)).fetchall()
+
+
+def mine_unmonitored(conn, user_id: str) -> list:
+    """This person's devices no admin has added (My phone says only that they aren't monitored)."""
+    return conn.execute("SELECT * FROM phones WHERE owner_id = ? AND retired = 0 AND monitored = 0 AND "
+                        "kind != 'ignored' AND in_registry = 1 ORDER BY first_seen", (user_id,)).fetchall()

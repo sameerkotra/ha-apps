@@ -3,7 +3,8 @@ app/common/assist_tools.py; spec/SPEC.md §10).
 
 - `phones.status`: "is my phone online?", "which phones are offline?", "what's Asha's phone battery?" — the phones the
   person may see: admins every phone, everyone else their own and the phones that forward into their chats. A phone
-  whose owner paused being watched answers "paused by <owner>".
+  whose owner paused being watched answers "paused by <owner>"; one in its owner's do-not-monitor hours "not monitored
+  until 07:00". Devices no admin added to monitoring aren't known here at all.
 - `phones.check`: "check Asha's phone" runs Check now (same rights) and answers with the result when one came in the
   last minute, else that the phone was asked, with a link to the live result card (#/check/<phone>).
 
@@ -12,7 +13,7 @@ Forwarded messages are never answered: they aren't stored.
 import re
 import threading
 
-from . import auth, checknow, config, monitor, phones, settings
+from . import auth, checknow, config, dnm, monitor, phones, settings
 from .common import app_bus as bus
 from .common import assist_tools
 from .common.assist_tools import Arg
@@ -42,7 +43,7 @@ tools = assist_tools.Catalogue(
 
 
 def visible(conn, user: dict) -> list:
-    rows = conn.execute("SELECT * FROM phones WHERE retired = 0 AND kind != 'ignored' ORDER BY first_seen").fetchall()
+    rows = conn.execute("SELECT * FROM phones WHERE retired = 0 AND monitored = 1 ORDER BY first_seen").fetchall()
     return [p for p in rows if user["is_admin"] or p["owner_id"] == user["id"] or checknow.may_check(p, user)]
 
 
@@ -75,6 +76,9 @@ def line(conn, p) -> tuple[str, dict]:
     if monitor.watching_paused(p, now):
         owner = phones.first_name(phones.owner_name(conn, p["owner_id"]))
         return f"{name}: paused by {owner} {monitor.until_text(p)}".strip(), {"phone": name, "status": "paused"}
+    on = dnm.active(p, now)
+    if on:
+        return f"{name}: not monitored until {on['untilText']} (do-not-monitor hours)", {"phone": name, "status": "dnm"}
     d = monitor.display(p, now)
     bits = [d["label"], f"last check-in {_ago(p['last_checkin'])}"]
     if p["battery"] is not None:
@@ -112,7 +116,6 @@ def status(ctx):
             children=True, examples=("Check Asha's phone", "Is my phone online right now?"))
 def check(ctx):
     rows = _match(ctx.conn, visible(ctx.conn, ctx.user), ctx.args["person"], ctx.user)
-    rows = [p for p in rows if p["watched"]] or rows
     if not rows:
         return ctx.result("No phone you can check matches that in Household Phones.",
                           links=[ctx.link("Phones", "/")])
@@ -123,6 +126,9 @@ def check(ctx):
         owner = phones.first_name(phones.owner_name(ctx.conn, p["owner_id"]))
         return ctx.result(f"{name} is paused by {owner} {monitor.until_text(p)}.".replace("  ", " "),
                           links=[ctx.link("Phones", "/")])
+    on = dnm.active(p, now)
+    if on:
+        return ctx.result(checknow.not_monitored_text(ctx.conn, p, on, ctx.user), links=[ctx.link("Phones", "/")])
     recent = ctx.conn.execute("SELECT * FROM checks WHERE phone_id = ? AND state != 'waiting' AND finished >= ? "
                               "ORDER BY started DESC LIMIT 1", (p["id"], now - 60)).fetchone()
     link = ctx.link(f"Check {name}", f"/check/{p['id']}")

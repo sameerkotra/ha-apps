@@ -1,18 +1,20 @@
-"""The page's API for everyone (spec/SPEC.md §12): who you are, My phone, your phone's settings (pauses, quiet times,
-forwarding, Replaces), Check now and its live result."""
+"""The page's API for everyone (spec/SPEC.md §12): who you are, My phone, your phone's settings (pauses, do-not-monitor
+hours, forwarding, Replaces), Check now and its live result. A device no admin has added has no page: its owner is
+told only that it isn't monitored."""
 import json
 import re
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Request
 from starlette.concurrency import run_in_threadpool
 
-from .. import app_messages, auth, checknow, config, db, monitor, phones, settings, sidebar, views
+from .. import app_messages, auth, checknow, config, db, dnm, monitor, phones, settings, sidebar, views
 from ..auth import get_current_user
 from ..common import auth_core
 from ..common import whoami as whoami_core
 
 router = APIRouter(prefix="/api")
 HHMM = re.compile(r"^([01]\d|2[0-3]):[0-5]\d$")
+NOT_MONITORED = "Your phone isn't monitored — ask an admin."
 
 
 def _starting(now: float) -> bool:
@@ -45,11 +47,14 @@ def my(user: dict = Depends(get_current_user)):
     now = config.clock()
     with db.get_conn() as conn:
         mine = [views.summary(conn, p, now, viewer=user) for p in phones.mine(conn, user["id"])]
+        # devices no admin added: the name only, and that they aren't monitored (no details)
+        unmonitored = [{"id": p["id"], "name": phones.display_name(conn, p), "replaces": replace_candidates(conn, p)}
+                       for p in phones.mine_unmonitored(conn, user["id"])]
         others = [{"id": p["id"], "name": phones.display_name(conn, p),
                    "owner": phones.first_name(phones.owner_name(conn, p["owner_id"])),
                    "chat": p["fwd_chat_name"]} for p in checknow.checkable(conn, user)]
         row = conn.execute("SELECT quiet_start, quiet_end FROM users WHERE id = ?", (user["id"],)).fetchone()
-    return {"phones": mine, "others": others, "starting": _starting(now),
+    return {"phones": mine, "unmonitored": unmonitored, "others": others, "starting": _starting(now),
             "quietStart": row["quiet_start"] if row else "", "quietEnd": row["quiet_end"] if row else "",
             "adultsMayPause": bool(settings.get("adults_may_pause")) and not user["is_child"],
             "pauseMaxHours": settings.get("pause_max_hours"), "forwardingAllowed": bool(settings.get("forwarding_allowed"))}
@@ -76,7 +81,9 @@ def my_quiet(body: dict = Body(...), user: dict = Depends(get_current_user)):
     return {"quietStart": qs, "quietEnd": qe}
 
 
-def _phone(conn, pid: str, user: dict, *, owner: bool = False, admin_ok: bool = True):
+def _phone(conn, pid: str, user: dict, *, owner: bool = False, admin_ok: bool = True, unmonitored: bool = False):
+    """The phone, if this person may act on it: its owner (or an admin, with admin_ok). Only monitored phones,
+    unless `unmonitored`: a device no admin added is 409 "isn't monitored" for its owner."""
     p = phones.get(conn, pid)
     if p is None:
         raise HTTPException(404, "No such phone.")
@@ -85,6 +92,8 @@ def _phone(conn, pid: str, user: dict, *, owner: bool = False, admin_ok: bool = 
         raise HTTPException(403, "Only the phone's owner can do this.")
     if not (is_owner or (admin_ok and user["is_admin"])):
         raise HTTPException(404, "No such phone.")
+    if not unmonitored and not monitor.runs(p):
+        raise HTTPException(409, NOT_MONITORED if is_owner else "This device isn't monitored.")
     return p
 
 
@@ -93,9 +102,14 @@ def phone(pid: str, user: dict = Depends(get_current_user)):
     """Your own phone's page, or (admins) any phone's page."""
     now = config.clock()
     with db.get_conn() as conn:
-        p = _phone(conn, pid, user)
+        p = _phone(conn, pid, user, unmonitored=True)
+        if not monitor.runs(p):
+            if not user["is_admin"]:
+                raise HTTPException(409, NOT_MONITORED)
+            return {"admin": views.admin_page(conn, p, now, user), **views.summary(conn, p, now, viewer=user)}
         if p["owner_id"] == user["id"]:
             out = views.owner_page(conn, p, now, user)
+            out["dnm"]["allowed"] = out["dnm"]["allowed"] and not user["is_child"]
             out["canPauseWatching"] = bool(settings.get("adults_may_pause")) and not user["is_child"]
             out["pauseMaxHours"] = settings.get("pause_max_hours")
             if user["is_admin"]:
@@ -106,19 +120,46 @@ def phone(pid: str, user: dict = Depends(get_current_user)):
 
 @router.put("/phones/{pid}/mine")
 def phone_mine(pid: str, body: dict = Body(...), user: dict = Depends(get_current_user)):
-    """The owner's own choices: daily quiet times, Share my last place."""
+    """The owner's own choices: Share my last place; welcomeSeen closes "Your phone is now monitored"."""
     body = body if isinstance(body, dict) else {}
-    if set(body) - {"quietStart", "quietEnd", "sharePlace"}:
-        raise HTTPException(422, "Send quietStart, quietEnd and sharePlace.")
+    if set(body) - {"sharePlace", "welcomeSeen"}:
+        raise HTTPException(422, "Send sharePlace or welcomeSeen.")
     with db.get_conn() as conn:
         p = _phone(conn, pid, user, owner=True)
-        qs, qe = (p["quiet_start"], p["quiet_end"])
-        if "quietStart" in body or "quietEnd" in body:
-            qs, qe = _Quiet.clean(body, "quietStart", "quietEnd")
         share = p["share_place"] if "sharePlace" not in body else int(body["sharePlace"] is True)
-        conn.execute("UPDATE phones SET quiet_start = ?, quiet_end = ?, share_place = ? WHERE id = ?", (qs, qe, share, pid))
+        welcome = 0 if body.get("welcomeSeen") is True else p["welcome"]
+        conn.execute("UPDATE phones SET share_place = ?, welcome = ? WHERE id = ?", (share, welcome, pid))
         if share != p["share_place"]:
             phones.history(conn, pid, "owner", "Share my last place " + ("on." if share else "off."), by=user["id"])
+    return phone(pid, user)
+
+
+@router.put("/phones/{pid}/dnm")
+def phone_dnm(pid: str, body: dict = Body(...), user: dict = Depends(get_current_user)):
+    """The owner's do-not-monitor hours: {windows: [{days: [0–6, Monday 0], start: "22:00", end: "07:00",
+    pauseForwarding: false}]} (an empty list: none). Only the owner; admins can't change them (§3.1, §9)."""
+    body = body if isinstance(body, dict) else {}
+    if set(body) != {"windows"}:
+        raise HTTPException(422, "Send windows.")
+    with db.get_conn() as conn:
+        p = _phone(conn, pid, user, owner=True, admin_ok=False)
+        if user["is_child"]:
+            raise HTTPException(403, "Children's phones can't have do-not-monitor hours — ask an admin.")
+        if not dnm.applies():
+            raise HTTPException(403, "Do-not-monitor hours are turned off in this household (an admin's App setting).")
+        try:
+            windows = dnm.clean(body["windows"])
+            dnm.check_limit(windows, settings.get("dnm_max_hours"))
+        except dnm.Invalid as e:
+            raise HTTPException(422, str(e))
+        before = dnm.summary(dnm.windows_of(p))
+        conn.execute("UPDATE phones SET dnm_windows = ? WHERE id = ?", (json.dumps(windows) if windows else None, pid))
+        after = dnm.summary(windows)
+        if before != after:
+            phones.history(conn, pid, "owner", (f"Do-not-monitor hours set by {user['name']}: {after[len('Not monitored '):]}."
+                                                if after else f"Do-not-monitor hours removed by {user['name']}."),
+                           by=user["id"])
+    monitor.WAKE.set()
     return phone(pid, user)
 
 
@@ -302,15 +343,15 @@ def bus_request(rid: str, user: dict = Depends(get_current_user)):
 
 @router.post("/phones/{pid}/stop-request")
 def stop_request(pid: str, user: dict = Depends(get_current_user)):
-    """"Stop watching my phone": a request to the admins (§9)."""
+    """"Stop monitoring my phone": a request to the admins (§9)."""
     from .. import alerts
     with db.get_conn() as conn:
         p = _phone(conn, pid, user, owner=True, admin_ok=False)
         conn.execute("UPDATE phones SET stop_requested_at = ? WHERE id = ?", (config.clock(), pid))
-        phones.history(conn, pid, "owner", f"{user['name']} asked to stop watching this phone.", by=user["id"])
+        phones.history(conn, pid, "owner", f"{user['name']} asked to stop monitoring this phone.", by=user["id"])
         name = phones.display_name(conn, p)
-    alerts.send("request", None, f"{user['name']} asks to stop watching {name}. Admins: Phones → All phones → {name} → "
-                              "Stop watching.", to="admins")
+    alerts.send("request", None, f"{user['name']} asks to stop monitoring {name}. Admins: Phones → All phones → {name} → "
+                              "Stop monitoring.", to="admins")
     return phone(pid, user)
 
 
@@ -319,10 +360,12 @@ def replaces(pid: str, body: dict = Body(...), user: dict = Depends(get_current_
     """This (new) phone replaces an older one: name, owner, settings, forwarding and history move over (§2)."""
     old_id = (body or {}).get("old") if isinstance(body, dict) else None
     with db.get_conn() as conn:
-        new = _phone(conn, pid, user)
+        new = _phone(conn, pid, user, unmonitored=True)
         old = phones.get(conn, old_id) if isinstance(old_id, str) else None
         if old is None or old["id"] == new["id"]:
             raise HTTPException(404, "Choose the phone it replaces.")
+        if not monitor.runs(new) and not monitor.runs(old):
+            raise HTTPException(409, NOT_MONITORED)
         if not user["is_admin"] and old["owner_id"] != user["id"]:
             raise HTTPException(403, "You can only replace your own phone.")
         replace(conn, old, new, user)
@@ -330,7 +373,7 @@ def replaces(pid: str, body: dict = Body(...), user: dict = Depends(get_current_
     return phone(pid, user)
 
 
-MOVED = ("name", "kind", "watched", "interval_min", "owner_id", "owner_by_admin", "quiet_start", "quiet_end",
+MOVED = ("name", "kind", "monitored", "monitored_since", "interval_min", "owner_id", "owner_by_admin", "dnm_windows",
          "share_place", "fwd_on", "fwd_target", "fwd_chat_id", "fwd_chat_name", "fwd_chat_kind", "fwd_members",
          "fwd_members_at", "fwd_disappear", "fwd_apps", "fwd_filter", "fwd_words", "fwd_all_confirmed",
          "fwd_quiet_start", "fwd_quiet_end", "fwd_quiet_mode")
@@ -338,15 +381,27 @@ MOVED = ("name", "kind", "watched", "interval_min", "owner_id", "owner_by_admin"
 
 def replace(conn, old, new, user: dict) -> None:
     oldname, newname = phones.display_name(conn, old), phones.display_name(conn, new)
+    vals = {c: old[c] for c in MOVED}
+    if not old["monitored"]:                  # monitoring moves with the phone; either one being monitored is enough
+        vals.update(monitored=new["monitored"], monitored_since=new["monitored_since"])
     conn.execute("UPDATE phones SET " + ", ".join(f"{c} = ?" for c in MOVED) + ", kind_confirmed = 1 WHERE id = ?",
-                 (*[old[c] for c in MOVED], new["id"]))
+                 (*vals.values(), new["id"]))
     for t in ("history", "checks", "forwards"):
         conn.execute(f"UPDATE {t} SET phone_id = ? WHERE phone_id = ?", (new["id"], old["id"]))
     conn.execute("DELETE FROM alert_state WHERE phone_id = ?", (old["id"],))
-    conn.execute("UPDATE phones SET retired = 1, replaced_by = ?, device_id = NULL, fwd_on = 0, watched = 0 WHERE id = ?",
+    conn.execute("UPDATE phones SET retired = 1, replaced_by = ?, device_id = NULL, fwd_on = 0, monitored = 0 WHERE id = ?",
                  (new["id"], old["id"]))
     phones.history(conn, new["id"], "owner", f"Replaces {oldname} (marked by {user['name']}); was {newname}.",
                    by=user["id"])
+
+
+def replace_candidates(conn, p) -> list[dict]:
+    """For a device no admin added: its owner's older monitored phones it could replace (monitoring moves over)."""
+    if not p["owner_id"]:
+        return []
+    rows = conn.execute("SELECT * FROM phones WHERE owner_id = ? AND id != ? AND retired = 0 AND monitored = 1 AND "
+                        "first_seen < ? ORDER BY first_seen", (p["owner_id"], p["id"], p["first_seen"])).fetchall()
+    return [{"id": r["id"], "name": phones.display_name(conn, r)} for r in rows]
 
 
 # --------------------------------------------------------------------------------------------- Check now
