@@ -82,6 +82,15 @@ def delay_label(minutes: int) -> str:
     return dict(OFFLINE_DELAYS).get(minutes, f"{minutes} minutes")
 
 
+VERSION_RE = re.compile(r"^\d{1,4}(\.\d{1,4}){1,3}$")
+
+
+def _version_or_blank(v: str) -> str:
+    if v and not VERSION_RE.match(v):
+        raise ValueError("A version like 2026.10.1, or leave it empty.")
+    return v
+
+
 def _one_line(v: str) -> str:
     if "\n" in v or "\r" in v:
         raise ValueError("One line only.")
@@ -99,6 +108,10 @@ GROUPS = [
                                 "charging reminder, if you choose)."),
     Group("forwarding", "💬 Forwarding", "A phone's messages into Household Chat. Only the phone's owner can switch it on "
                                         "(My phone)."),
+    Group("actions", "📲 Phone actions", "Find my phone, Lost mode and the other actions on a phone. Each phone's owner "
+                                         "chooses on My phone which ones others may use (admins decide for children's "
+                                         "phones); every use is in the phone's history."),
+    Group("bedtime", "🧒 Children's bedtime", "Bedtime hours are set per child's phone on its page (All phones)."),
     Group("transparency", "👀 Transparency", "Watching someone's phone is sensitive: everyone sees what admins see about "
                                             "their phone, and who checked it."),
     Group("history", "🗂️ History"),
@@ -110,6 +123,11 @@ SETTINGS = [
     Setting("guess_kind", True, "Guess the kind of new devices", group="phones",
             help="Tablets and watches are recognised by their model and shown under Available devices; you choose the "
                  "kind when you add one to monitoring. Off: every device is shown as a phone."),
+    Setting("min_app_version", "", "Minimum Home Assistant app version", group="phones",
+            validators=[_version_or_blank], placeholder="2026.10.1",
+            help="Optional. A phone with an older Companion app is shown as \"HA app outdated\" (All phones, its page "
+                 "and its owner's checklist). Without it, a phone is outdated when another phone of the same kind of "
+                 "system in the household has a newer one."),
     Setting("unused_days", 30, "\"Not used lately\" after", group="phones", min=3, max=365, unit="days",
             help="A device that hasn't checked in for this long is listed under Not used lately, with Remove or Keep. "
                  "Nothing is removed by itself."),
@@ -179,6 +197,15 @@ SETTINGS = [
     Setting("charge_pct", 30, "…below", group="alerts", min=5, max=90, unit="%", show_if="alert_charge"),
     Setting("charge_to_phone", False, "…also to the phone itself", group="alerts", show_if="alert_charge",
             help="It is still on, so it can show the reminder."),
+    Setting("alert_storage", True, "Storage almost full", group="alerts",
+            help="From the phone's Storage sensor (Internal storage): once when its free space drops below the level, "
+                 "again only after it has recovered."),
+    Setting("alert_storage_to", "owner", "…to", group="alerts", choices=RECIPIENTS, show_if="alert_storage"),
+    Setting("storage_low_pct", 10, "…below", group="alerts", min=1, max=50, unit="% free", show_if="alert_storage"),
+    Setting("alert_battery_health", True, "Battery health", group="alerts",
+            help="From the phone's Battery health sensor: when it is worse than Good (overheated, cold, dead, over "
+                 "voltage, failed), once per change."),
+    Setting("alert_battery_health_to", "owner", "…to", group="alerts", choices=RECIPIENTS, show_if="alert_battery_health"),
     Setting("alert_last_place", False, "Last place in the offline alert", group="alerts",
             help="Adds the phone's last Home Assistant zone (\"last seen at Work\"), only for phones whose owner allows "
                  "it (Share my last place). Zone names only, never coordinates."),
@@ -206,6 +233,30 @@ SETTINGS = [
     Setting("forward_group_filter", "codes", "Starting filter for a group", group="forwarding",
             choices=[("codes", "Codes only"), ("all", "Everything")],
             help="Suggested when an owner picks a group, so ordinary texts aren't forwarded by accident."),
+    # -- phone actions
+    Setting("actions_allowed", True, "Phone actions", group="actions",
+            help="Find my phone, Screen on, Flashlight, Ringer, Do Not Disturb, Volume, Brightness, Screen timeout, Open "
+                 "an app or a dashboard, and Lost mode — on Android (iPhones: Find my phone, as a critical alert). Off: "
+                 "none of them, for anyone."),
+    Setting("find_per_hour", 20, "Find my phone at most", group="actions", min=1, max=60, unit="times per phone an hour",
+            show_if="actions_allowed", help="And at most once every 30 seconds."),
+    Setting("actions_per_hour", 30, "Other actions at most", group="actions", min=1, max=120,
+            unit="per phone an hour", show_if="actions_allowed", help="And each at most once every 5 seconds."),
+    Setting("find_restore_min", 5, "Put the alarm volume back after", group="actions", min=1, max=60, unit="minutes",
+            show_if="actions_allowed",
+            help="Find my phone turns the alarm volume up (and Do Not Disturb off, if it was on); \"Found it\" on the "
+                 "phone puts them back at once, otherwise after this time."),
+    Setting("lost_ring_min", 10, "Lost mode rings every", group="actions", min=2, max=120, unit="minutes",
+            show_if="actions_allowed", help="The default; whoever starts Lost mode can choose."),
+    Setting("lost_location_min", 5, "Lost mode asks for the location every", group="actions", min=1, max=60,
+            unit="minutes", show_if="actions_allowed",
+            help="The default. Frequent location updates use more battery (the Companion app's documentation warns "
+                 "about this)."),
+    # -- bedtime
+    Setting("bedtime_after_min", 5, "Tell the parents when the screen is in use at bedtime for more than", group="bedtime",
+            min=1, max=120, unit="minutes",
+            help="From the phone's Interactive sensor. One quiet alert per night per phone, to the parents chosen on the "
+                 "phone's page."),
     # -- transparency
     Setting("adults_may_pause", True, "Adults may pause being watched", group="transparency",
             help="While paused, no requests are sent, no alerts go out, and admins see only \"Paused by <name> until "
@@ -226,6 +277,10 @@ SETTINGS = [
     Setting("ha_sensors", False, "Sensors in Home Assistant", group="ha",
             help="Publishes binary_sensor.phones_<phone>_online and sensor.phones_online_count, and listens for the "
                  "household_phones_check_now event (Check now from a script or automation)."),
+    Setting("ha_find_event", False, "Ring phones from Home Assistant", group="ha",
+            help="Listens for the household_phones_find event (a script, a dashboard button on a wall tablet). With the "
+                 "person who pressed it: as if they pressed Find my phone here. Without one: only phones whose owner "
+                 "allows \"from Home Assistant automations\"."),
     Setting("assistant_answers", True, "Answer the Household Assistant", group="ha",
             help="\"Is my phone online?\", \"check Asha's phone\": answered as the person could see it here."),
     # app-message signing (shared app_bus): the same key in every household app; empty = unsigned, as before

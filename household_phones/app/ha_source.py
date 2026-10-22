@@ -7,6 +7,9 @@
   `state_reported` events don't come) and `last_updated`.
 - **"Please report"**: POST /api/services/notify/<mobile_app_…> with `{"message": "command_update_sensors"}`; the
   answer is classified (sent / can't check / signed out).
+- **Phone actions** (§15): POST /api/services/notify/<mobile_app_…> with the Companion app's notification commands
+  (`command_screen_on`, `command_volume_level`, …), the alarm-stream notification of Find my phone and Lost mode,
+  `request_location_update` and `clear_notification` (`notify`); answered like the "please report".
 - **Home Assistant notifications** (persistent_notification.create) and **events** (the check-now result).
 
 The tests replace `SOURCE` with a fake that answers from memory (tests/fakes.py). Every call is blocking and best
@@ -121,6 +124,13 @@ class HASource:
         if not self.available():
             return CommandResult(False, "cant_check", "This app isn't running inside Home Assistant.")
         status, body = ha_client.request("POST", f"/services/notify/{service}", {"message": COMMAND}, timeout=15)
+        return classify(status, body)
+
+    def notify(self, service: str, payload: dict) -> CommandResult:
+        """One notify call to a phone ({"message", "title"?, "data"?}): a command or a notification."""
+        if not self.available():
+            return CommandResult(False, "cant_check", "This app isn't running inside Home Assistant.")
+        status, body = ha_client.request("POST", f"/services/notify/{service}", payload, timeout=15)
         return classify(status, body)
 
     def ha_notification(self, title: str, message: str, notification_id: str) -> bool:

@@ -4,7 +4,8 @@
  *   #/               My phone: your phones, and Check <owner>'s phone for phones that forward into your chats
  *   #/mine/<id>      one of your phones: pauses, do-not-monitor hours, the checklist, what admins see, the log, forwarding
  *   #/check/<id>     Check now's live result (Household Chat and the Household Assistant link here)
- *   #/phones         admins: All phones (the monitored ones, and Available devices to add to monitoring)
+ *   #/phones         admins: All phones (the monitored ones, and Available devices to add to monitoring), by status
+ *   #/phones/person  admins: All phones grouped by person
  *   #/phone/<id>     admins: a phone's page (every sensor, history, its settings)
  *   #/admin/<tab>    admins: App settings, People, Tests, Storage
  * Everything is built with DOM nodes (UI.h): names and texts are never parsed as HTML.
@@ -114,7 +115,7 @@
     if (!state.me) { show("my"); return; }
     if ((m = /^\/mine\/([a-z0-9]{1,16})$/.exec(r))) return openMine(m[1]);
     if ((m = /^\/check\/([a-z0-9]{1,16})$/.exec(r))) return openCheck(m[1]);
-    if (r === "/phones" && isAdmin()) return openPhones();
+    if ((m = /^\/phones(?:\/(person))?$/.exec(r)) && isAdmin()) return openPhones(m[1] === "person" ? "person" : "status");
     if ((m = /^\/phone\/([a-z0-9]{1,16})$/.exec(r)) && isAdmin()) return openPhone(m[1]);
     if ((m = /^\/admin(?:\/([a-z]+))?$/.exec(r)) && isAdmin()) return openAdmin(m[1] || "settings");
     openMy();
@@ -177,6 +178,7 @@
         "Install the Home Assistant Companion app on your phone and sign in to this Home Assistant, then ask an admin " +
         "to add it to monitoring. (A phone of yours listed under someone else? Ask an admin to set its owner.)"));
     }
+    if (r.phones.length > 1) add(box, h("h3", { class: "section-title" }, `Your devices (${r.phones.length})`));
     for (const s of r.phones) add(box, myCard(s));
     for (const u of r.unmonitored) add(box, unmonitoredCard(u));
     if (r.others.length) {
@@ -216,19 +218,31 @@
         } }, `Replaces ${o.name}`)))) : null);
   }
 
+  const KIND_ICON = { phone: "📱", tablet: "📟" };
   function myCard(s) {
-    return h("div", { class: "card my-card", dataset: { id: s.id } },
+    const findBox = h("div", { class: "action-result", "aria-live": "polite" });
+    const quick = (id, body) => runAction({ id: s.id }, id, body, findBox);
+    return h("div", { class: "card my-card" + (s.lost ? " lost" : ""), dataset: { id: s.id } },
       s.welcome ? h("p", { class: "note" }, "Your phone is now monitored — set up forwarding if you want it. ",
         h("a", { href: `#/mine/${s.id}` }, "Open the checklist ›")) : null,
+      s.lost ? h("p", { class: "note bad" }, `🚨 Lost mode is on since ${s.lost.sinceText}. `, h("a", { href: `#/mine/${s.id}` }, "Open ›")) : null,
       h("div", { class: "card-head" },
-        h("div", null, h("div", { class: "phone-name" }, s.name), statusLine(s)),
-        h("button", { type: "button", class: "btn-primary", onclick: () => runCheck(s.id) }, "Check now")),
+        h("div", null, h("div", { class: "phone-name" }, `${KIND_ICON[s.kind] || "📱"} ${s.name}`), statusLine(s)),
+        h("span", { class: "head-actions" },
+          h("button", { type: "button", class: "btn-primary", onclick: () => runCheck(s.id) }, "Check now"),
+          s.actionsOn ? moreBtn(`Actions for ${s.name}`, () => [
+            { label: "🔔 Find my phone", onclick: () => quick("find") },
+            s.ios ? null : { label: "💡 Screen on", onclick: () => quick("screen_on") },
+            { label: "🚨 Lost mode and other actions…", onclick: () => go(`#/mine/${s.id}`) },
+          ]) : null)),
       s.reasonText ? h("p", { class: "note warn" }, s.reasonText) : null,
       s.paused ? h("p", { class: "note" }, s.paused.kind === "watching" ? `You paused being watched ${s.paused.untilText}.`
         : `Alerts paused ${s.paused.untilText}.`) : null,
       facts([batteryText(s), s.network ? `📶 ${s.network}` : null, s.lastReboot ? `🔄 last restart ${s.lastReboot.replace("T", " ").slice(0, 16)}` : null,
-        s.forwarding ? "💬 forwarding on" : null, s.dnmText ? `🌙 ${s.dnmText}` : null]),
-      h("div", { class: "card-actions" }, h("a", { class: "btn-secondary", href: `#/mine/${s.id}` }, "Settings, checklist and log ›")));
+        s.forwarding ? "💬 forwarding on" : null, s.dnmText ? `🌙 ${s.dnmText}` : null,
+        s.appOutdated ? h("span", { class: "chip warn-chip", title: s.appOutdatedWhy || "" }, "HA app outdated") : null]),
+      findBox,
+      h("div", { class: "card-actions" }, h("a", { class: "btn-secondary", href: `#/mine/${s.id}` }, "Settings, actions, checklist and log ›")));
   }
 
   function myQuiet(r) {
@@ -269,11 +283,16 @@
         h("button", { type: "button", class: "btn-primary", onclick: () => runCheck(p.id) }, "Check now")),
         p.reasonText ? h("p", { class: "note warn" }, p.reasonText) : null,
         facts([batteryText(p), p.network ? `📶 ${p.network}` : null, p.lastReboot ? `🔄 last restart ${String(p.lastReboot).replace("T", " ").slice(0, 16)}` : null])),
+      lostBanner(p, again),
       p.welcome ? welcomeCard(p, todo) : null,
+      actionsCard(p, again),
       pauseCard(p, again),
       p.welcome ? null : checklistCard(p, todo),
+      setupCard(p),
       forwardingCard(p, again),
       dnmCard(p),
+      bedtimeView(p.bedtime),
+      healthCard(p.health),
       transparencyCard(p, again),
       p.replaceable.length ? replaceCard(p, again) : null,
       h("div", { class: "danger-zone" }, h("h3", null, "Stop monitoring my phone"),
@@ -526,6 +545,343 @@
     mount(clear(body), UI.errorBox("Household Chat didn't answer — is it running?"));
   }
 
+  // ---------- Phone actions, Lost mode, Health, Bedtime, Set up this phone (spec §15) ----------
+  function showResult(box, r) {
+    if (!box) { toast(r.text, !r.ok); return; }
+    mount(clear(box), h("p", { class: "note" + (r.ok ? "" : " bad"), role: "status" }, `${r.ok ? "✅" : "⚠️"} ${r.label}: ${r.text}`));
+  }
+  async function runAction(p, id, body, box) {
+    try {
+      const r = await api(`api/phones/${p.id}/actions/${id}`, { method: "POST", body: body || {} });
+      showResult(box, r);
+      return r;
+    } catch (e) {
+      if (box) mount(clear(box), h("p", { class: "note bad", role: "status" }, `⚠️ ${e.message}`)); else toast(e.message, true);
+      return null;
+    }
+  }
+
+  // the parameters of one action, in a small dialog (Screen on and Find my phone need none)
+  function actionDialog(p, item, box) {
+    const A = p.actions;
+    let dlg = null;
+    const send = async (body) => { if (dlg) dlg.close(); await runAction(p, item.id, body, box); };
+    const choice = (pairs, key) => h("div", { class: "chips" }, pairs.map((c) =>
+      h("button", { type: "button", class: "chip-btn", onclick: () => send({ [key]: c.value }) }, c.label)));
+    let content;
+    if (item.id === "flashlight") {
+      content = h("div", { class: "chips" }, h("button", { type: "button", class: "chip-btn", onclick: () => send({ on: true }) }, "Turn on"),
+        h("button", { type: "button", class: "chip-btn", onclick: () => send({ on: false }) }, "Turn off"));
+    } else if (item.id === "ringer") content = choice(A.ringerModes, "mode");
+    else if (item.id === "dnd") content = choice(A.dndModes, "mode");
+    else if (item.id === "screen_timeout") {
+      content = h("div", { class: "chips" }, A.timeouts.map((s) => h("button", { type: "button", class: "chip-btn",
+        onclick: () => send({ seconds: s }) }, s < 60 ? `${s} s` : `${s / 60} min`)));
+    } else if (item.id === "volume") {
+      const stream = h("select", null, A.streams.map((s) => h("option", { value: s.value }, s.label)));
+      const level = h("input", { type: "number", min: "0", max: "100", value: "5", inputmode: "numeric" });
+      content = h("div", { class: "form" }, field("Which volume", stream), field("Level", level, "0 is silent; the phone uses its maximum for anything above it (often 7 to 25)."),
+        h("div", { class: "actions" }, h("button", { type: "button", class: "btn-primary", onclick: () => send({ stream: stream.value, level: Number(level.value) }) }, "Set the volume")));
+    } else if (item.id === "brightness") {
+      const level = h("input", { type: "range", min: "0", max: "255", value: "128", "aria-label": "Brightness" });
+      const out = h("span", { class: "dim" }, "128");
+      level.addEventListener("input", () => { out.textContent = level.value; });
+      content = h("div", { class: "form" }, field("Brightness (0–255)", h("div", { class: "range-row" }, level, out)),
+        h("div", { class: "actions" }, h("button", { type: "button", class: "btn-primary", onclick: () => send({ level: Number(level.value) }) }, "Set the brightness")));
+    } else if (item.id === "launch_app" || item.id === "dashboard") {
+      const app = item.id === "launch_app";
+      const input = h("input", { type: "text", maxlength: app ? "150" : "120", placeholder: app ? "com.spotify.music" : "/lovelace/0", autocapitalize: "off", spellcheck: "false" });
+      content = h("div", { class: "form" }, field(app ? "The app's package name" : "The dashboard's path", input,
+        app ? "Android package names: Play Store link → id=… (com.spotify.music, com.google.android.apps.maps). Not installed: the phone opens the Play Store." : "From the dashboard's address in Home Assistant: /lovelace/0, /dashboard-kitchen/home."),
+        h("div", { class: "actions" }, h("button", { type: "button", class: "btn-primary", onclick: () => send(app ? { package: input.value } : { path: input.value }) }, app ? "Open the app" : "Open the dashboard")));
+    } else { runAction(p, item.id, {}, box); return; }
+    dlg = openModal(`${item.icon} ${item.label} · ${p.name}`, h("div", null,
+      item.needs ? h("p", { class: "hint small" }, `The phone may need ${item.needs} — the HA app asks the first time.`) : null, content));
+  }
+
+  function lostBanner(p, again) {
+    const L = p.lost;
+    if (!L || !L.on) return null;
+    return h("div", { class: "card lost-banner", role: "status" },
+      h("h3", null, "🚨 Lost mode is on"),
+      h("p", null, `Since ${L.sinceText}${L.byName ? ` (by ${L.byName})` : ""}${L.untilText ? ` · ends ${L.untilText}` : ""}. Rings every ${L.ringMin} min, asks for its location every ${L.locMin} min` +
+        (L.sharePlace ? `, posts its place into ${L.chatName || "a chat"}${L.keep ? "" : " (disappearing after a day)"}.` : "; its place isn't posted (the owner doesn't share it).")),
+      L.paused ? h("p", { class: "note" }, "Do-not-monitor hours: nothing is sent until they end.") : null,
+      L.error ? h("p", { class: "note bad" }, L.error) : null,
+      h("p", { class: "hint small" }, L.unlock === "locked" ? "It ends by itself when the phone is unlocked, or with \"I found it\" on the phone." :
+        L.unlock === "interactive" ? "It ends by itself when the phone's screen is used (Interactive sensor) — turn on the Device locked sensor so a finder waking the screen doesn't end it." :
+          "Turn on the phone's Device locked (or Interactive) sensor so it ends by itself when the phone is unlocked."),
+      L.mayStop ? h("div", { class: "card-actions" }, h("button", { type: "button", class: "btn-primary", onclick: async () => {
+        if (!await UI.confirmDialog("Turn off Lost mode?", "It stops ringing and asking for the location, and the notification goes away.", { okLabel: "Turn off" })) return;
+        try { await api(`api/phones/${p.id}/lost`, { method: "DELETE" }); toast("Lost mode is off"); again(); } catch (e) { toast(e.message, true); }
+      } }, "Turn off Lost mode")) : null);
+  }
+
+  async function pickChat(p, path) {
+    // asks Household Chat for the chats this person may post in; resolves {target, chatId, chatName} or null
+    const body = h("div", null);
+    UI.loading(body, "Asking Household Chat…");
+    return new Promise((resolve) => {
+      let done = false;
+      const finish = (v) => { if (!done) { done = true; resolve(v); } };
+      const dlg = openModal("Post the place into…", body, { onClose: () => finish(null) });
+      (async () => {
+        let rid;
+        try { rid = (await api(path, { method: "POST" })).request; } catch (e) { mount(clear(body), UI.errorBox(e)); return; }
+        for (let i = 0; i < 60; i++) {
+          await new Promise((r) => setTimeout(r, 1000));
+          let r;
+          try { r = await api(`api/requests/${rid}`); } catch (e) { mount(clear(body), UI.errorBox(e)); return; }
+          if (r.state === "pending") continue;
+          if (r.state === "failed") { mount(clear(body), UI.errorBox(r.error)); return; }
+          mount(clear(body), h("div", { class: "radio-list" }, r.result.chats.map((c) => h("button", { type: "button", class: "chip-btn", onclick: () => {
+            finish(c.kind === "personal" ? { target: "my_room", chatName: "📌 My room" } : { target: "chat", chatId: c.id, chatName: c.name });
+            dlg.close();
+          } }, `${c.icon || (c.kind === "personal" ? "📌" : c.kind === "direct" ? "👤" : "👥")} ${c.name} · ${c.members} ${c.members === 1 ? "person" : "people"}`))));
+          return;
+        }
+        mount(clear(body), UI.errorBox("Household Chat didn't answer — is it running?"));
+      })();
+    });
+  }
+
+  function lostDialog(p, again) {
+    const L = p.lost;
+    const ring = h("input", { type: "number", min: "2", max: "120", value: String(L.defaults.ringMin), inputmode: "numeric" });
+    const loc = h("input", { type: "number", min: "1", max: "60", value: String(L.defaults.locMin), inputmode: "numeric" });
+    const until = h("input", { type: "datetime-local" });
+    const keep = h("input", { type: "checkbox" });
+    let chat = { target: "my_room", chatName: "📌 My room" };
+    const chatLabel = h("span", null, "Your 📌 My room");
+    const chatBtn = h("button", { type: "button", class: "btn-secondary", onclick: async () => {
+      const c = await pickChat(p, `api/phones/${p.id}/lost/chats`);
+      if (c) { chat = c; chatLabel.textContent = c.target === "my_room" ? "Your 📌 My room" : c.chatName; }
+    } }, "Choose a chat…");
+    let dlg = null;
+    const ok = h("button", { type: "button", class: "btn-primary", onclick: async () => {
+      const body = { ringMin: Number(ring.value), locMin: Number(loc.value), chat, keep: keep.checked };
+      if (until.value) body.until = new Date(until.value).getTime() / 1000;
+      ok.disabled = true;
+      try { await api(`api/phones/${p.id}/lost`, { method: "POST", body }); dlg.close(); toast("Lost mode is on"); again(); }
+      catch (e) { ok.disabled = false; toast(e.message, true); }
+    } }, "Turn on Lost mode");
+    dlg = openModal(`🚨 Lost mode · ${p.name}`, h("div", { class: "form" },
+      h("p", { class: "hint" }, `The phone rings like Find my phone, its screen turns on and it shows "${L.contactText}" until it's found.`),
+      h("div", { class: "grid2" }, field("Ring every (minutes)", ring), field("Ask for the location every (minutes)", loc)),
+      h("p", { class: "note warn small" }, "Asking for the location often uses more battery — the Companion app's documentation warns about it."),
+      field("Ends at (optional)", until, "Otherwise until it's turned off, the phone is unlocked, or \"I found it\" on the phone."),
+      L.sharePlace ? h("div", { class: "field" }, h("span", { class: "field-label" }, "Post its place into"),
+        h("div", { class: "card-actions" }, chatLabel, chatBtn),
+        h("span", { class: "hint small" }, L.exact ? "The zone, its address and exact coordinates (the owner allows exact location in Lost mode)." : "The zone name only (the owner hasn't allowed exact location)."),
+        h("label", { class: "check" }, keep, "Keep these messages (don't let them disappear after a day)"))
+        : h("p", { class: "hint" }, "Its place isn't posted: the owner doesn't share their place (Share my last place)."),
+      L.ios ? h("p", { class: "hint small" }, "iPhone: it rings as a critical alert; the screen can't be turned on and the notification can't stay.") : null,
+      h("div", { class: "actions" }, h("button", { type: "button", class: "btn-ghost", onclick: () => dlg.close() }, "Cancel"), ok)));
+  }
+
+  function consentEditor(p, again) {
+    const A = p.actions;
+    const allow = new Set(A.allow);
+    const boxes = A.consentIds.map((id) => {
+      const cb = h("input", { type: "checkbox", checked: allow.has(id) ? true : null, onchange: () => { if (cb.checked) allow.add(id); else allow.delete(id); } });
+      return h("label", { class: "check" }, cb, A.labels[id] + (A.defaults.includes(id) ? " (allowed by default)" : ""));
+    });
+    const fromHa = h("input", { type: "checkbox", checked: A.fromHa ? true : null });
+    const exact = h("input", { type: "checkbox", checked: A.lostExact ? true : null });
+    const contact = h("input", { type: "text", maxlength: "80", value: A.lostContact, placeholder: "Asha, 555 0100" });
+    const message = h("input", { type: "text", maxlength: "200", value: A.lostMessage, placeholder: "Reward offered" });
+    return h("details", { class: "fold" }, h("summary", null, A.child ? "What admins may use on this child's phone" : "What others may use on this phone"),
+      h("p", { class: "hint small" }, A.child ? "On a child's phone the admins choose (the child sees the choice)." : "Only you choose this; admins see your choice. Every use is in the log below."),
+      h("div", { class: "radio-list" }, boxes),
+      h("label", { class: "check" }, fromHa, "Home Assistant automations may ring it (a wall-tablet button without a person)"),
+      h("label", { class: "check" }, exact, "Exact location in Lost mode (address and coordinates, not just the zone)"),
+      field("Lost mode: if found, please call…", contact), field("…and the message", message),
+      h("div", { class: "card-actions" }, h("button", { type: "button", class: "btn-secondary", onclick: async () => {
+        try {
+          await api(`api/phones/${p.id}/consent`, { method: "PUT", body: { allow: [...allow], fromHa: fromHa.checked, lostExact: exact.checked, lostContact: contact.value, lostMessage: message.value } });
+          toast("Saved"); again();
+        } catch (e) { toast(e.message, true); }
+      } }, "Save")));
+  }
+
+  function actionsCard(p, again) {
+    const A = p.actions;
+    if (!A) return null;
+    const c = h("div", { class: "card actions-card" }, h("h3", null, "📲 Phone actions"));
+    if (!A.on) { add(c, h("p", { class: "hint" }, "Phone actions are turned off in this household (App settings).")); return c; }
+    const box = h("div", { class: "action-result", "aria-live": "polite" });
+    const find = A.items.find((i) => i.id === "find");
+    add(c, h("div", { class: "card-actions" },
+      h("button", { type: "button", class: "btn-primary", disabled: !find.may, title: find.why || "", onclick: () => runAction(p, "find", {}, box) }, "🔔 Find my phone"),
+      A.finding ? h("span", { class: "dim small" }, "Ringing — until Found it on the phone.") : null),
+      h("p", { class: "hint small one-line" }, A.ios ? "Rings as a critical alert, even on mute." : "Rings loudly on the alarm volume, even on silent or Do Not Disturb, until Found it."));
+    const others = A.items.filter((i) => i.id !== "find");
+    add(c, h("div", { class: "action-grid" }, others.map((i) => h("button", {
+      type: "button", class: "chip-btn action-btn", disabled: !i.may, title: i.may ? (i.needs ? `May need ${i.needs}` : "") : (i.why || ""),
+      onclick: () => (i.id === "screen_on" ? runAction(p, i.id, {}, box) : actionDialog(p, i, box)) }, `${i.icon} ${i.label}`))));
+    const blocked = others.filter((i) => !i.may && i.why);
+    if (blocked.length && !A.ios) add(c, h("p", { class: "hint small" }, `Greyed out: ${[...new Set(blocked.map((i) => i.why))].join(" ")}`));
+    if (A.ios) add(c, h("p", { class: "hint small" }, "iPhone: only Find my phone and Lost mode — the Companion app for iOS has no other such commands."));
+    add(c, box);
+    if (p.lost && !p.lost.on) {
+      add(c, h("div", { class: "card-actions" }, h("button", { type: "button", class: "btn-secondary", disabled: !A.mayLost, title: A.lostWhy || "",
+        onclick: () => lostDialog(p, again) }, "🚨 Turn on Lost mode…")));
+    }
+    if (A.canEditConsent) add(c, consentEditor(p, again));
+    else add(c, h("p", { class: "hint small" }, `${A.child ? "Admins" : "The owner"} allow others to use: ${A.allow.map((a) => A.labels[a]).join(", ") || "nothing"}${A.fromHa ? "; Home Assistant automations may ring it" : ""}.`));
+    add(c, h("details", { class: "fold" }, h("summary", null, `Actions on this phone (${A.log.length})`),
+      A.log.length ? h("div", { class: "log-list" }, A.log.map((l) => h("div", { class: "log-row" }, h("span", { class: "dim" }, l.atText),
+        h("span", null, `${l.ok ? "" : "⚠️ "}${l.what} — ${l.by}${l.via !== "app" ? ` (${l.via.replace("_", " ")})` : ""} — ${l.result}`)))) : h("p", { class: "hint" }, "None in the history kept.")));
+    return c;
+  }
+
+  function healthCard(hl) {
+    if (!hl) return null;
+    const app = hl.app || {};
+    return card("🩺 Health", h("table", { class: "sensor-table" },
+      h("tr", null, h("td", null, "Storage free"), h("td", null, hl.storageFree === null || hl.storageFree === undefined ? "— (Storage sensor off)" : `${hl.storageFree}%${hl.storageLow ? " ⚠️ almost full" : ""}`)),
+      h("tr", null, h("td", null, "Battery health"), h("td", null, hl.batteryHealth ? `${hl.batteryHealth}${hl.batteryHealthBad ? " ⚠️" : ""}` : "— (Battery health sensor off)")),
+      h("tr", null, h("td", null, "Home Assistant app"), h("td", null, app.version || "—", app.outdated ? h("span", { class: "chip warn-chip", title: app.why || "" }, "HA app outdated") : null))),
+      app.outdated ? h("p", { class: "hint small" }, `Outdated: ${app.why}. Update it from the Play Store (or the App Store).`) : null);
+  }
+
+  // the windows editor shared by do-not-monitor hours and bedtime: [{days, start, end, pauseForwarding?}]
+  function windowsEditor(list, opts) {
+    const rows = h("div", { class: "dnm-list" });
+    const draw = () => {
+      clear(rows);
+      if (!list.length) add(rows, h("p", { class: "hint" }, opts.none));
+      list.forEach((w, i) => {
+        const start = h("input", { type: "time", value: w.start, "aria-label": "From", onchange: () => { w.start = start.value; } });
+        const end = h("input", { type: "time", value: w.end, "aria-label": "Until", onchange: () => { w.end = end.value; } });
+        const pf = opts.pauseForwarding ? h("input", { type: "checkbox", checked: w.pauseForwarding, onchange: () => { w.pauseForwarding = pf.checked; } }) : null;
+        add(rows, h("div", { class: "dnm-window" },
+          h("div", { class: "chips day-chips", role: "group", "aria-label": "Days" }, DAY_NAMES.map((n, di) => h("button", {
+            type: "button", class: "chip-btn day" + (w.days.includes(di) ? " on" : ""), "aria-pressed": w.days.includes(di) ? "true" : "false",
+            onclick: (e) => {
+              const on = !w.days.includes(di);
+              w.days = on ? w.days.concat([di]).sort() : w.days.filter((x) => x !== di);
+              e.currentTarget.classList.toggle("on", on);
+              e.currentTarget.setAttribute("aria-pressed", on ? "true" : "false");
+            } }, n))),
+          h("div", { class: "grid2" }, field("From", start), field("Until", end, "Earlier than From: runs past midnight.")),
+          pf ? h("label", { class: "check" }, pf, "Also pause forwarding") : null,
+          h("div", { class: "card-actions" }, h("button", { type: "button", class: "btn-ghost", onclick: () => { list.splice(i, 1); draw(); } }, "Remove this window"))));
+      });
+    };
+    draw();
+    return { rows, add: () => {
+      if (list.length >= 7) { toast("At most 7 windows", true); return; }
+      list.push(Object.assign({ days: [0, 1, 2, 3, 4], start: opts.start, end: opts.end }, opts.pauseForwarding ? { pauseForwarding: false } : {})); draw();
+    } };
+  }
+
+  // the child's view of their bedtime (transparency), and the admins' editor
+  function bedtimeView(b) {
+    if (!b || !b.applies || !b.text) return null;
+    return card("🌙 Bedtime", h("p", null, b.text + (b.now ? " — it's bedtime now." : ".")),
+      h("p", { class: "hint" }, `If the screen is in use at bedtime for more than ${b.afterMin} minutes, ${b.parentNames.length ? b.parentNames.join(" and ") : "the parents"} ${b.parentNames.length === 1 ? "gets" : "get"} one quiet message that night.` +
+        (b.dnd ? " Do Not Disturb turns on at bedtime and off at its end." : "")),
+      b.interactive === false ? h("p", { class: "note warn" }, "The Interactive sensor is off on this phone: bedtime can't tell when the screen is in use.") : null);
+  }
+
+  async function bedtimeEditor(a, again) {
+    const b = a.bedtime;
+    if (!b) return null;
+    const c = h("details", { class: "card", id: "bedtime-card", open: b.text ? true : null }, h("summary", null, h("strong", null, "🌙 Bedtime")));
+    if (!b.applies) {
+      add(c, h("p", { class: "hint" }, "For children's phones: mark the owner as a child in Admin → People, then set bedtime here."));
+      return c;
+    }
+    const people = await peopleList();
+    const list = b.windows.map((w) => ({ days: w.days.slice(), start: w.start, end: w.end }));
+    const ed = windowsEditor(list, { none: "No bedtime yet.", start: "21:00", end: "07:00" });
+    const chosen = new Set(b.parents);
+    const parents = people.filter((x) => !x.isChild).map((x) => {
+      const cb = h("input", { type: "checkbox", checked: chosen.has(x.id) ? true : null, onchange: () => { if (cb.checked) chosen.add(x.id); else chosen.delete(x.id); } });
+      return h("label", { class: "check" }, cb, x.name);
+    });
+    const dnd = h("input", { type: "checkbox", checked: b.dnd ? true : null });
+    add(c, h("p", { class: "hint one-line" }, `The parents chosen get one quiet message a night when the screen is in use at bedtime for more than ${b.afterMin} minutes. ${a.owner || "The child"} sees this on My phone.`),
+      ed.rows, h("div", { class: "card-actions" }, h("button", { type: "button", class: "btn-secondary", onclick: ed.add }, "+ Add a window")),
+      h("div", { class: "field" }, h("span", { class: "field-label" }, "Tell"), h("div", { class: "radio-list" }, parents)),
+      h("label", { class: "check" }, dnd, "Turn on Do Not Disturb at bedtime (priority only), off at its end"),
+      b.interactive === false ? h("p", { class: "note warn" }, "The phone's Interactive sensor is off: ask the child to turn it on (it's on their checklist).") : null,
+      h("div", { class: "card-actions" }, h("button", { type: "button", class: "btn-primary", onclick: async () => {
+        try { await api(`api/admin/phones/${a.id}/bedtime`, { method: "PUT", body: { windows: list, parents: [...chosen], dnd: dnd.checked } }); toast("Saved"); again(); }
+        catch (e) { toast(e.message, true); }
+      } }, "Save bedtime")));
+    return c;
+  }
+
+  // a QR code as an SVG drawn from QR.encode (static/qr.js): no outside service, no HTML strings
+  function qrSvg(text) {
+    if (!window.QR || !text) return null;
+    let q;
+    try { q = QR.encode(text, "M"); } catch (e) { return null; }
+    const NS = "http://www.w3.org/2000/svg";
+    const n = q.size + 8;
+    const svg = document.createElementNS(NS, "svg");
+    svg.setAttribute("viewBox", `0 0 ${n} ${n}`);
+    svg.setAttribute("class", "qr");
+    svg.setAttribute("role", "img");
+    svg.setAttribute("aria-label", "QR code for the link below");
+    const bg = document.createElementNS(NS, "rect");
+    bg.setAttribute("width", String(n)); bg.setAttribute("height", String(n)); bg.setAttribute("fill", "#fff");
+    svg.append(bg);
+    let d = "";
+    q.modules.forEach((row, y) => row.forEach((on, x) => { if (on) d += `M${x + 4} ${y + 4}h1v1h-1z`; }));
+    const path = document.createElementNS(NS, "path");
+    path.setAttribute("d", d); path.setAttribute("fill", "#000");
+    svg.append(path);
+    return svg;
+  }
+
+  function setupCard(p) {
+    const s = p.setup;
+    if (!s) return null;
+    const link = s.appLink || s.myLink;
+    const results = h("div", { class: "test-results", "aria-live": "polite" });
+    const run = h("button", { type: "button", class: "btn-primary", onclick: async () => {
+      run.disabled = true;
+      UI.loading(results, "Testing…");
+      try { renderTests(results, await api(`api/phones/${p.id}/test-everything`, { method: "POST" })); }
+      catch (e) { mount(clear(results), UI.errorBox(e)); }
+      finally { run.disabled = false; }
+    } }, "Test everything");
+    return h("details", { class: "card", id: "setup-card" }, h("summary", null, h("strong", null, "📲 Set up this phone")),
+      h("p", { class: "hint one-line" }, "Open this on the phone (scan the code, or tap the link there): it opens My phone in the Home Assistant app."),
+      h("div", { class: "setup-row" }, qrSvg(link),
+        h("div", { class: "setup-links" },
+          s.appLink ? h("a", { class: "btn-secondary", href: s.appLink }, "Open in the HA app") : null,
+          h("a", { class: "btn-ghost", href: s.myLink, target: "_blank", rel: "noopener noreferrer" }, "Open with My Home Assistant"),
+          h("p", { class: "hint small" }, "The Home Assistant app has no links to its own settings pages, so these steps are written out:"))),
+      h("ol", { class: "steps" }, s.steps.map((x) => h("li", null, x))),
+      h("div", { class: "card-actions" }, run, h("span", { class: "hint small" }, "The checklist, a Check now, a test forward (if forwarding is on) and a test notification.")),
+      results);
+  }
+
+  function renderTests(box, r) {
+    const mark = (ok) => ok === true ? "✅" : ok === false ? "❌" : "•";
+    const rows = r.items.map((i) => h("li", { dataset: { id: i.id } }, h("span", { class: "mark" }, mark(i.ok)),
+      h("div", null, h("div", { class: "item-title" }, i.title), i.detail ? h("div", { class: "hint small" }, i.detail) : null)));
+    mount(clear(box), h("p", { class: "note" + (r.failed ? " warn" : "") }, `${r.passed} passed, ${r.failed} to fix.`), h("ul", { class: "checklist" }, rows));
+    if (r.check) {
+      const row = rows.find((x) => x.dataset.id === "check");
+      let n = 0;
+      const t = every(1500, async () => {
+        n += 1;
+        try {
+          const c = await api(`api/checks/${r.check}`);
+          if (c.state === "waiting" && n < 60) return;
+          clearInterval(t);
+          mount(clear(row), h("span", { class: "mark" }, c.state === "online" ? "✅" : "❌"),
+            h("div", null, h("div", { class: "item-title" }, "Check now"), h("div", { class: "hint small" }, `${c.title}${c.text ? " — " + c.text : ""}`)));
+        } catch (e) { clearInterval(t); }
+      });
+    }
+  }
+
   // ---------- Check now: the live result card ----------
   async function openCheck(id) {
     show("check");
@@ -587,7 +943,8 @@
   }
 
   // ---------- Admin mode: All phones ----------
-  async function openPhones() {
+  async function openPhones(by) {
+    state.phonesBy = by || "status";
     show("phones");
     const box = $("#phonesBody");
     if (!box.firstChild) UI.loading(box);
@@ -620,6 +977,10 @@
     add(box, h("div", { class: "summary-strip", "aria-label": `${s.phones} monitored, ${s.online} online, ${s.offline} offline, ${s.paused} paused or in do-not-monitor hours` },
       kpi("Monitored", s.phones), kpi("Online", s.online, "pos"), kpi("Offline", s.offline, s.offline ? "neg" : ""),
       kpi("Late", s.late), kpi("Paused", s.paused)));
+    if (r.lostMode && r.lostMode.length) {
+      add(box, h("div", { class: "card lost-banner", role: "status" }, h("h3", null, "🚨 Lost mode"),
+        r.lostMode.map((l) => h("p", null, h("a", { href: `#/phone/${l.id}` }, l.name), ` — since ${l.sinceText}${l.byName ? ` (by ${l.byName})` : ""}${l.untilText ? `, ends ${l.untilText}` : ""}`))));
+    }
     if (r.lostContact) {
       add(box, h("p", { class: "note bad" }, `Home Assistant has lost contact with the phones (${r.lostContact.silent} of ${r.lostContact.total} silent since ${hhmm(r.lostContact.since)}). Offline alerts wait until contact returns.`));
     }
@@ -644,8 +1005,21 @@
       add(box, h("div", { class: "card" }, h("div", { class: "ui-group-head" }, h("span", null, title), h("span", { class: "ui-group-total" }, String(items.length))),
         h("div", { class: "phone-list" }, items.map(phoneRow))));
     };
-    list("Phones", r.phones);
-    list("Tablets", r.tablets);
+    if (r.phones.length || r.tablets.length) {
+      const by = state.phonesBy === "person" ? "person" : "status";
+      add(box, h("div", { class: "seg", role: "group", "aria-label": "Group the phones" },
+        [["status", "By status", "#/phones"], ["person", "By person", "#/phones/person"]].map(([v, l, hash]) =>
+          h("button", { type: "button", class: "seg-btn" + (by === v ? " active" : ""), "aria-pressed": by === v ? "true" : "false",
+            "aria-current": by === v ? "true" : null, onclick: () => replace(hash) }, l))));
+      if (by === "person") {
+        const all = {};
+        r.phones.concat(r.tablets).forEach((x) => { all[x.id] = x; });
+        for (const g of r.people) list(`${g.owner}`, g.phones.map((id) => all[id]).filter(Boolean));
+      } else {
+        list("Phones", r.phones);
+        list("Tablets", r.tablets);
+      }
+    }
     if (r.available.length) {
       add(box, h("div", { class: "card", id: "available" }, h("div", { class: "ui-group-head" }, h("span", null, "Available devices"),
         h("span", { class: "ui-group-total" }, String(r.available.length))),
@@ -736,11 +1110,15 @@
         dot(s.status),
         h("div", { class: "row-main" }, h("div", { class: "phone-name" }, s.name),
           h("div", { class: "dim small" }, s.hidden ? sub : `${s.label}${s.lastCheckinText ? ` · ${s.lastCheckinText}` : ""} · ${sub}`),
-          s.dnmText ? h("div", { class: "dim small" }, `🌙 ${s.dnmText}`) : null),
+          s.dnmText ? h("div", { class: "dim small" }, `🌙 ${s.dnmText}`) : null,
+          (s.lost || s.appOutdated) ? h("div", { class: "chips row-chips" },
+            s.lost ? h("span", { class: "chip lost-chip" }, "🚨 Lost mode") : null,
+            s.appOutdated ? h("span", { class: "chip warn-chip", title: s.appOutdatedWhy || "" }, "HA app outdated") : null) : null),
         s.hidden ? null : h("div", { class: "row-cols" }, h("span", null, batteryText(s) || "—"), h("span", null, s.network || "—"),
           h("span", null, s.appVersion || s.osVersion || ""))),
       moreBtn(`More for ${s.name}`, () => [
         { label: "🔎 Check now", disabled: s.hidden, onclick: () => runCheck(s.id) },
+        s.actionsOn ? { label: "🔔 Find my phone", onclick: () => runAction(s, "find", {}) } : null,
         { label: "⏸️ Pause alerts for 4 hours", disabled: s.hidden || !!s.paused, onclick: async () => {
           try { await api(`api/phones/${s.id}/pause`, { method: "POST", body: { kind: "alerts", hours: 4 } }); loadPhones(); } catch (e) { toast(e.message, true); } } },
         { label: "✏️ Edit", onclick: () => go(`#/phone/${s.id}`) },
@@ -787,6 +1165,7 @@
         : "The owner paused being watched: its status, battery, network and sensors aren't shown until the pause ends.") :
         facts([batteryText(a), a.network ? `📶 ${a.network}` : null, a.lastReboot ? `🔄 ${String(a.lastReboot).replace("T", " ").slice(0, 16)}` : null,
           a.zone ? `📍 ${a.zone}` : null, a.forwardingTarget ? `💬 forwards into ${a.forwardingTarget}` : null])));
+    add(box, lostBanner(a, again), actionsCard(a, again), a.health ? healthCard(a.health) : null, await bedtimeEditor(a, again));
     add(box, card("📱 Device", h("table", { class: "sensor-table" }, [["Manufacturer", a.manufacturer], ["Model", a.model],
       ["System", [a.osName, a.osVersion].filter(Boolean).join(" ")], ["Companion app", a.appVersion || "—"], ["Owner", a.owner || "nobody"],
       ["Kind", a.kind], ["In Home Assistant as", a.haName], ["Notify service", a.notifyService || a.defaultService || "—"]]
@@ -996,7 +1375,7 @@
   }
 
   // Top-level tabs start a new Back trail; a deep link with no trail goes back to its parent page
-  const TAB_HASHES = new Set(["", "#", "#/", "#/phones", "#/admin"]);
+  const TAB_HASHES = new Set(["", "#", "#/", "#/phones", "#/phones/person", "#/admin"]);
   function parentOf(hash) {
     if (/^#\/(mine|check)\//.test(hash)) return "#/";
     if (/^#\/phone\//.test(hash)) return "#/phones";

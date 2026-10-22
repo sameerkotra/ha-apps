@@ -6,7 +6,7 @@ import os
 from fastapi import APIRouter, Body, Depends, File, HTTPException, UploadFile
 from starlette.concurrency import run_in_threadpool
 
-from .. import alerts, app_messages, auth, config, db, monitor, phones, settings, views
+from .. import actions, alerts, app_messages, auth, bedtime, config, db, health, lost, monitor, phones, settings, views
 from ..auth import require_admin
 from ..common import backup_core, ha_client, ha_notify, people_admin
 
@@ -33,7 +33,8 @@ def all_phones(admin: dict = Depends(require_admin)):
     unused_s = settings.get("unused_days") * 86400
     with db.get_conn() as conn:
         rows = conn.execute("SELECT * FROM phones WHERE retired = 0 ORDER BY first_seen").fetchall()
-        items = [(p, views.summary(conn, p, now, viewer=admin)) for p in rows]
+        best = health.newest(conn)
+        items = [(p, views.summary(conn, p, now, viewer=admin, best=best)) for p in rows]
         avail = [available(conn, p, s) for p, s in items if not p["monitored"]]
         lost = db.state_get(conn, "lost_contact")
     def order(x):
@@ -46,11 +47,40 @@ def all_phones(admin: dict = Depends(require_admin)):
              "late": sum(1 for p, s in items if s["status"] in ("late", "cant_check")), "paused": paused}
     unused = [s for p, s in items if not p["keep_unused"] and now - (p["last_checkin"] or p["first_seen"]) > unused_s]
     avail.sort(key=lambda a: (a["kind"] == "ignored", not a["inRegistry"], a["name"].lower()))
+    ordered = [s for p, s in sorted(items, key=order)]
     return {"summary": strip, "lostContact": lost, "unused": unused, "available": avail,
+            "people": by_person(ordered), "lostMode": [{"id": s["id"], "name": s["name"], **s["lost"]}
+                                                      for s in ordered if s.get("lost")],
             "phones": [s for p, s in sorted(items, key=order) if p["kind"] != "tablet"],
             "tablets": [s for p, s in sorted(items, key=order) if p["kind"] == "tablet"],
             "checkins": "events" if monitor.reported_events_seen(now) else "polling",
             "haLoaded": phones.LIVE.loaded_at is not None, "connected": app_messages.connected_apps()}
+
+
+def by_person(items: list[dict]) -> list[dict]:
+    """All phones grouped by person (§15.8): each owner's monitored devices (phones and tablets together, problems
+    first as given), owners by name, devices without an owner last."""
+    groups: dict = {}
+    for s in items:
+        key = s.get("ownerId") or ""
+        g = groups.setdefault(key, {"ownerId": s.get("ownerId"), "owner": s.get("owner") or "No owner", "phones": []})
+        g["phones"].append(s["id"])
+    return sorted(groups.values(), key=lambda g: (g["ownerId"] is None, g["owner"].lower()))
+
+
+@router.put("/admin/phones/{pid}/bedtime")
+def set_bedtime(pid: str, body: dict = Body(...), admin: dict = Depends(require_admin)):
+    """A child's bedtime: {windows: [{days, start, end}], parents: [user ids], dnd: bool} (§15.4)."""
+    with db.get_conn() as conn:
+        p = phones.get(conn, pid)
+        if p is None or not p["monitored"]:
+            raise HTTPException(404, "No such monitored phone.")
+        try:
+            bedtime.set_bedtime(conn, p, admin, body, config.clock())
+        except actions.Refused as e:
+            raise HTTPException(e.status, e.text)
+    from .api import phone
+    return phone(pid, admin)
 
 
 @router.post("/admin/refresh")
@@ -181,6 +211,8 @@ def stop_monitoring(pid: str, body: dict = Body(...), admin: dict = Depends(requ
     keep = (body or {}).get("keepHistory") if isinstance(body, dict) else None
     if not isinstance(keep, bool):
         raise HTTPException(422, "Say whether to keep its history (keepHistory: true or false).")
+    lost.stop(pid, None, "monitoring stopped")
+    actions.restore(pid, "monitoring stopped", by_name="Household Phones")
     now = config.clock()
     with db.get_conn() as conn:
         p = phones.get(conn, pid)
@@ -198,7 +230,7 @@ def stop_monitoring(pid: str, body: dict = Body(...), admin: dict = Depends(requ
             phones.history(conn, pid, "owner", f"Monitoring stopped by {admin['name']} (history kept).", by=admin["id"],
                            now=now)
         else:
-            for t in ("history", "checks", "forwards"):
+            for t in ("history", "checks", "forwards", "actions"):
                 conn.execute(f"DELETE FROM {t} WHERE phone_id = ?", (pid,))
             conn.execute("UPDATE phones SET last_checkin = NULL, last_spontaneous = NULL, last_request_at = NULL, "
                          "battery = NULL, charging = NULL, answers_requests = NULL, redacted_at = NULL, "

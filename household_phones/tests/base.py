@@ -34,7 +34,7 @@ def main_app():
     return app
 
 
-TABLES = ("alert_queue", "alert_state", "forwards", "checks", "history", "bus_requests", "phones", "user_notify", "users",
+TABLES = ("actions", "alert_queue", "alert_state", "forwards", "checks", "history", "bus_requests", "phones", "user_notify", "users",
           "app_state", "app_settings")
 
 
@@ -60,7 +60,9 @@ class PhonesCase(unittest.TestCase):
         self.addCleanup(p.stop)
         # notifications: recorded, never sent
         self.sent = []
-        p = mock.patch.object(ha_notify, "send_notify", lambda svc, title, msg, data=None: self.sent.append((svc, title, msg)) or True)
+        self.sent_data = []
+        p = mock.patch.object(ha_notify, "send_notify", lambda svc, title, msg, data=None: self.sent.append((svc, title, msg))
+                              or self.sent_data.append(data) or True)
         p.start()
         self.addCleanup(p.stop)
         # forwards: recorded (the data Chat would get), never sent

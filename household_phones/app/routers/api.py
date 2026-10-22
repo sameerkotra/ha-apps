@@ -7,7 +7,7 @@ import re
 from fastapi import APIRouter, Body, Depends, HTTPException, Request
 from starlette.concurrency import run_in_threadpool
 
-from .. import app_messages, auth, checknow, config, db, dnm, monitor, phones, settings, sidebar, views
+from .. import actions, app_messages, auth, checknow, config, db, dnm, lost, monitor, phones, phonesetup, settings, sidebar, views
 from ..auth import get_current_user
 from ..common import auth_core
 from ..common import whoami as whoami_core
@@ -46,7 +46,9 @@ def my(user: dict = Depends(get_current_user)):
     """My phone: your phones, and the phones that forward into your chats (Check <owner>'s phone)."""
     now = config.clock()
     with db.get_conn() as conn:
-        mine = [views.summary(conn, p, now, viewer=user) for p in phones.mine(conn, user["id"])]
+        from .. import health
+        best = health.newest(conn)
+        mine = [views.summary(conn, p, now, viewer=user, best=best) for p in phones.mine(conn, user["id"])]
         # devices no admin added: the name only, and that they aren't monitored (no details)
         unmonitored = [{"id": p["id"], "name": phones.display_name(conn, p), "replaces": replace_candidates(conn, p)}
                        for p in phones.mine_unmonitored(conn, user["id"])]
@@ -374,6 +376,7 @@ def replaces(pid: str, body: dict = Body(...), user: dict = Depends(get_current_
 
 
 MOVED = ("name", "kind", "monitored", "monitored_since", "interval_min", "owner_id", "owner_by_admin", "dnm_windows",
+         "act_allow", "act_from_ha", "lost_exact", "lost_contact", "lost_message", "bed_windows", "bed_parents", "bed_dnd",
          "offline_alert_after_min", "share_place", "fwd_on", "fwd_target", "fwd_chat_id", "fwd_chat_name", "fwd_chat_kind", "fwd_members",
          "fwd_members_at", "fwd_disappear", "fwd_apps", "fwd_filter", "fwd_words", "fwd_all_confirmed",
          "fwd_quiet_start", "fwd_quiet_end", "fwd_quiet_mode")
@@ -386,7 +389,7 @@ def replace(conn, old, new, user: dict) -> None:
         vals.update(monitored=new["monitored"], monitored_since=new["monitored_since"])
     conn.execute("UPDATE phones SET " + ", ".join(f"{c} = ?" for c in MOVED) + ", kind_confirmed = 1 WHERE id = ?",
                  (*vals.values(), new["id"]))
-    for t in ("history", "checks", "forwards"):
+    for t in ("history", "checks", "forwards", "actions"):
         conn.execute(f"UPDATE {t} SET phone_id = ? WHERE phone_id = ?", (new["id"], old["id"]))
     conn.execute("DELETE FROM alert_state WHERE phone_id = ?", (old["id"],))
     conn.execute("UPDATE phones SET retired = 1, replaced_by = ?, device_id = NULL, fwd_on = 0, monitored = 0 WHERE id = ?",
@@ -431,3 +434,82 @@ def check_latest(pid: str, user: dict = Depends(get_current_user)):
         r = conn.execute("SELECT id FROM checks WHERE phone_id = ? ORDER BY started DESC LIMIT 1", (pid,)).fetchone()
         name = phones.display_name(conn, p)
     return {"phone": {"id": pid, "name": name}, "check": checknow.view(r["id"], user) if r else None}
+
+
+# --------------------------------------------------------------------------------------------- phone actions (§15)
+
+def _refused(e: "actions.Refused"):
+    return HTTPException(e.status, e.text)
+
+
+@router.post("/phones/{pid}/actions/{action}")
+def use_action(pid: str, action: str, body: dict = Body(default={}), user: dict = Depends(get_current_user)):
+    """Find my phone, Screen on, … on your own phone, or (admins) on a phone whose owner allows it."""
+    with db.get_conn() as conn:
+        _phone(conn, pid, user)
+    try:
+        return actions.run(pid, action[:20], body if isinstance(body, dict) else {}, user)
+    except actions.Refused as e:
+        raise _refused(e)
+
+
+@router.put("/phones/{pid}/consent")
+def consent(pid: str, body: dict = Body(...), user: dict = Depends(get_current_user)):
+    """Which actions others may use on this phone, Home Assistant automations, exact location and the Lost-mode
+    text: the owner's own choice (on a child's phone, the admins')."""
+    now = config.clock()
+    with db.get_conn() as conn:
+        p = _phone(conn, pid, user)
+        try:
+            actions.set_consent(conn, p, user, body, now)
+        except actions.Refused as e:
+            raise _refused(e)
+    return phone(pid, user)
+
+
+@router.post("/phones/{pid}/lost")
+def lost_start(pid: str, body: dict = Body(default={}), user: dict = Depends(get_current_user)):
+    with db.get_conn() as conn:
+        _phone(conn, pid, user)
+    try:
+        lost.start(pid, user, body if isinstance(body, dict) else {})
+    except actions.Refused as e:
+        raise _refused(e)
+    return phone(pid, user)
+
+
+@router.delete("/phones/{pid}/lost")
+def lost_stop(pid: str, user: dict = Depends(get_current_user)):
+    with db.get_conn() as conn:
+        _phone(conn, pid, user)
+    try:
+        lost.stop(pid, user, f"turned off by {user['name']}")
+    except actions.Refused as e:
+        raise _refused(e)
+    return phone(pid, user)
+
+
+@router.post("/phones/{pid}/lost/chats")
+def lost_chats(pid: str, user: dict = Depends(get_current_user)):
+    """The chats you may post Lost mode's place into (asked from Household Chat; the page polls the answer)."""
+    with db.get_conn() as conn:
+        p = _phone(conn, pid, user)
+        ok, why = actions.permitted(conn, p, user, "lost")
+        if not ok:
+            raise HTTPException(403, why)
+    try:
+        rid = app_messages.ask_chats(user["id"], pid)
+    except ValueError as e:
+        raise HTTPException(409, str(e))
+    return {"request": rid}
+
+
+@router.post("/phones/{pid}/test-everything")
+def test_everything(pid: str, user: dict = Depends(get_current_user)):
+    """The owner's Test everything: the checklist, a Check now, a test forward and a test notification."""
+    with db.get_conn() as conn:
+        _phone(conn, pid, user, owner=True, admin_ok=False)
+    try:
+        return phonesetup.test_everything(pid, user)
+    except actions.Refused as e:
+        raise _refused(e)

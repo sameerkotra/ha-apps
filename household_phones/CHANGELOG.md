@@ -2,6 +2,18 @@
 
 All notable changes to Household Phones. See the [repository](https://github.com/sameerkotra/ha-apps).
 
+## 1.4.0
+
+- **Find my phone:** rings a phone loudly on the alarm volume, even on silent or Do Not Disturb, until someone taps **Found it** on it; the volume and Do Not Disturb are put back afterwards. On iPhones it's a critical alert.
+- **Phone actions:** Screen on, Flashlight, Ringer, Do Not Disturb, Volume, Brightness, Screen timeout, Open an app and Open a dashboard, on My phone and on a phone's page (Android).
+- **You decide:** on My phone, choose what admins may use on your phone — Find my phone and Screen on by default, nothing else. Admins decide for children's phones. Every use is in the phone's log, and "What admins see" lists your choices.
+- **Lost mode:** rings every few minutes, shows "If found, please call …" on the phone, asks for its location more often and posts its place into a chat — only if you share your place, and coordinates only if you allow it. It ends when the phone is unlocked, at an end time, or with "I found it".
+- **Ring from anywhere:** "ring my phone" in the Household Assistant, or the `household_phones_find` event for a wall-tablet button (see the docs).
+- **Children's bedtime:** admins set bedtime hours on a child's phone; parents get one quiet message a night when the screen is in use then, and Do Not Disturb can turn on at bedtime. The child sees it on My phone.
+- **Storage and battery health alerts**, a **Health** card on each phone's page, and **HA app outdated** when a phone's Home Assistant app is older than the others' (or an optional minimum).
+- **Set up this phone:** a QR code that opens My phone in the Home Assistant app, the setup steps, and **Test everything** (checklist, Check now, a test forward and a test notification).
+- **One view per person:** My phone shows all your devices with their actions, and All phones can be grouped by person.
+
 ## 1.3.3
 
 - **Fixed:** a phone that answered "please report" could show *App not reporting — set battery use to Unrestricted* even when it already was. The Companion app only sends values that changed, so a phone lying still sends little on its own; answering a request means it's fine, and it now shows Online. The battery tip stays in the checklist as advice only.

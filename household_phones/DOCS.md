@@ -101,15 +101,24 @@ Your monitored phone's status ("Online · last check-in 6 min ago"), battery and
 with **Check now**. A phone of yours that no admin has added shows only "Your phone isn't monitored — ask an admin"
 (or, if it replaces an older monitored phone of yours, **Replaces <old phone>**). Right after an admin adds your
 phone, a card says "Your phone is now monitored — set up forwarding if you want it", with the checklist.
-**Settings, checklist and log** opens the phone's own page:
+If you have several monitored devices (a phone and a tablet…), each has its own card with its status, battery, Check
+now and ⋯ (Find my phone, Screen on, Lost mode and the other actions). **Settings, actions, checklist and log** opens
+the device's own page:
 
+- **Phone actions** and **Lost mode** — see below.
 - **Pause** — alerts (above), or **pause being watched** for up to 24 hours (adults only; App setting): no requests,
   no alerts, and admins see only "Paused by <you> until 18:00".
 - **Setup checklist** — the Companion app signed in; remote access working; the sensors this app uses switched on
   (Battery level, Battery state, Charging, Last reboot, and Last notification for forwarding); a sensor that changes
   with every report (**Battery power** or **Last update trigger**: the command only sends sensors whose value changed,
   so a phone where nothing changed might not answer otherwise — ticked once the phone has answered a request);
-  battery use *Unrestricted*; and for forwarding on Android 15+, letting the Home Assistant app read one-time codes.
+  battery use *Unrestricted*; the Home Assistant app up to date; on a child's phone with bedtime, the Interactive
+  sensor; and for forwarding on Android 15+, letting the Home Assistant app read one-time codes.
+- **Set up this phone** — a QR code and a link that open My phone in the Home Assistant app on the phone, the exact
+  steps for the Companion app's settings (it has no links to its own settings pages), and **Test everything**: the
+  checklist, a Check now, a test forward into your 📌 My room (if forwarding is on) and a test notification, as a
+  pass / fail list.
+- **Bedtime** (children's phones) and **Health** (storage, battery health, Home Assistant app version) — see below.
 - **Forward my messages** — see below.
 - **Do-not-monitor hours** — see above.
 - **What admins see** — the exact list, **Share my last place** (off by default: the zone is shown to admins and in
@@ -139,18 +148,113 @@ seconds (more presses join the one running) and at most 20 per phone per hour. E
 the result. It has its own address (`#/check/<phone>`), which **Household Chat** (📱 Check phone in a chat's ⋯ menu)
 and the **Household Assistant** ("check Asha's phone") open.
 
+## Phone actions
+
+On My phone (your own phones) and on a phone's page (admins), **📲 Phone actions**:
+
+- **Find my phone** — rings loudly on the alarm volume, even on silent or Do Not Disturb: the app turns the alarm
+  volume to its maximum (and Do Not Disturb off, if the phone says it's on), shows a notification on the alarm channel
+  with **Found it**, and says "This phone is being looked for". Found it (or 5 minutes later, App setting) puts the
+  alarm volume and Do Not Disturb back. The phone needs the Volume level sensors on for the volume to be put back
+  (otherwise it stays at its maximum — the result says so). On Android 15 and newer, Home Assistant can only turn Do
+  Not Disturb off if it turned it on; the alarm still sounds when Do Not Disturb lets alarms through. On an iPhone it's
+  a critical alert (allow Critical Alerts for the Home Assistant app).
+- **Screen on**, **Flashlight** on/off, **Ringer** (ring / vibrate / silent), **Do Not Disturb**, **Volume** (which
+  stream and level), **Brightness**, **Screen timeout**, **Open an app** (its Android package name) and **Open a
+  dashboard** (its path, e.g. `/lovelace/0`). Android only. Some need a one-time permission on the phone: Do Not
+  Disturb access (Find my phone's volume, Ringer, Volume, Do Not Disturb), display over other apps (Open an app or a
+  dashboard), modify system settings (Brightness, Screen timeout). The result says which — open the HA app on the
+  phone; it asks the first time.
+- **Who:** you, on your own phones, always. Admins only what you allow under **What others may use on this phone**:
+  Find my phone and Screen on by default, nothing else (not Lost mode) unless you tick it. Admins can't change your
+  choice; on a child's phone the admins choose, and the child sees it. Also there: **Home Assistant automations may ring
+  it** (off), **Exact location in Lost mode** (off) and Lost mode's "if found, please call …" text.
+- **Never:** on a device that isn't monitored; while its owner pauses being watched (others); during do-not-monitor
+  hours — except Find my phone pressed by the owner.
+- **Limits:** Find my phone once every 30 seconds and 20 times an hour per phone; the others once every 5 seconds and
+  30 an hour (App settings). Commands don't count toward the Companion app's limit of 500 notifications a day, but
+  Find my phone's notification and spoken message, Lost mode's notification and rings, and Test everything's
+  notification do.
+- **Logged:** every use — who, what, how, when and the result — under **Actions on this phone** and in its history.
+
+### Lost mode
+
+**🚨 Turn on Lost mode…** (the owner; an admin if the owner allows Lost mode for others; admins on a child's phone),
+with an optional end time:
+
+- it rings like Find my phone every 10 minutes and turns the screen on;
+- it shows a notification that stays: "If found, please call <contact> — <message>" (the owner's text);
+- it asks the phone for its location every 5 minutes — this uses more battery, as the Companion app's documentation
+  warns;
+- it posts the latest place into a chat you choose (your 📌 My room by default; the messages disappear after a day
+  unless you keep them) — only if the owner shares their place (Share my last place): the zone name, plus the address
+  and coordinates only with **Exact location in Lost mode**. Coordinates are read at that moment and never stored.
+
+It ends when it's turned off, at its end time, with **I found it** on the notification (the phone must be unlocked),
+or when the phone is unlocked: with the **Device locked** sensor on, when that goes off; otherwise when the
+**Interactive** sensor shows the screen in use (not just after the app woke it) — turn on Device locked so a finder
+pressing the power button doesn't end it. While it's on, a red banner shows on My phone, the phone's page and All
+phones. During do-not-monitor hours it runs only if the owner started it.
+
+### Ring a phone from the Household Assistant or a wall tablet
+
+"Ring my phone", "find Asha's phone" — the Household Assistant asks you to confirm, then rings it, with the same rights
+as the button. From Home Assistant (turn on **Ring phones from Home Assistant** in App settings), fire
+`household_phones_find` with the phone's id or the `<phone>` part of its entity id. The person who pressed the button
+or ran the script is taken from Home Assistant's own record of the event: it rings as if they pressed Find my phone
+here. Without a person (an automation), only phones whose owner allows **Home Assistant automations may ring it**. The
+answer comes back as `household_phones_find_result` (`phone`, `result`: sent, failed or refused). A dashboard button
+for a wall tablet:
+
+```yaml
+script:
+  find_ashas_phone:
+    alias: Find Asha's phone
+    icon: mdi:cellphone-sound
+    sequence:
+      - event: household_phones_find
+        event_data:
+          phone: asha_s_pixel_8
+```
+
+```yaml
+type: button
+name: Find Asha's phone
+icon: mdi:cellphone-sound
+tap_action:
+  action: perform-action
+  perform_action: script.find_ashas_phone
+```
+
+### Children's bedtime
+
+On a child's phone page (admins; the owner marked Child under Admin → People): **🌙 Bedtime** — windows (days and
+times, like do-not-monitor hours), the parents to tell, and optionally **Do Not Disturb at bedtime** (on at the start,
+off at the end). When the screen is in use at bedtime for more than 5 minutes (App setting; from the Interactive
+sensor, which must be on — it's on the child's checklist), the parents get one quiet message that night. The child
+sees their bedtime, who is told and the Do Not Disturb choice on My phone.
+
+### Health and the Home Assistant app's version
+
+Each phone's page has a **Health** card: free storage (the Storage sensor), battery health and the Home Assistant app's
+version. **HA app outdated** shows (All phones, My phone, the checklist) when another monitored phone with the same
+system has a newer one, or it is older than the optional **Minimum Home Assistant app version** (App settings).
+
 ## All phones (admins)
 
 A summary strip of the monitored phones (monitored, online, offline, late, paused), **Not used lately** (no check-in
 for 30 days: **Keep** or **Remove** — its history goes with it; nothing is removed by itself), then the monitored
 phones, problems first: status and last check-in, owner and model, battery, network and app version, the owner's
-do-not-monitor hours, with ⋯ (Check now, Pause alerts, Edit, Stop monitoring). Tablets come after. Then **Available
+do-not-monitor hours, chips for **🚨 Lost mode** and **HA app outdated**, with ⋯ (Check now, Find my phone, Pause
+alerts, Edit, Stop monitoring). Tablets come after. **By status / By person** switches to one group per person with all
+their devices. A red **Lost mode** box lists phones in Lost mode at the top. Then **Available
 devices**: every Companion-app device not monitored, with a guess of its kind (phone, tablet, or watch and the like),
 and **Add to monitoring** (owner, name, kind, interval and when to alert that it's offline, in one dialog). **Stop monitoring** asks whether to keep or
 delete the phone's history, switches forwarding off, and puts it back under Available devices. **Read Home Assistant
 again** reads the devices now (it also happens every few minutes and whenever Home Assistant's devices change).
 
-A **phone's page** shows the device (manufacturer, model, Android/iOS version, Companion app version, owner, kind),
+A **phone's page** shows Lost mode (when on), **Phone actions** (as its owner allows), **Health**, **Bedtime**
+(children's phones), the device (manufacturer, model, Android/iOS version, Companion app version, owner, kind),
 its settings (name, kind, its own interval, *Alert when offline for at least*, owner, and the notify service if Home Assistant names it
 differently from `notify.mobile_app_<device name>`), **every enabled sensor** grouped (Battery, Network, Activity,
 Storage, Location zone, Last reboot and updates, Other — notification texts are never shown), the sensors that are
@@ -229,6 +333,9 @@ In App settings, each alert on or off with its recipients (admins, the phone's o
 - **Battery low** — below 15%, not charging, once per discharge.
 - **Charging reminder at night** (off by default) — at 22:00, each phone below 30% and not charging; optionally to
   the phone itself too.
+- **Storage almost full** — below 10% free (App setting), once until it has recovered.
+- **Battery health** — when the battery health is worse than Good (overheated, cold, dead…), once per change.
+- **Phone in use at bedtime** — to the parents chosen on a child's phone, one quiet message a night (see above).
 
 Alerts are only about monitored phones, and never during their do-not-monitor hours. Each alert goes once per phone
 per 30 minutes (cooldown), waits for the recipient's quiet hours (theirs from My
@@ -246,7 +353,10 @@ forward to your own My room.
   see only Check now's result.
 - **Children** (marked under Admin → People) can't pause being watched or set do-not-monitor hours; they still see
   what admins see and the log.
-- The zone is shown only when the owner turns on **Share my last place**; coordinates never.
+- The zone is shown only when the owner turns on **Share my last place**; coordinates never — except, posted into the
+  chosen chat, in Lost mode when the owner allows **Exact location in Lost mode**.
+- **What admins see** also lists which phone actions admins may use on your phone, whether Home Assistant automations
+  may ring it, and what Lost mode would post. Every action used on your phone is in its log.
 - Forwarded texts go only into Household Chat; this app keeps the time and the chat. Nothing leaves your Home
   Assistant except the Companion app's push for "please report" (through its push service) and what you post into
   Chat.
@@ -255,20 +365,26 @@ forward to your own My room.
 
 ### App settings (Admin → App settings)
 
-- **Phones:** guess the kind of devices (on); "Not used lately" after 30 days.
+- **Phones:** guess the kind of devices (on); minimum Home Assistant app version (none); "Not used lately" after 30
+  days.
 - **Check-in:** interval (15, 10 or 5 minutes), ask after (2 minutes overdue), wait for a reply (5 minutes), requests
   before Offline (2), start-up grace (12 minutes after one interval), recognise lost contact (on: half the phones,
   at least 2, within 10 minutes).
 - **Check now:** wait for a reply (60 s), at most 20 per phone an hour, people in a phone's forwarding chat may check
   it (on).
 - **Alerts:** each on/off with recipients, alert when offline for at least (as soon as it's Offline), battery threshold (15%), charging reminder time and level (22:00, 30%),
-  last place in offline alerts (off), cooldown (30 minutes), delivery, quiet hours.
+  last place in offline alerts (off), storage almost full (on, 10%), battery health (on), cooldown (30 minutes),
+  delivery, quiet hours.
+- **Phone actions:** on; Find my phone at most 20 times per phone an hour, other actions 30; put the alarm volume back
+  after 5 minutes; Lost mode rings every 10 minutes and asks for the location every 5 (the defaults).
+- **Children's bedtime:** tell the parents when the screen is in use for more than 5 minutes.
 - **Forwarding:** allowed (on), default disappear time (1 hour), which chats owners may choose, the default messaging
   apps, the starting filter for a group (codes only).
 - **Transparency:** adults may pause being watched (on), longest pause (24 hours), owners may set do-not-monitor
   hours (on), at most 12 hours a day.
 - **History:** kept 7 days.
-- **Home Assistant:** sensors in Home Assistant (off), answer the Household Assistant (on), the App-messages signing
+- **Home Assistant:** sensors in Home Assistant (off), ring phones from Home Assistant (off), answer the Household
+  Assistant (on), the App-messages signing
   key (the same in every household app).
 
 Changes apply at once.
@@ -303,8 +419,9 @@ switch is turned off.
 
 ### The Household Assistant
 
-"Is my phone online?", "which phones are offline?", "what's Asha's phone battery?" and "check Asha's phone" (runs
-Check now and links to the result). Admins can ask about any monitored phone, everyone else about their own and the
+"Is my phone online?", "which phones are offline?", "what's Asha's phone battery?", "check Asha's phone" (runs
+Check now and links to the result) and "ring my phone" / "find Asha's phone" (Find my phone, after you confirm; the
+same rights as the button). Admins can ask about any monitored phone, everyone else about their own and the
 phones that forward into their chats; a paused phone answers "paused by <owner>", one in do-not-monitor hours "not
 monitored until 07:00". Forwarded messages are never answered.
 

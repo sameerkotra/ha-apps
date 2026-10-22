@@ -135,6 +135,42 @@ CREATE TABLE IF NOT EXISTS phones (
     fwd_error TEXT,                       -- why Household Chat refused the last forward (NULL: fine)
     fwd_ok_at REAL,                       -- when Chat last took a forward
     redacted_at REAL,                     -- Android hid a code's text (§6.1): a checklist item until fixed
+    -- phone actions (§15): what the owner lets others use (JSON list of action ids; NULL = the defaults), whether
+    -- Home Assistant automations may ring it, exact location in Lost mode, and the Lost-mode notification's text
+    act_allow TEXT,
+    act_from_ha INTEGER NOT NULL DEFAULT 0,
+    lost_exact INTEGER NOT NULL DEFAULT 0,
+    lost_contact TEXT,
+    lost_message TEXT,
+    -- Lost mode (§15.2) while it is on: since when, by whom, until, how often it rings and asks for the location,
+    -- where the place is posted (JSON), the token of its "I found it" action, and when each last happened
+    lost_since REAL,
+    lost_by TEXT,
+    lost_by_name TEXT,
+    lost_until REAL,
+    lost_ring_min INTEGER,
+    lost_loc_min INTEGER,
+    lost_chat TEXT,
+    lost_token TEXT,
+    lost_last_ring REAL,
+    lost_last_loc REAL,
+    lost_wake_at REAL,                    -- when the app last woke the screen itself (not the owner unlocking it)
+    lost_error TEXT,
+    -- Find my phone (§15.1): the "Found it" action's token, when it rang, and what to put back (JSON: volume, dnd)
+    find_token TEXT,
+    find_at REAL,
+    find_restore TEXT,
+    -- children's bedtime (§15.4), set by admins: windows (JSON, as do-not-monitor hours), parents (JSON user ids),
+    -- Do Not Disturb at bedtime, the screen-in-use count, the night already alerted, DND switched on by the app
+    bed_windows TEXT,
+    bed_parents TEXT,
+    bed_dnd INTEGER NOT NULL DEFAULT 0,
+    bed_screen_since REAL,
+    bed_alerted_on TEXT,
+    bed_dnd_set INTEGER NOT NULL DEFAULT 0,
+    -- storage and battery health alerts (§15.5)
+    storage_low_sent INTEGER NOT NULL DEFAULT 0,
+    battery_health TEXT,
     created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
 );
 
@@ -165,6 +201,21 @@ CREATE TABLE IF NOT EXISTS checks (
     joined INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS checks_phone ON checks (phone_id, started);
+
+-- Phone actions (§15): who used which on a phone, when, through what, and the result (the owner sees this log).
+CREATE TABLE IF NOT EXISTS actions (
+    id INTEGER PRIMARY KEY,
+    phone_id TEXT NOT NULL REFERENCES phones(id) ON DELETE CASCADE,
+    at REAL NOT NULL,
+    action TEXT NOT NULL,                 -- find / screen_on / flashlight / … / lost_start / lost_end / bedtime_dnd …
+    detail TEXT,
+    by_user TEXT,
+    by_name TEXT NOT NULL,
+    via TEXT NOT NULL DEFAULT 'app',      -- app / assistant / home_assistant / lost / bedtime / phone
+    ok INTEGER NOT NULL DEFAULT 1,
+    result TEXT
+);
+CREATE INDEX IF NOT EXISTS actions_phone ON actions (phone_id, at);
 
 -- Forwards (§6): the time and the target chat only — never the text, title or sender.
 CREATE TABLE IF NOT EXISTS forwards (
@@ -236,7 +287,15 @@ MIGRATIONS: dict = {"phones": [
     ("checkin_entity", "TEXT"),                      # where the last genuine check-in came from
     ("checkin_kind", "TEXT"),
     ("shutdown_at", "REAL"),                         # the phone said it was shutting down
-]}
+] + [(c, t) for c, t in (                            # 1.4: phone actions, Lost mode, bedtime, storage and health
+    ("act_allow", "TEXT"), ("act_from_ha", "INTEGER NOT NULL DEFAULT 0"), ("lost_exact", "INTEGER NOT NULL DEFAULT 0"),
+    ("lost_contact", "TEXT"), ("lost_message", "TEXT"), ("lost_since", "REAL"), ("lost_by", "TEXT"),
+    ("lost_by_name", "TEXT"), ("lost_until", "REAL"), ("lost_ring_min", "INTEGER"), ("lost_loc_min", "INTEGER"),
+    ("lost_chat", "TEXT"), ("lost_token", "TEXT"), ("lost_last_ring", "REAL"), ("lost_last_loc", "REAL"),
+    ("lost_wake_at", "REAL"), ("lost_error", "TEXT"), ("find_token", "TEXT"), ("find_at", "REAL"),
+    ("find_restore", "TEXT"), ("bed_windows", "TEXT"), ("bed_parents", "TEXT"), ("bed_dnd", "INTEGER NOT NULL DEFAULT 0"),
+    ("bed_screen_since", "REAL"), ("bed_alerted_on", "TEXT"), ("bed_dnd_set", "INTEGER NOT NULL DEFAULT 0"),
+    ("storage_low_sent", "INTEGER NOT NULL DEFAULT 0"), ("battery_health", "TEXT"))]}
 
 ALL_DAYS = [0, 1, 2, 3, 4, 5, 6]
 

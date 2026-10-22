@@ -263,6 +263,36 @@ def value(pid: str, key: str):
     return None if v in (None, "unknown", "unavailable", "") else v
 
 
+def state_any(pid: str, keys) -> tuple[str | None, dict | None]:
+    """The first enabled sensor among `keys` (its key, or an entity id ending in _<key>: the Companion app's unique
+    ids differ between versions) → (key, state) or (None, None)."""
+    with LIVE.lock:
+        ents = [e for e in LIVE.phone_entities.get(pid, []) if not e["disabled"]]
+        for k in keys:
+            for e in ents:
+                if e["key"] == k or e["entity_id"].endswith("_" + k):
+                    return k, LIVE.states.get(e["entity_id"])
+    return None, None
+
+
+def value_any(pid: str, keys):
+    _, st = state_any(pid, keys)
+    v = st.get("state") if st else None
+    return None if v in (None, "unknown", "unavailable", "") else v
+
+
+def enabled_any(pid: str, keys) -> bool | None:
+    """True: one of these sensors is on; False: the phone has one but it's off; None: it has none."""
+    seen = None
+    with LIVE.lock:
+        for e in LIVE.phone_entities.get(pid, []):
+            if any(e["key"] == k or e["entity_id"].endswith("_" + k) for k in keys):
+                if not e["disabled"]:
+                    return True
+                seen = False
+    return seen
+
+
 def entity_id(pid: str, key: str) -> str | None:
     with LIVE.lock:
         for e in LIVE.phone_entities.get(pid, []):

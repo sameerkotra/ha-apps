@@ -20,7 +20,7 @@ def read(name):
 class Scripts(unittest.TestCase):
     @unittest.skipUnless(shutil.which("node"), "node is not installed")
     def test_scripts_parse(self):
-        for name in ("app.js",) + tuple(os.path.join("common", n) for n in os.listdir(os.path.join(STATIC, "common"))
+        for name in ("app.js", "qr.js") + tuple(os.path.join("common", n) for n in os.listdir(os.path.join(STATIC, "common"))
                                         if n.endswith(".js")):
             r = subprocess.run(["node", "--check", os.path.join(STATIC, name)], capture_output=True, text=True, timeout=60)
             self.assertEqual(r.returncode, 0, name + ": " + r.stderr)
@@ -37,7 +37,7 @@ class Scripts(unittest.TestCase):
         for route in ("/mine/", "/check/", "/phones", "/phone/", "/admin"):
             self.assertIn(route, js)
         for part in ("isTab", "parentOf", "BackNav.replace", "UI.loading", "UI.errorBox", "UI.empty", "summary-strip",
-                     "ui-group-head", "aria-current", "HouseholdDeepLink.start"):
+                     "ui-group-head", "aria-current", "HouseholdDeepLink.start", "#/phones/person", "QR.encode"):
             self.assertIn(part, js)
         css = read("style.css")
         self.assertIn("max-width: 760px", css)

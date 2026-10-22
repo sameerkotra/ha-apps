@@ -64,7 +64,7 @@ def nack_text(reason: str | None, detail: str | None) -> str:
 
 def start() -> None:
     """In the lifespan (nothing connects without a Supervisor token, as in the tests)."""
-    from . import monitor, phones, tools
+    from . import actions, monitor, phones, tools
     if bus.default.started:
         return
     tools.tools.install(bus)
@@ -79,6 +79,8 @@ def start() -> None:
         for t in ("device_registry_updated", "entity_registry_updated"):
             ws.subscribe(t, _registry_changed)
         ws.subscribe("household_phones_check_now", on_check_event)
+        ws.subscribe("household_phones_find", on_find_event)
+        ws.subscribe("mobile_app_notification_action", actions.on_notification_action)
         ws.subscribe(bus.EVENT_TYPE, on_answer_event)
         WS["client"] = ws
     bus.start(SLUG, config.APP_TITLE, config.APP_VERSION, wants=WANTS, db=db.get_conn, ws=ws,
@@ -130,6 +132,48 @@ def on_check_event(event: dict) -> None:
             logger.info("household_phones_check_now for %s: %s", hit["id"], getattr(e, "detail", e))
         _ = phones
     threading.Thread(target=run, daemon=True, name="phones-check-event").start()
+
+
+def on_find_event(event: dict) -> None:
+    """`household_phones_find` {phone: <id, the <phone> part of its entity id, or its Home Assistant name>} from a
+    script, an automation or a dashboard button, while "Ring phones from Home Assistant" is on (§15.3). The person who
+    pressed it is Home Assistant's own record of the event (`context.user_id`): as if they pressed Find my phone here.
+    Without a person, only phones whose owner allows "from Home Assistant automations" ring."""
+    if not settings.get("ha_find_event") or not isinstance(event, dict):
+        return
+    data = event.get("data") if isinstance(event.get("data"), dict) else {}
+    ctx = event.get("context") if isinstance(event.get("context"), dict) else {}
+    want = str(data.get("phone") or "").strip().lower()[:80]
+    uid = ctx.get("user_id") if isinstance(ctx.get("user_id"), str) and 0 < len(ctx.get("user_id")) <= 64 else None
+    if not want:
+        return
+
+    def run():
+        from . import actions, auth
+        with db.get_conn() as conn:
+            rows = conn.execute("SELECT * FROM phones WHERE retired = 0 AND monitored = 1").fetchall()
+            hit = next((p for p in rows if p["id"] == want or phones_slug(conn, p) == want
+                        or (p["ha_name"] or "").lower() == want), None)
+            user = auth.user_by_id(conn, uid) if uid else None
+        if hit is None:
+            logger.info("household_phones_find: no phone %r.", want)
+            return
+        try:
+            r = actions.run(hit["id"], "find", {}, user, via="home_assistant",
+                            by_name=user["name"] if user else "Home Assistant")
+            result = "sent" if r["ok"] else "failed"
+        except actions.Refused as e:
+            logger.info("household_phones_find for %s: %s", hit["id"], e.text)
+            result = "refused"
+        from . import ha_source
+        ha_source.SOURCE.fire_event("household_phones_find_result", {"phone": hit["id"], "result": result})
+    if FIND_SYNC["on"]:
+        run()
+    else:
+        threading.Thread(target=run, daemon=True, name="phones-find-event").start()
+
+
+FIND_SYNC = {"on": False}                 # tests: handle the event at once
 
 
 def phones_slug(conn, p) -> str:
@@ -283,22 +327,29 @@ def post_alert(user_id: str, title: str, message: str) -> bool:
 
 def post_forward(phone_id: str, data: dict) -> bool:
     """Post one forward to Chat without writing it anywhere: the envelope lives in memory until Chat answers."""
+    return post_direct(phone_id, data, kind="fwd")
+
+
+def post_direct(phone_id: str, data: dict, kind: str = "fwd") -> bool:
+    """A chat.message.post that never goes through the outbox (which keeps bodies for days): forwards (`fwd`) and
+    Lost mode's places (`lost`, which may hold coordinates). Chat's refusal is kept on the phone (fwd_error /
+    lost_error)."""
     if POST["fn"] is not None:
         return bool(POST["fn"](dict(data)))
     if not chat_ready():
-        _set_error(phone_id, "Household Chat isn't available (not installed, or not running).")
+        _set_error(phone_id, "Household Chat isn't available (not installed, or not running).", kind)
         return False
     b = bus.default
     try:
-        env = b._envelope(CHAT, "chat.message.post", data, ref=f"fwd:{phone_id}", expires_in=FORWARD_EXPIRES)
+        env = b._envelope(CHAT, "chat.message.post", data, ref=f"{kind}:{phone_id}", expires_in=FORWARD_EXPIRES)
     except (TypeError, ValueError):
         return False
     if bus.event_size(env) > bus.MAX_EVENT_BYTES:
         data = dict(data, text=data["text"][:2500].rstrip() + "…\n(shortened — see the phone)")
-        env = b._envelope(CHAT, "chat.message.post", data, ref=f"fwd:{phone_id}", expires_in=FORWARD_EXPIRES)
+        env = b._envelope(CHAT, "chat.message.post", data, ref=f"{kind}:{phone_id}", expires_in=FORWARD_EXPIRES)
     now = config.clock()
     with _pending_lock:
-        _pending[env["id"]] = {"phone": phone_id, "env": env, "tries": 1, "first": now,
+        _pending[env["id"]] = {"phone": phone_id, "env": env, "tries": 1, "first": now, "kind": kind,
                                "expires": now + FORWARD_EXPIRES.total_seconds()}
     ok = b._post(env)
     logger.info("bus forward id=%s to=%s kind=chat.message.post posted=%s", env["id"], CHAT, ok)
@@ -313,7 +364,7 @@ def resend_forwards(now: float | None = None) -> int:
         for mid, item in list(_pending.items()):
             if now >= item["expires"] or item["tries"] > len(RESEND_AFTER):
                 _pending.pop(mid, None)
-                _set_error(item["phone"], "Household Chat didn't answer — is it running?")
+                _set_error(item["phone"], "Household Chat didn't answer — is it running?", item.get("kind", "fwd"))
                 continue
             if now - item["first"] >= RESEND_AFTER[item["tries"] - 1]:
                 item["tries"] += 1
@@ -343,14 +394,19 @@ def on_answer_event(event: dict) -> None:
         _pending.pop(env.get("reply_to"), None)
     if env["kind"] == "ack":
         with db.get_conn() as conn:
-            conn.execute("UPDATE phones SET fwd_error = NULL, fwd_ok_at = ? WHERE id = ?", (config.clock(), item["phone"]))
+            if item.get("kind") == "lost":
+                conn.execute("UPDATE phones SET lost_error = NULL WHERE id = ?", (item["phone"],))
+            else:
+                conn.execute("UPDATE phones SET fwd_error = NULL, fwd_ok_at = ? WHERE id = ?",
+                             (config.clock(), item["phone"]))
     else:
-        _set_error(item["phone"], nack_text(data.get("reason"), data.get("detail")))
+        _set_error(item["phone"], nack_text(data.get("reason"), data.get("detail")), item.get("kind", "fwd"))
 
 
-def _set_error(phone_id: str, text: str) -> None:
+def _set_error(phone_id: str, text: str, kind: str = "fwd") -> None:
+    col = "lost_error" if kind == "lost" else "fwd_error"
     with db.get_conn() as conn:
-        conn.execute("UPDATE phones SET fwd_error = ? WHERE id = ?", (text[:300], phone_id))
+        conn.execute(f"UPDATE phones SET {col} = ? WHERE id = ?", (text[:300], phone_id))
 
 
 def pending_count() -> int:

@@ -22,6 +22,9 @@ ALERTS = {
     "battery": ("Battery low", "alert_battery", "alert_battery_to"),
     "charge": ("Charging reminder", "alert_charge", "alert_charge_to"),
     "request": ("Stop monitoring request", None, None),
+    "storage": ("Storage almost full", "alert_storage", "alert_storage_to"),
+    "battery_health": ("Battery health", "alert_battery_health", "alert_battery_health_to"),
+    "bedtime": ("Phone in use at bedtime", None, None),
 }
 
 
@@ -103,8 +106,9 @@ def held(conn, phone_id: str, alert: str) -> bool:
 
 
 def send(alert: str, phone_id: str | None, message: str, *, to: str | None = None, now: float | None = None,
-         test: bool = False, also_phone: bool = False, only: list | None = None) -> dict:
-    """Send one alert. `to` defaults to the alert's App setting; `only`: these people instead (a test). Returns
+         test: bool = False, also_phone: bool = False, only: list | None = None, data: dict | None = None) -> dict:
+    """Send one alert. `to` defaults to the alert's App setting; `only`: these people instead (a test, or bedtime's
+    parents); `data`: the notification's platform data (bedtime's quiet alert). Returns
     {"sent": [names], "queued": [names], "failed": [names], "skipped": reason|None}. Blocking."""
     now = config.clock() if now is None else now
     title = f"📱 {ALERTS[alert][0]}" + (" (test)" if test else "")
@@ -142,7 +146,7 @@ def send(alert: str, phone_id: str | None, message: str, *, to: str | None = Non
     for u, services in plan:
         ok = False
         if services:
-            res = ha_notify.send_to_services(services, title, message)
+            res = ha_notify.send_to_services(services, title, message, data)
             ok = any(res.values())
         if "chat" in delivery:
             from . import app_messages

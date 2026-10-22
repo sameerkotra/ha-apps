@@ -8,12 +8,15 @@ app/common/assist_tools.py; spec/SPEC.md §10).
 - `phones.check`: "check Asha's phone" runs Check now (same rights) and answers with the result when one came in the
   last minute, else that the phone was asked, with a link to the live result card (#/check/<phone>).
 
+- `phones.find`: "ring my phone", "find Asha's phone" — Find my phone with the same rights as the button (the owner;
+  admins when the owner allows it), after the answer is committed.
+
 Forwarded messages are never answered: they aren't stored.
 """
 import re
 import threading
 
-from . import auth, checknow, config, dnm, monitor, phones, settings
+from . import actions, auth, checknow, config, dnm, monitor, phones, settings
 from .common import app_bus as bus
 from .common import assist_tools
 from .common.assist_tools import Arg
@@ -153,3 +156,37 @@ def check(ctx):
     d = monitor.display(p, now)
     return ctx.result(f"Asked {name} to report now. Until it answers: {d['label']}, last check-in "
                       f"{_ago(p['last_checkin'])}. The result shows in Phones within a minute.", links=[link])
+
+
+@tools.tool("phones.find",
+            "Find my phone: rings a phone loudly, even on silent or Do Not Disturb, until someone taps Found it "
+            "(Household Phones). `person`: whose phone (a first name, or me). Only the owner, or admins when the owner "
+            "allows it.",
+            args={"person": Arg("string", "whose phone: a first name, or me", required=True, max_length=60)},
+            returns="whether the phone was rung", acts=True, scope="household", children=True,
+            examples=("Ring my phone", "Find Asha's phone", "Where's my phone? Make it ring"))
+def find(ctx):
+    rows = _match(ctx.conn, [p for p in ctx.conn.execute("SELECT * FROM phones WHERE retired = 0 AND monitored = 1 "
+                                                         "ORDER BY first_seen").fetchall()
+                             if ctx.user["is_admin"] or p["owner_id"] == ctx.user["id"]],
+                  ctx.args["person"], ctx.user)
+    if not rows:
+        return ctx.result("No phone you can ring matches that in Household Phones.", links=[ctx.link("Phones", "/")])
+    p = rows[0]
+    name = phones.display_name(ctx.conn, p)
+    now = config.clock()
+    try:
+        actions.check(ctx.conn, p, ctx.user, "find", now)
+        actions.rate(ctx.conn, p, "find", now)
+    except actions.Refused as e:
+        return ctx.result(f"{name}: {e.text}", links=[ctx.link("Phones", "/")])
+    user = dict(ctx.user)
+
+    def run():
+        try:
+            actions.run(p["id"], "find", {}, user, via="assistant")
+        except Exception:                                              # noqa: BLE001 — the log says why
+            pass
+    ctx.msg.after_commit(lambda: threading.Thread(target=run, daemon=True).start())
+    return ctx.result(f"Ringing {name} now — loudly, even on silent. Tap Found it on the phone to stop it.",
+                      links=[ctx.link("Phones", "/")])

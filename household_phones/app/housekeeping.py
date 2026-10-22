@@ -21,7 +21,7 @@ def prune(now: float | None = None) -> dict:
     cutoff = now - settings.get("history_days") * 86400
     with db.get_conn() as conn:
         out = {t: conn.execute(f"DELETE FROM {t} WHERE {col} < ?", (cutoff,)).rowcount
-               for t, col in (("history", "at"), ("checks", "started"), ("forwards", "at"))}
+               for t, col in (("history", "at"), ("checks", "started"), ("forwards", "at"), ("actions", "at"))}
         out["requests"] = conn.execute("DELETE FROM bus_requests WHERE created < ?", (now - 86400,)).rowcount
     return out
 

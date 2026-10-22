@@ -13,7 +13,7 @@ try:
 except ImportError:                                     # pragma: no cover
     sync_playwright = None
 
-from base import ADMIN, PhonesCase
+from base import ADMIN, ASHA, PhonesCase
 
 
 def _free_port() -> int:
@@ -95,4 +95,49 @@ class Browser(PhonesCase):
             page.wait_for_selector(".check-card")
             page.goto(base + "#/admin")
             page.wait_for_selector("#tab-settings .card")
+            self.assertEqual(errors, [], width)
+
+    def test_actions_lost_mode_setup_and_by_person(self):
+        """§15: the Phone actions card, Lost mode shown prominently, Set up this phone's QR code, Test everything,
+        and All phones by person — at both widths, no script errors or sideways scrolling."""
+        from app import actions, sidebar
+        from test_actions import SENSORS
+        old = sidebar.PAGE
+        self.addCleanup(lambda: setattr(sidebar, "PAGE", old))
+        sidebar.PAGE = "/a1b2c3d4_household_phones"
+        actions.SYNC["on"] = True
+        self.addCleanup(lambda: actions.SYNC.update(on=False))
+        ann = self.add("Ann Pixel", user_id="u-ann", sensors=SENSORS)
+        asha = self.add(sensors=SENSORS)
+        for pid, n in ((ann, "Ann Pixel"), (asha, "Asha Pixel")):
+            self.report(pid, name=n, value="64")
+        self.tick()
+        self.put(f"/api/phones/{asha}/consent", {"allow": ["find", "lost"]}, ASHA)
+        self.post(f"/api/phones/{asha}/lost", {}, ASHA)
+        base = f"http://127.0.0.1:{self.port}/"
+        for width in (390, 1280):
+            self.now += 60                                     # past Test everything's half minute
+            page, errors = self.page(width)
+            page.goto(base + "#/")
+            page.wait_for_selector(".my-card")
+            page.click(f".my-card[data-id='{ann}'] a.btn-secondary")
+            page.wait_for_selector("#mineBody .actions-card")
+            self.assertIn("Find my phone", page.inner_text("#mineBody .actions-card"))
+            page.click("#mineBody #setup-card summary")
+            self.assertTrue(page.locator("#mineBody svg.qr").is_visible())
+            page.click("#mineBody button:has-text('Test everything')")
+            page.wait_for_selector("#mineBody .test-results .checklist")
+            page.click("#mineBody .actions-card button:has-text('Turn on Lost mode')")
+            page.wait_for_selector(".modal")
+            self.assertIn("uses more battery", page.inner_text(".modal"))
+            page.keyboard.press("Escape")
+            self.assertLessEqual(page.evaluate("document.documentElement.scrollWidth"), width, width)
+            page.goto(base + "#/phones/person")
+            page.wait_for_selector("#phonesBody .seg-btn.active:has-text('By person')")
+            self.assertIn("Lost mode", page.inner_text("#phonesBody .lost-banner"))
+            self.assertLessEqual(page.evaluate("document.documentElement.scrollWidth"), width, width)
+            page.click(f"#phonesBody a[href='#/phone/{asha}']")
+            page.wait_for_selector("#phoneBody .lost-banner")
+            self.assertIn("Lost mode is on", page.inner_text("#phoneBody .lost-banner"))
+            self.assertLessEqual(page.evaluate("document.documentElement.scrollWidth"), width, width)
             self.assertEqual(errors, [], width)

@@ -14,6 +14,10 @@ alone entirely.
 Plus **Check now** (§4): a "please respond" sent on demand, e.g. when you're expecting a forwarded message. It says
 within seconds whether the phone is online and when it last forwarded something.
 
+Plus **phone actions** (§15): Find my phone, Lost mode, Screen on and the Companion app's other commands — each one
+the owner lets others use —, children's bedtime, storage and battery-health alerts, an outdated-app check, one-tap
+phone setup with Test everything, and one view per person.
+
 Plus **message forwarding** (§6): a phone's last notification (a text, an OTP…) is forwarded as a message into a
 **Household Chat** chat. By default it **disappears after 1 hour**.
 
@@ -287,14 +291,16 @@ turning off *Enhanced notifications*, until a normal message is forwarded after 
 
 | Group | Keys (default) |
 |---|---|
-| Phones | `guess_kind` (on), `unused_days` (30) — nothing monitored until an admin adds it (§2) |
+| Phones | `guess_kind` (on), `min_app_version` ("" — optional, §15.6), `unused_days` (30) — nothing monitored until an admin adds it (§2) |
 | Check-in | `interval_min` (15; 10, 5), `ask_after_min` (2), `wait_reply_min` (5), `requests` (2), `startup_grace_min` (12), `lost_contact_on` (on), `lost_contact_window_min` (10), `lost_contact_min_phones` (2) |
 | Check now | `check_wait_s` (60), `check_per_hour` (20), `check_by_chat_members` (on) |
-| Alerts | `alert_offline` (on) + `_to` (admins), `offline_alert_after_min` (0 = at once; 30, 60, 120, 240, 360, 600, 720, 1440 minutes), `alert_app` (on) + `_to` (both), `alert_lost_contact` (on), `alert_back` (off) + `_to`, `alert_restart` (on) + `_to`, `alert_battery` (on) + `_to` (owner), `battery_low_pct` (15), `alert_charge` (off) + `_to` (owner), `charge_time` (22:00), `charge_pct` (30), `charge_to_phone` (off), `alert_last_place` (off), `alert_cooldown_min` (30), `alert_delivery` ([phones]; phones / ha / chat), `quiet_start` / `quiet_end` ("") |
+| Alerts | `alert_offline` (on) + `_to` (admins), `offline_alert_after_min` (0 = at once; 30, 60, 120, 240, 360, 600, 720, 1440 minutes), `alert_app` (on) + `_to` (both), `alert_lost_contact` (on), `alert_back` (off) + `_to`, `alert_restart` (on) + `_to`, `alert_battery` (on) + `_to` (owner), `battery_low_pct` (15), `alert_charge` (off) + `_to` (owner), `charge_time` (22:00), `charge_pct` (30), `charge_to_phone` (off), `alert_storage` (on) + `_to` (owner), `storage_low_pct` (10), `alert_battery_health` (on) + `_to` (owner), `alert_last_place` (off), `alert_cooldown_min` (30), `alert_delivery` ([phones]; phones / ha / chat), `quiet_start` / `quiet_end` ("") |
 | Forwarding | `forwarding_allowed` (on), `forward_disappear` (1h), `forward_chats` (member; own_room / member / listed), `forward_groups` ([]), `forward_apps` (Google Messages, Samsung Messages), `forward_group_filter` (codes) |
+| Phone actions | `actions_allowed` (on), `find_per_hour` (20), `actions_per_hour` (30), `find_restore_min` (5), `lost_ring_min` (10), `lost_location_min` (5) |
+| Children's bedtime | `bedtime_after_min` (5) |
 | Transparency | `adults_may_pause` (on), `pause_max_hours` (24), `dnm_allowed` (on), `dnm_max_hours` (12) |
 | History | `history_days` (7) |
-| Home Assistant | `ha_sensors` (off), `assistant_answers` (on), `bus_signing_key` (secret) |
+| Home Assistant | `ha_sensors` (off), `ha_find_event` (off), `assistant_answers` (on), `bus_signing_key` (secret) |
 
 **Sensors in Home Assistant** (off by default): `binary_sensor.phones_<phone>_online` (monitored phones; connectivity;
 unavailable while watching is paused or in do-not-monitor hours), `sensor.phones_online_count`. **Check-now buttons:** a `button.` entity can't be created
@@ -312,7 +318,8 @@ Single-page app (`app/static/app.js`), `#/` addresses with the shared back trail
 | `#/` | My phone (Phone mode) |
 | `#/mine/<id>` | one of my (monitored) phones: welcome card, pause, checklist, forwarding, do-not-monitor hours, what admins see, log, Replaces, stop request |
 | `#/check/<id>` | Check now's live card (starts or joins a check) |
-| `#/phones` | All phones (admins): monitored phones, Available devices (Add to monitoring dialog) |
+| `#/phones` | All phones (admins): monitored phones by status, Available devices (Add to monitoring dialog) |
+| `#/phones/person` | All phones grouped by person (the toggle uses `BackNav.replace`) |
 | `#/phone/<id>` | a phone's page (admins; Stop monitoring dialog: keep or delete history) |
 | `#/admin/<tab>` | App settings, People (child flag, notify services), Tests (each alert, a test forward), Storage (backup; restore in a danger zone) |
 
@@ -333,7 +340,12 @@ safe area; the user menu (How the app sees you, Theme, Admin); UI.loading / UI.e
   household's daily limit.
 - **Children** (Admin → People → Child; never an admin): can't pause being watched or set do-not-monitor hours; still
   see what admins see and the log.
-- **Location:** the zone only with **Share my last place** (off by default); coordinates are never kept.
+- **Location:** the zone only with **Share my last place** (off by default); coordinates are never kept. Lost mode posts
+  the place only with Share my last place, coordinates only with the owner's *Exact location in Lost mode* (off).
+- **Phone actions** (§15): the owner chooses which actions others (admins) may use — Find my phone and Screen on by
+  default, nothing else, and Lost mode only if allowed; admins can't change it (on a child's phone they decide, and the
+  child sees it). Every use is in the phone's log, which the owner sees. **What admins see** lists which actions others
+  may use, whether Home Assistant automations may ring the phone, and what Lost mode would post.
 - **Forwarding** opt-in by the owner; admins see that a phone forwards and into which chat, never the messages.
 - **Leaving:** "Stop monitoring my phone" sends the admins a request (an alert to admins); an admin can stop
   monitoring any phone.
@@ -369,7 +381,10 @@ Everyone: `GET /api/me`, `GET /api/whoami`, `GET /api/my` (with `unmonitored`: n
 `PUT /api/phones/{id}/mine` (sharePlace, welcomeSeen), `PUT /api/phones/{id}/dnm` (owner only: `windows`), `POST|DELETE /api/phones/{id}/pause`,
 `PUT /api/phones/{id}/forwarding`, `POST /api/phones/{id}/forwarding/chats` → `GET /api/requests/{rid}`,
 `POST /api/phones/{id}/stop-request`, `POST /api/phones/{id}/replaces`, `POST /api/phones/{id}/check`,
-`GET /api/checks/{cid}`, `GET /api/check/{id}/latest`. Admins: `GET /api/admin/phones`, `POST /api/admin/refresh`,
+`GET /api/checks/{cid}`, `GET /api/check/{id}/latest`, `POST /api/phones/{id}/actions/{action}` (owner, or admins
+as allowed), `PUT /api/phones/{id}/consent` (owner; admins on a child's phone: `allow`, `fromHa`, `lostExact`,
+`lostContact`, `lostMessage`), `POST|DELETE /api/phones/{id}/lost`, `POST /api/phones/{id}/lost/chats`,
+`POST /api/phones/{id}/test-everything` (owner). Admins: `PUT /api/admin/phones/{id}/bedtime`; `GET /api/admin/phones`, `POST /api/admin/refresh`,
 `PUT|DELETE /api/admin/phones/{id}`, `POST /api/admin/phones/{id}/monitor` (ownerId, name, kind, intervalMin, offlineAlertAfterMin; also on `PUT`),
 `POST /api/admin/phones/{id}/unmonitor` (keepHistory), `POST /api/admin/phones/{id}/keep`, `GET|PUT /api/admin/settings`,
 `GET /api/admin/people`, `PUT /api/admin/people/{uid}` (`isChild`), the notify routes, `POST /api/admin/test-alert`,
@@ -381,7 +396,9 @@ Everyone: `GET /api/me`, `GET /api/whoami`, `GET /api/my` (with `unmonitored`: n
 `users` (id, name, username, is_child, own alert quiet hours), `user_notify`, `phones` (the device, kind, owner,
 settings, monitored and since when, the welcome card, check-in and request state, status, pauses, do-not-monitor
 windows (JSON), share place, alert memory and the offline alert delay with its current spell, forwarding settings and
-its last error — no message text), `history`, `checks`, `forwards` (phone, time, chat name, kind), `alert_state`
+its last error — no message text; the owner's action choices, Lost mode's state, Find my phone's restore values,
+bedtime, the storage and battery-health memory), `history`, `checks`, `actions` (who used which action, when, how and
+the result), `forwards` (phone, time, chat name, kind), `alert_state`
 (cooldowns, held), `alert_queue` (alerts waiting for a recipient's quiet hours), `bus_requests`, `app_state`
 (lost contact), `app_settings`, and the bus tables. In memory only: Home Assistant's devices, entities and latest
 states (the Last notification state blanked), held forwards, unanswered forward envelopes, the duplicate hashes.
@@ -418,3 +435,99 @@ states (the Last notification state blanked), held forwards, unanswered forward 
   not monitored. Saved daily quiet times become a do-not-monitor window on every day (not on children's phones).
   Do-not-monitor hours are counted per calendar day; forwards during a window that pauses forwarding are not sent
   (not held).
+
+## 15. Phone actions, Lost mode, bedtime, health, setup (1.4)
+
+Shared rules (`actions.py`): **who** — the owner always; admins only for the actions the owner allows others
+(`act_allow`; default Find my phone and Screen on; for a child's phone admins choose, the child can't); nobody else.
+**Never** on a device not monitored, while the owner pauses being watched (others), during the owner's do-not-monitor
+hours (except Find my phone, and Lost mode, started by the owner), with *Phone actions* off, or on an iPhone except
+Find my phone (critical alert) and Lost mode (ring and location only). **Rate limits** per phone: Find my phone once per
+30 s and `find_per_hour`; other actions once per 5 s each and `actions_per_hour`. Commands don't count toward the
+Companion app's 500 notifications a day; Find my phone's alarm notification and spoken message, Lost mode's notification
+and rings, and Test everything's notification do. **Logged**: every use in `actions` and the phone's history (who, what,
+via, result), shown to the owner (and admins) as *Actions on this phone*. A refusal says why in words (403/409/429).
+
+### 15.1 The actions (notify payloads, from the Companion app's documentation)
+
+| Action | Payload(s) | One-time phone permission |
+|---|---|---|
+| Find my phone (Android) | `command_dnd` `off` (only when the Do Not Disturb sensor says it's on); `command_volume_level` `{media_stream: alarm_stream, command: <max>}`; a notification `{ttl: 0, priority: high, channel: alarm_stream, importance: max, tag, persistent, sticky, visibility: public, actions: [Found it]}`; `TTS` `{tts_text, media_stream: alarm_stream_max}` | Do Not Disturb access |
+| Find my phone (iPhone) | a notification with `push.sound {name: default, critical: 1, volume: 1.0}` and Found it | Critical Alerts allowed |
+| Screen on | `command_screen_on` | — |
+| Flashlight | `command_flashlight` `turn_on` / `turn_off` | — |
+| Ringer | `command_ringer_mode` `normal` / `vibrate` / `silent` | Do Not Disturb access |
+| Do Not Disturb | `command_dnd` `priority_only` / `alarms_only` / `total_silence` / `off` | Do Not Disturb access |
+| Volume | `command_volume_level` `{media_stream, command: level}` (alarm, ring, notification, music, call, system) | Do Not Disturb access |
+| Brightness | `command_screen_brightness_level` 0–255 | (may ask: modify system settings) |
+| Screen timeout | `command_screen_off_timeout` ms | (may ask: modify system settings) |
+| Open an app | `command_launch_app` `{package_name}` | display over other apps |
+| Open a dashboard | `command_webview` `{command: /path}` | display over other apps |
+
+The notify call's answer only says Home Assistant sent it; the result therefore adds "If nothing happens, the phone
+needs … — open the HA app on the phone". **Find my phone** keeps what to put back (`find_restore`: the alarm volume from
+the Volume level sensor, Do Not Disturb's mode); **Found it** (`mobile_app_notification_action` with the
+`HP_FOUND_<token>` action) or `find_restore_min` later: `clear_notification` for its tag, the old alarm volume and Do Not
+Disturb mode sent back. Without a Volume level sensor the volume stays at its maximum (said in the result); on Android 15+
+a Do Not Disturb the user turned on can't be turned off by Home Assistant — the alarm still sounds when Do Not Disturb
+lets alarms through (said in the result). The ringer mode isn't touched: the alarm stream sounds on silent and vibrate.
+
+### 15.2 Lost mode (`lost.py`)
+
+Started by the owner, an admin when the owner allows *Lost mode* for others, admins on a child's phone; optional end time
+(≤ 7 days), ring every N min (`lost_ring_min`), location every N min (`lost_location_min`; the UI warns about battery),
+a chat for the place (the starter's 📌 My room or a chat they choose from `chat.chats.list`; posted as them, disappearing
+after a day unless *keep*). Each round (every 30 s): the first time a persistent, public notification "If found, please
+call <contact> — <message>" (owner-editable; `authenticationRequired` on its **I found it** action) — then every ring
+interval the alarm notification, the alarm volume and `command_screen_on` (no spoken message, to save notifications),
+and every location interval `request_location_update`. The place goes into the chat (directly, never through the
+outbox) only with Share my last place: the zone name; with *Exact location in Lost mode* also the address and
+coordinates, read from Home Assistant at that moment and never stored; only when it changed. **Ends** when turned off,
+at the end time, with I found it, or when the phone is unlocked: the Device locked sensor going off after it started;
+without it, the Interactive sensor going on after it started and more than 2 minutes after the app last woke the screen
+(a finder pressing the power button then ends it too — the card recommends the Device locked sensor). Ending clears the
+notification and puts the volume / Do Not Disturb back. Shown as a red banner on My phone, the phone's page and All phones,
+and a chip on the row. During do-not-monitor hours it runs only if the owner started it.
+
+### 15.3 Ring from the Household Assistant and Home Assistant
+
+`phones.find` (`acts`: the assistant confirms) with the button's rights. The event `household_phones_find` `{phone}`
+(listened for with `ha_find_event`): the person is the event's `context.user_id` (who pressed the dashboard button or
+ran the script) — as if they pressed it here; without one, only phones whose owner allows *from Home Assistant
+automations*. Answered with `household_phones_find_result` `{phone, result: sent | failed | refused}`. DOCS has the
+script for a wall tablet.
+
+### 15.4 Children's bedtime (`bedtime.py`)
+
+Admins set windows (as do-not-monitor hours), the parents to tell and *Do Not Disturb at bedtime* on a child's phone.
+In bedtime, the Interactive sensor on for more than `bedtime_after_min` without a break → one quiet alert
+(`importance: low`, iOS `interruption-level: passive`) to the parents per night (the night = the date 12 hours before)
+per phone. DND: `command_dnd priority_only` at the start, `off` at the end (and when the owner stops being a child).
+The child sees it on My phone, in What admins see and in the checklist (Interactive sensor on).
+
+### 15.5 Storage and battery health (`health.py`)
+
+Storage (Internal storage: the state is the % free) below `storage_low_pct` → once, again after recovering by 2
+points; Battery health worse than good → once per change. The usual alert rules and a Health card on the phone pages.
+
+### 15.6 Out-of-date HA app
+
+The Companion app's version (Current version / App version sensor, else the registration's) against the newest on the
+household's monitored phones with the same system, and against `min_app_version` (Android). "HA app outdated" chips on
+All phones and My phone, the Health card, and a checklist item. (The morning summary was dropped.)
+
+### 15.7 Set up this phone, Test everything (`phonesetup.py`)
+
+A QR code (drawn by `static/qr.js`, copied from Household Vault with its checks) and links: `homeassistant://navigate/<the
+app's sidebar page>` (the Companion app's deep link, Android and iOS; opens My phone) and
+`https://my.home-assistant.io/redirect/supervisor_ingress/?addon=<slug>`. The Companion app has no deep links to its own
+settings or sensor pages, so the steps are written out. **Test everything** (owner, once per 30 s): the checklist, a
+Check now (its result follows on the page), a test forward into the owner's My room when forwarding is on, a test
+notification → a pass / fail list, logged.
+
+### 15.8 One view per person
+
+My phone shows each of the person's monitored devices (phones and tablets) as stacked cards with status, battery,
+Check now and the actions (⋯). All phones has a *By status / By person* toggle (`#/phones/person`; API `people`).
+Watches are listed under Available devices and can be monitored as a Phone or Tablet.
+

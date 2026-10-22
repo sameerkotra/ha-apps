@@ -14,7 +14,7 @@ from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.concurrency import run_in_threadpool
 
-from . import app_messages, config, db, ha_sensors, housekeeping, monitor, phones, sidebar
+from . import actions, app_messages, config, db, ha_sensors, housekeeping, monitor, phones, sidebar
 from .common import auth_core, deeplinks, ha_people, ha_time, web_security
 from .common import housekeeping as jobs_core
 from .routers import admin, api
@@ -44,6 +44,7 @@ async def lifespan(_app: FastAPI):
         jobs.add("poll", monitor.poll_loop)
         jobs.every("quick", 5, housekeeping.quick, tick=True, at_start=False, log=logger, error="The quick round failed")
         jobs.every("hourly", 3600, housekeeping.hourly, log=logger, error="Housekeeping failed")
+        jobs.every("actions", 30, actions.tick, log=logger, error="The actions round failed")
         jobs.add("ha_sensors", ha_sensors.loop)
         jobs.add("ha_people", ha_people.loop)
     else:

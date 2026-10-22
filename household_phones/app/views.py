@@ -7,7 +7,7 @@ has added shows only that it isn't monitored.
 """
 import json
 
-from . import checknow, config, dnm, forwarding, monitor, phones, settings
+from . import actions, bedtime, checknow, config, dnm, forwarding, health, lost, monitor, phones, phonesetup, settings
 
 
 def ago(ts: float | None, now: float) -> str | None:
@@ -23,8 +23,17 @@ def ago(ts: float | None, now: float) -> str | None:
     return f"{m // 1440} days ago"
 
 
-def summary(conn, p, now: float, *, viewer: dict) -> dict:
-    """One phone as a list row / card."""
+def lost_line(p) -> dict | None:
+    """Lost mode, shown prominently wherever the phone is (§15.2): never hidden — it is an action, not a status."""
+    if not p["lost_since"]:
+        return None
+    return {"since": p["lost_since"], "sinceText": config.local(p["lost_since"]).strftime("%a %H:%M"),
+            "byName": p["lost_by_name"], "untilText": config.local(p["lost_until"]).strftime("%a %H:%M")
+            if p["lost_until"] else None}
+
+
+def summary(conn, p, now: float, *, viewer: dict, best: dict | None = None) -> dict:
+    """One phone as a list row / card. `best`: health.newest() when the caller has it (All phones)."""
     mine = viewer["id"] == p["owner_id"]
     owner = phones.owner_name(conn, p["owner_id"])
     monitored = monitor.runs(p)
@@ -32,7 +41,9 @@ def summary(conn, p, now: float, *, viewer: dict) -> dict:
            "mine": mine, "kind": p["kind"], "monitored": monitored, "model": p["model"],
            "manufacturer": p["manufacturer"], "ios": phones.is_ios(p), "inRegistry": bool(p["in_registry"]),
            "forwarding": bool(p["fwd_on"]) and monitored, "welcome": bool(p["welcome"]) and mine and monitored,
-           "dnmText": dnm.summary(dnm.windows_of(p)) if monitored and dnm.applies() else None}
+           "dnmText": dnm.summary(dnm.windows_of(p)) if monitored and dnm.applies() else None,
+           "lost": lost_line(p) if monitored else None,
+           "actionsOn": bool(settings.get("actions_allowed")) and monitored}
     if not monitored:
         out.update(hidden=True, status="unknown", label="Not monitored", paused=None)
         return out
@@ -52,8 +63,10 @@ def summary(conn, p, now: float, *, viewer: dict) -> dict:
     out.update(hidden=False, status=d["status"], label=d["label"], reason=d["reason"], reasonText=d["reasonText"],
                paused=d["paused"], lastCheckin=p["last_checkin"], lastCheckinText=ago(p["last_checkin"], now),
                battery=level, charging=chg, network=phones.network(p["id"]), lastReboot=phones.last_reboot(p["id"]) or p["last_reboot"],
-               appVersion=p["app_version"], osVersion=p["os_version"], osName=p["os_name"],
+               appVersion=health.app_version(p), osVersion=p["os_version"], osName=p["os_name"],
                intervalMin=p["interval_min"] or settings.get("interval_min"))
+    v = health.version_view(p, best if best is not None else health.newest(conn))
+    out.update(appOutdated=v["outdated"], appOutdatedWhy=v["why"])
     return out
 
 
@@ -95,6 +108,16 @@ def checklist(conn, p, now: float) -> list[dict]:
                               "reports and the requests aren't delayed. Even then, a phone that's lying still sends little "
                               "on its own (the Companion app only sends values that changed) — that's normal: Home "
                               "Assistant asks it when a check-in is due."})
+    v = health.version_view(p, health.newest(conn))
+    items.append({"id": "app_version", "ok": None if v["version"] is None else not v["outdated"],
+                  "title": "The Home Assistant app is up to date" + (f" — {v['version']}" if v["version"] else ""),
+                  "help": (f"It's outdated: {v['why']}. " if v["outdated"] else "")
+                          + "Update the Home Assistant app from the Play Store (or the App Store)."})
+    if p["bed_windows"] and actions.owner_is_child(conn, p):
+        inter = phones.enabled_any(p["id"], bedtime.INTERACTIVE_KEYS)
+        items.append({"id": "interactive", "ok": inter, "title": "The Interactive sensor is on (bedtime)",
+                      "help": "Bedtime notices when the screen is in use from it: Companion app → Settings → "
+                              "Companion app → Manage sensors → Interactive."})
     if p["fwd_on"]:
         last_msg = conn.execute("SELECT MAX(at) FROM forwards WHERE phone_id = ? AND kind = 'message'", (p["id"],)).fetchone()[0]
         hidden = bool(p["redacted_at"]) and (last_msg is None or last_msg < p["redacted_at"])
@@ -116,10 +139,11 @@ def checklist(conn, p, now: float) -> list[dict]:
     return items
 
 
-def admins_see(p) -> list[str]:
-    """§9: exactly what admins can see about this phone."""
+def admins_see(p, conn=None) -> list[str]:
+    """§9: exactly what admins can see about this phone, and what they may do with it (§15)."""
     if p["pause_kind"] == "watching":
-        return ["While you pause being watched: only \"Paused by you\" and until when — nothing else."]
+        return ["While you pause being watched: only \"Paused by you\" and until when — nothing else; they can't use "
+                "phone actions on it then."]
     hours = dnm.summary(dnm.windows_of(p)) if dnm.applies() else None
     out = ["Its status and last check-in (Online, Late, Offline…)", "Battery level and whether it's charging",
            "Wi-Fi network name or mobile data", "Last restart", "The phone's model, Android/iOS version and Companion app "
@@ -133,6 +157,17 @@ def admins_see(p) -> list[str]:
                    "\"Not monitored (until …)\" — no status, battery, network or sensors")
     elif dnm.applies():
         out.append("If you set do-not-monitor hours: that they exist and, during them, only \"Not monitored (until …)\"")
+    out.append("Its storage, battery health and Home Assistant app version")
+    if conn is not None and settings.get("actions_allowed"):
+        out.append(actions.consent_summary(conn, p))
+        lost_ok = "lost" in actions.allowed_list(p) or actions.owner_is_child(conn, p)
+        out.append("Lost mode: " + ("admins may turn it on" if lost_ok else "only you can turn it on")
+                   + (" — while it's on, they see that it is, and its place is posted into the chosen chat"
+                      + (" with exact coordinates" if p["lost_exact"] else " as a zone name")
+                      if p["share_place"] else " — your place isn't posted (Share my last place is off)"))
+    if p["bed_windows"] and conn is not None and actions.owner_is_child(conn, p):
+        out.append(f"{bedtime.summary(bedtime.windows_of(p))}: the parents chosen are told when the screen is in use "
+                   "then (once a night)")
     return out
 
 
@@ -162,7 +197,11 @@ def forwarding_view(conn, p) -> dict:
 
 def owner_page(conn, p, now: float, viewer: dict) -> dict:
     out = summary(conn, p, now, viewer=viewer)
-    out.update(checklist=checklist(conn, p, now), adminsSee=admins_see(p), log=checknow.log(conn, p["id"]),
+    best = health.newest(conn)
+    out.update(actions=actions.view(conn, p, viewer, now), lost=lost.view(conn, p, viewer, now),
+               bedtime=bedtime.view(conn, p, now) if (p["bed_windows"] or actions.owner_is_child(conn, p)) else None,
+               health=health.view(p, best), setup=phonesetup.setup_view(p))
+    out.update(checklist=checklist(conn, p, now), adminsSee=admins_see(p, conn), log=checknow.log(conn, p["id"]),
                alertsLog=[h for h in history(conn, p["id"], 100) if h["kind"] == "alert"][:30],
                dnm=dnm_view(p), welcome=bool(p["welcome"]), sharePlace=bool(p["share_place"]),
                forwarding=forwarding_view(conn, p), stopRequested=bool(p["stop_requested_at"]),
@@ -203,6 +242,9 @@ def admin_page(conn, p, now: float, viewer: dict) -> dict:
     if p["fwd_on"]:
         out["forwardingTarget"] = forwarding.target_name(p)
     out["offlineAlert"] = monitor.spell_view(p, now)
+    if out["monitored"]:
+        out.update(actions=actions.view(conn, p, viewer, now), lost=lost.view(conn, p, viewer, now),
+                   bedtime=bedtime.view(conn, p, now))
     if out.get("hidden"):
         out["offlineAlert"]["counting"] = None           # nothing about its status while hidden (§9)
         keep = ("pause", "found", "owner") if out["monitored"] else ()
@@ -210,5 +252,6 @@ def admin_page(conn, p, now: float, viewer: dict) -> dict:
         return out
     out.update(sensors=phones.sensors(p["id"], bool(p["share_place"])), history=history(conn, p["id"]),
                checkinDetails=monitor.diagnostics(p, now),
-               checks=checknow.log(conn, p["id"], 20), zone=phones.zone(p["id"]) if p["share_place"] else None)
+               checks=checknow.log(conn, p["id"], 20), zone=phones.zone(p["id"]) if p["share_place"] else None,
+               health=health.view(p, health.newest(conn)))
     return out

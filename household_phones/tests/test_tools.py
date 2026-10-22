@@ -26,7 +26,7 @@ class Assistant(PhonesCase):
     def test_catalogue_fits_and_only_the_assistant_asks(self):
         tools.tools.check()
         names = [t["name"] for t in tools.tools.spec()]
-        self.assertEqual(names, ["phones.status", "phones.check"])
+        self.assertEqual(names, ["phones.status", "phones.check", "phones.find"])
         with self.assertRaises(bus.Nack):
             self.call("phones.status", {}, frm="household_chat")
 

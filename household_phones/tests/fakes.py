@@ -13,6 +13,8 @@ class FakeSource:
         self.entries, self.devices, self.entities = [], [], []
         self.state = {}               # entity_id -> state dict
         self.commands = []            # notify services asked to report
+        self.notified = []            # (service, payload) of every other notify call (phone actions)
+        self.notify_result = None     # a CommandResult to answer them with (None: sent)
         self.result = None            # a CommandResult to answer with (None: sent)
         self.notes = []               # Home Assistant notifications
         self.events = []
@@ -32,6 +34,14 @@ class FakeSource:
     def send_command(self, service):
         self.commands.append(service)
         return self.result or ha_source.CommandResult(True)
+
+    def notify(self, service, payload):
+        self.notified.append((service, payload))
+        return self.notify_result or ha_source.CommandResult(True)
+
+    def messages(self):
+        """The `message` of each notify call so far (commands and notifications), in order."""
+        return [p.get("message") for _, p in self.notified]
 
     def ha_notification(self, title, message, notification_id):
         self.notes.append((title, message))
