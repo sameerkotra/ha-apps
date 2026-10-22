@@ -89,10 +89,12 @@ def checklist(conn, p, now: float) -> list[dict]:
                       "help": "So a phone where nothing changed still answers a \"please report\" (the Companion app only "
                               "sends sensors whose value changed): turn on Battery power or Last update trigger in "
                               "Manage sensors. Once the phone has answered a request, this is ticked."})
-        items.append({"id": "battery", "ok": False if p["status_reason"] == "answers_only" else None,
+        items.append({"id": "battery", "ok": None,
                       "title": "Battery use for the Home Assistant app: Unrestricted",
                       "help": "Android: long-press the Home Assistant app → App info → Battery → Unrestricted, so its own "
-                              "reports and the requests aren't delayed."})
+                              "reports and the requests aren't delayed. Even then, a phone that's lying still sends little "
+                              "on its own (the Companion app only sends values that changed) — that's normal: Home "
+                              "Assistant asks it when a check-in is due."})
     if p["fwd_on"]:
         last_msg = conn.execute("SELECT MAX(at) FROM forwards WHERE phone_id = ? AND kind = 'message'", (p["id"],)).fetchone()[0]
         hidden = bool(p["redacted_at"]) and (last_msg is None or last_msg < p["redacted_at"])

@@ -120,8 +120,9 @@ check-in within the wait after a request is an *answer* (learnt per phone: `answ
   (at once, or after the phone's offline alert delay, §5).
 - **App not reporting**, with the reason and the fix: *signed out or uninstalled* (the notify service is missing, or
   the request is refused as a registration error); *a needed sensor is off* (Battery level disabled, when it would
-  otherwise be Offline); *answers requests but never reports by itself* (it answered requests, and no spontaneous
-  check-in for 3 intervals or an hour: battery optimisation — "Unrestricted"). Its alert goes out only once it has
+  otherwise be Offline). A phone that only reports when asked is **not** flagged (since 1.3.3): the Companion app sends
+  only values that changed, so a phone lying still sends little on its own even with Unrestricted battery use; answering
+  a request means it's fine. Its alert goes out only once it has
   lasted longer than the Offline time ("Asha's Pixel: the HA app stopped reporting — signed out?").
 - **Can't check:** the request itself failed (§3.1); never Offline; retried every wait period.
 - **Paused** (alerts or watching, §3.1, §9), **Not monitored (until 07:00)** (the owner's do-not-monitor hours,
@@ -133,7 +134,7 @@ check-in within the wait after a request is an *answer* (learnt per phone: `answ
 - **Start-up grace:** after this app starts (Home Assistant restarting restarts it too), no phone is marked Offline
   and no offline alert sent until one interval + 12 minutes (setting) has passed; the pages say "Starting — waiting
   for phones to check in". The same grace applies to one phone after an admin adds it and after each of its
-  do-not-monitor windows ends (and "answers requests but never reports by itself" ignores that time).
+  do-not-monitor windows ends.
 - **Lost contact:** when half or more of the monitored phones (not in do-not-monitor hours or the grace after them) (and at least 2; settings) went Late within the same 10
   minutes, one alert "Home Assistant has lost contact with the phones (5 of 6 silent since 14:02)" goes to the admins
   as a Home Assistant notification plus their phones; individual offline alerts are held until contact returns, then

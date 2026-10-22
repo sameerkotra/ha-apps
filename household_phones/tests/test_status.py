@@ -179,14 +179,16 @@ class FalseAlarms(PhonesCase):
         self.assertFalse(items["sensors"]["ok"])
         self.assertIn("Battery level", items["sensors"]["title"])
 
-    def test_answers_requests_but_never_reports_by_itself(self):
+    def test_answering_requests_is_online(self):
+        """A phone that only reports when asked is fine (the Companion app sends only values that changed): Online,
+        and the battery item stays a tip, not a failure."""
         pid = self.add()
         self.set_row(pid, answers_requests=1, last_spontaneous=self.now - 5 * 3600, last_checkin=self.now - 60,
                      first_seen=self.now - 86400)
         self.tick()
-        self.assertEqual((statuses(self, pid), self.row(pid)["status_reason"]), ("app_not_reporting", "answers_only"))
+        self.assertEqual(statuses(self, pid), "online")
         items = {c["id"]: c for c in self.get(f"/api/phones/{pid}", ASHA).json()["checklist"]}
-        self.assertFalse(items["battery"]["ok"])
+        self.assertIsNone(items["battery"]["ok"])
 
     def test_lost_contact_one_alert_then_only_the_still_silent(self):
         self.people([{"name": "Ann", "userId": "u-ann", "phones": [{"label": "Ann", "tracker": "x", "service": "mobile_app_ann_spare"}]}])

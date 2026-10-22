@@ -2,6 +2,9 @@
 
 All notable changes to Household Phones. See the [repository](https://github.com/sameerkotra/ha-apps).
 
+## 1.3.3
+
+- **Fixed:** a phone that answered "please report" could show *App not reporting — set battery use to Unrestricted* even when it already was. The Companion app only sends values that changed, so a phone lying still sends little on its own; answering a request means it's fine, and it now shows Online. The battery tip stays in the checklist as advice only.
 ## 1.3.2
 
 - **Fixed:** a phone could stay Late or Offline while in use. Its location updates — on many phones most of what it sends — were ignored as "not a sensor update"; they count as check-ins again (only Home Assistant restoring them after a restart, or *unavailable*, doesn't).

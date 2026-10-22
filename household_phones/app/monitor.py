@@ -43,8 +43,9 @@ STATUS_LABEL = {"online": "Online", "late": "Late", "offline": "Offline", "app_n
 REASON_TEXT = {
     "signed_out": "The Companion app seems signed out or uninstalled — open it on the phone and sign in.",
     "sensor_off": "A needed sensor is off on the phone (Battery level) — Companion app → Settings → Manage sensors.",
-    "answers_only": "It answers requests but never reports by itself — set battery use for the Home Assistant app to "
-                    "Unrestricted (Android: App info → Battery).",
+    # (answers_only, until 1.3.3: a phone that answers requests is fine — the Companion app only sends values that
+    # changed, so an idle phone may send nothing on its own for hours even with Unrestricted battery use)
+    "answers_only": "It reports when asked.",
 }
 
 
@@ -130,8 +131,6 @@ def compute(p, now: float, s: dict, started: float, *, sensor_off: bool = False,
         st, reason = "app_not_reporting", "signed_out"
     elif st == "offline" and sensor_off:
         st, reason = "app_not_reporting", "sensor_off"
-    elif st == "online" and answering_only(p, now, t, after):
-        st, reason = "app_not_reporting", "answers_only"
     if st == "offline" and (now - started < t.grace or in_grace_after(p, now, t, after)):
         st = "late"                           # the start-up grace: never Offline yet (§3.1)
     return st, reason
@@ -145,7 +144,8 @@ def in_grace_after(p, now: float, t: Timing, after: float | None) -> bool:
 
 
 def answering_only(p, now: float, t: Timing, after: float | None = None) -> bool:
-    """It has answered requests but not reported by itself for a long while (battery optimisation, force-stop).
+    """It has answered requests but not reported by itself for a long while. Not a problem (the Companion app only
+    sends values that changed), so it no longer changes the status; kept for the phone page's hint.
     Time spent in do-not-monitor hours, or before an admin added it, doesn't count."""
     window = max(3 * t.interval, 3600)
     if not p["answers_requests"] or now - p["first_seen"] < window:

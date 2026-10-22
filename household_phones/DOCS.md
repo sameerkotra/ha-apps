@@ -55,9 +55,8 @@ reports every minute (more battery) and is never asked.
 - **Late** — overdue; the app is asking it to report. No alert yet.
 - **Offline** — both requests unanswered (27 minutes without a check-in at the defaults). The offline alert goes out.
 - **App not reporting** — the phone is probably on but the Companion app can't report: it seems signed out or
-  uninstalled, a needed sensor (Battery level) is off on the phone, or it answers requests but never reports by
-  itself (battery optimisation — set the Home Assistant app's battery use to *Unrestricted*). The page says which and
-  how to fix it.
+  uninstalled, or a needed sensor (Battery level) is off on the phone. The page says which and how to fix it. A phone
+  that mostly reports only when Home Assistant asks is fine: the Companion app sends only values that changed.
 - **Can't check** — the request itself failed (Home Assistant couldn't reach the push service). Never counted as
   Offline: check remote access / Nabu Casa.
 - **Paused** — alerts are paused, or the owner paused being watched.
