@@ -207,5 +207,6 @@ def admin_page(conn, p, now: float, viewer: dict) -> dict:
         out.update(sensors=None, history=[h for h in history(conn, p["id"]) if h["kind"] in keep] if keep else [])
         return out
     out.update(sensors=phones.sensors(p["id"], bool(p["share_place"])), history=history(conn, p["id"]),
+               checkinDetails=monitor.diagnostics(p, now),
                checks=checknow.log(conn, p["id"], 20), zone=phones.zone(p["id"]) if p["share_place"] else None)
     return out

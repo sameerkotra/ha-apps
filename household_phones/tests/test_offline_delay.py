@@ -121,7 +121,7 @@ class Delay(PhonesCase):
         self.assertIsNone(self.row(self.pid)["offline_since"])
         statuses = [h["text"] for h in self.get(f"/api/phones/{self.pid}").json()["admin"]["history"]
                     if h["kind"] == "status"]
-        self.assertIn("Offline", statuses)                       # the status and history are as before
+        self.assertTrue(any(t.startswith("Offline") for t in statuses))   # the status and history are as before
 
     def test_do_not_monitor_hours_in_the_middle_dont_count(self):
         r = self.put(f"/api/phones/{self.pid}/dnm", {"windows": [{"days": [4], "start": "09:00", "end": "11:00",

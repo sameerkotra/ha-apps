@@ -13,7 +13,8 @@ Assistant's events (one shared WebSocket, ha_ws.HAWebSocket).
     the phone's `fwd_error` (shown on My phone) — `not_allowed app` means Chat's *Phones may post forwarded
     messages* is off.
 - **Events**: `state_changed` / `state_reported` (check-ins and forwarding, monitor.on_state_event), the registries'
-  `*_registry_updated` (discovery again), and `household_phones_check_now` (Check now from a script).
+  `*_registry_updated` (discovery again), `household_phones_check_now` (Check now from a script), and Home
+  Assistant's start / started / stop plus every reconnection (monitor's restart grace: restores aren't check-ins).
 """
 import json
 import logging
@@ -72,6 +73,9 @@ def start() -> None:
         ws = ha_ws.HAWebSocket(config.SUPERVISOR_CORE_WS, config.SUPERVISOR_TOKEN, name="phones-ws")
         ws.subscribe("state_changed", monitor.on_state_event)
         ws.subscribe("state_reported", monitor.on_state_event)
+        for t in ("homeassistant_start", "homeassistant_started", "homeassistant_stop"):
+            ws.subscribe(t, monitor.on_ha_event)        # restores and rewrites while it (re)starts aren't reports
+        ws.on_connect(monitor.on_ws_connect)
         for t in ("device_registry_updated", "entity_registry_updated"):
             ws.subscribe(t, _registry_changed)
         ws.subscribe("household_phones_check_now", on_check_event)

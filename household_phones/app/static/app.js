@@ -780,6 +780,7 @@
       a.hidden ? null : h("button", { type: "button", class: "btn-primary", onclick: () => runCheck(a.id) }, "Check now")),
       a.reasonText ? h("p", { class: "note warn" }, a.reasonText) : null,
       a.offlineAlert && a.offlineAlert.counting ? h("p", { class: "dim offline-countdown" }, `⏳ ${a.offlineAlert.counting.text}`) : null,
+      a.checkinDetails && a.checkinDetails.last ? h("p", { class: "dim small" }, a.checkinDetails.last.text) : null,
       a.stopRequested ? h("p", { class: "note warn" }, `${a.owner || "The owner"} asked to stop monitoring this phone.`) : null,
       a.dnmText ? h("p", { class: "dim" }, `🌙 ${a.dnmText} — the owner's do-not-monitor hours (only they can change them).`) : null,
       a.hidden ? h("p", { class: "hint" }, a.status === "dnm" ? "Do-not-monitor hours: its status, battery, network and sensors aren't shown, and nothing is asked, until they end."
@@ -803,6 +804,7 @@
         h("p", { class: "hint" }, a.sensors.off.join(", ") + " — the owner can switch them on in the Companion app (Manage sensors)."));
       add(box, c);
     }
+    if (a.checkinDetails) add(box, checkinDetails(a.checkinDetails));
     const hist = card(`🗂️ History`);
     let day = null;
     if (!a.history.length) add(hist, h("p", { class: "hint" }, "Nothing in the history kept."));
@@ -822,6 +824,20 @@
           try { await api(`api/admin/phones/${a.id}`, { method: "DELETE" }); go("#/phones"); } catch (e) { toast(e.message, true); }
         } }, "Remove"))));
     if (whole && whole.mine && whole.monitored) add(box, h("p", null, h("a", { href: `#/mine/${a.id}` }, "Your own settings for this phone ›")));
+  }
+
+  // Check-in details (admins): which updates counted as check-ins and which were ignored, and why (§3)
+  function checkinDetails(d) {
+    const row = (x, why) => h("div", { class: "log-row" }, h("span", { class: "dim" }, x.atText),
+      h("span", null, `${x.name} · ${x.kind || "—"}${why ? ` — ${why}` : ""}${x.n > 1 ? ` (×${x.n})` : ""}`));
+    const none = h("p", { class: "hint" }, "None since the app started.");
+    return h("details", { class: "card" }, h("summary", null, "🔎 Check-in details"),
+      h("p", { class: "hint" }, "Only reports the phone itself makes count. Home Assistant's own updates — states restored after a restart, unavailable or unknown, entities added again, updates without a time — are ignored, with the reason. The last 20 of each, since the app started."),
+      d.shutdown ? h("p", { class: "note" }, `The phone said it was shutting down at ${d.shutdown.atText}: only a real change counts until it reports again.`) : null,
+      d.haRestart ? h("p", { class: "note" }, `${d.haRestart.why}: updates aren't counted until ${d.haRestart.untilText}.`) : null,
+      h("h3", null, "Counted"), d.counted.length ? h("div", { class: "log-list" }, d.counted.map((x) => row(x))) : none,
+      h("h3", null, "Ignored"), d.ignored.length ? h("div", { class: "log-list" }, d.ignored.map((x) => row(x, x.reason))) : none.cloneNode(true),
+      h("p", { class: "hint" }, d.source === "events" ? "Check-ins come from Home Assistant's state events." : "Check-ins come from the once-a-minute fallback poll (no state_reported events lately)."));
   }
 
   async function settingsCard(a, again) {

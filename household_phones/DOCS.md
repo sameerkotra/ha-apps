@@ -32,8 +32,12 @@ aren't) an admin.
 ## How a phone checks in
 
 - The Companion app sends its sensors to Home Assistant every 15 minutes on its own (**Sensor update frequency:
-  Normal**, its default), plus whenever something changes. Any report counts as a check-in, even with unchanged
-  values.
+  Normal**, its default), plus whenever something changes. Any report from the phone counts as a check-in, even with
+  unchanged values — but not Home Assistant's own updates: states restored when Home Assistant restarts or reloads,
+  sensors going *unavailable* or *unknown*, updates without a time, and, once the phone has said it's shutting down
+  (the **Last update trigger** sensor), anything but a real change. A phone that's switched off goes Late 2 minutes
+  after its interval and Offline 12 minutes after it (17 and 27 minutes at the defaults).
+- **Check now** is answered only by a report made after it was sent.
 - When a phone hasn't checked in within the interval plus 2 minutes, the app sends it the Companion app's command
   `command_update_sensors` ("please report") through `notify.mobile_app_<phone>`. No reply within 5 minutes: it asks
   once more. A phone that reports on time is never sent anything. Commands don't count toward the Companion app's
@@ -156,6 +160,12 @@ Storage, Location zone, Last reboot and updates, Other — notification texts ar
 at each change). While an offline alert is waiting, a line under the status says so: "⏳ Offline 2 h 14 min — alert
 after 10 h". A phone whose owner paused being watched shows only "Paused by …"; one in its do-not-monitor hours only "Not
 monitored (until …)".
+
+**Check-in details** (collapsed, on the phone's page): under the status, "Last check-in 14:02 — from Battery level
+(reported, unchanged)"; inside, the last 20 updates that counted as check-ins and the last 20 that were ignored, with
+the reason ("HA restart", "unavailable", "added or restored by Home Assistant", "before the request"…). Only sensor
+names, times and reasons — never a sensor's value, and the Last notification sensor is just named. The history's Late
+and Offline rows say the same about the last check-in. Kept in memory since the app started.
 
 ## Forwarding messages into Household Chat
 
@@ -317,6 +327,9 @@ Assistant's own backups include the app's data too.
   notify service differently, set it on the phone's page.
 - **Late every 15 minutes, then Online:** the phone reports only when asked — set the Home Assistant app's battery
   use to *Unrestricted*.
+- **A phone shows Online although it's switched off:** open its page → **Check-in details**. The last check-in says
+  which sensor it came from; if something other than the phone keeps counting, the Ignored list shows what is being
+  filtered out. Turn on **Last update trigger** in Manage sensors so the phone says when it shuts down.
 - **Check now says No reply although the phone is on:** turn on **Battery power** or **Last update trigger** in
   Manage sensors (the command only sends sensors that changed).
 - **Nothing is forwarded:** check the switch, the household's App setting, the Last notification sensor (on, with

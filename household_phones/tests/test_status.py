@@ -292,7 +292,7 @@ class History(PhonesCase):
         self.advance(40)
         self.tick()
         texts = [h["text"] for h in self.get(f"/api/phones/{pid}").json()["admin"]["history"]]
-        self.assertIn("Offline", texts)
+        self.assertIn("Offline — last check-in 08:00 from Battery Level (changed)", texts)   # where it came from
         self.advance(8 * 24 * 60)
         out = housekeeping.prune(self.now)
         self.assertGreater(out["history"], 0)

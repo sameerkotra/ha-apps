@@ -2,6 +2,13 @@
 
 All notable changes to Household Phones. See the [repository](https://github.com/sameerkotra/ha-apps).
 
+## 1.3.0
+
+- **Fixed:** after Home Assistant restarted, the last message on a phone could be forwarded into Chat again. A restored Last notification sensor is no longer treated as a new message.
+- **Fixed:** a switched-off phone could still show Online. Only reports the phone itself makes count as check-ins now — not Home Assistant restoring states after a restart, sensors going unavailable or unknown, updates without a time, or anything after the phone says it's shutting down. A phone that's off goes Late after 17 minutes and Offline after 27 (at the defaults).
+- **Fixed:** Check now could say Online for a phone that's off. Only a report made after you pressed it counts as the answer.
+- **Check-in details:** a phone's page (admins) shows where its last check-in came from — "Last check-in 14:02 — from Battery level" — and, folded away, the last 20 updates that counted and the last 20 that were ignored, with the reason. Never a message's text.
+
 ## 1.2.0
 
 - **Alert when offline for at least…:** choose how long a phone may be offline before its alert goes out — as soon as it's Offline (as before), or after 30 minutes up to 24 hours. Set the household's default in Admin → App settings → Alerts, and give a phone its own on its page or when adding it to monitoring. For a phone that's often off at night, choose 10 hours.

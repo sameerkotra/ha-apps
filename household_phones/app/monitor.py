@@ -1,8 +1,11 @@
 """Check-ins, the "please report" requests and each phone's status (spec/SPEC.md §3, §3.1).
 
-- A **check-in** is any report from the phone: a `state_changed` or `state_reported` event on one of its entities
-  (`on_state_event`), or — when Home Assistant doesn't send `state_reported` — a newer `last_reported` seen by the
-  once-a-minute poll (`poll_states`). The fallback switches itself on and off (`reported_events_seen`).
+- A **check-in** is a genuine report from the phone: a `state_changed` or `state_reported` event on one of its
+  sensors (`on_state_event`, `classify`), or — when Home Assistant doesn't send `state_reported` — a newer
+  `last_reported` seen by the once-a-minute poll (`poll_states`). Not: restores and entities added (no old state),
+  unavailable / unknown, anything during Home Assistant's (re)start grace, events without a timestamp, attribute-only
+  tracker rewrites, and — after the phone said it was shutting down — anything but a real change. Each counted and
+  ignored update is kept (the last 20, `diagnostics`) for the phone page's Check-in details.
 - **Requests**: a phone silent for interval + "ask after" is sent `command_update_sensors`; again after "wait for a
   reply"; Offline after the set number of requests (interval + 12 minutes at the defaults). iPhones are never asked.
 - **Status** (`compute`, a pure function the tests drive): online / late / offline / app_not_reporting / cant_check,
@@ -267,13 +270,176 @@ def until_text(p) -> str:
     return f"until {d.strftime('%H:%M') if same_day else d.strftime('%a %H:%M')}"
 
 
+# --------------------------------------------------------------------------------------------- what counts
+
+HA_GRACE_S = 120                           # after Home Assistant (re)starts or the event connection comes back
+HA_STARTING_MAX_S = 15 * 60
+HA = {"until": None, "starting_at": None, "why": None}
+SHUTDOWN_HOLD_S = 60                       # reports in the same burst as "shutting down" still count
+RING_N = 20
+NOT_A_VALUE = ("unavailable", "unknown")
+SENSOR_DOMAINS = ("sensor", "binary_sensor")
+KIND_TEXT = {"state_reported": "reported, unchanged", "state_changed": "changed", "attributes": "attributes changed",
+             "poll": "newer last_reported, fallback poll", "shutdown": "shutting down", "direct": "check-in"}
+_diag: dict = {}                           # phone id -> {"counted": deque, "ignored": deque} (memory only)
+_shutdown: dict = {}                       # phone id -> when it said it was shutting down, or None (phones.shutdown_at)
+_poll_seen: dict = {}                      # entity id -> the last_reported the fallback poll saw last
+
+
+def ha_restarting(now: float) -> bool:
+    """Inside the grace after Home Assistant (re)started: its restores and rewrites aren't the phones' reports."""
+    if HA["starting_at"] is not None and now - HA["starting_at"] < HA_STARTING_MAX_S:
+        return True
+    return HA["until"] is not None and now < HA["until"]
+
+
+def ha_started(now: float | None = None, why: str = "Home Assistant started") -> None:
+    now = config.clock() if now is None else now
+    HA.update(until=max(HA["until"] or 0, now + HA_GRACE_S), starting_at=None, why=why)
+
+
+def on_ha_event(event: dict) -> None:
+    """homeassistant_start / _started / _stop (the WebSocket thread)."""
+    etype = event.get("event_type") if isinstance(event, dict) else None
+    now = config.clock()
+    if etype in ("homeassistant_start", "homeassistant_stop"):
+        HA.update(starting_at=now, why="Home Assistant starting" if etype.endswith("start") else "Home Assistant stopping")
+    elif etype == "homeassistant_started":
+        ha_started(now)
+
+
+def on_ws_connect(first: bool) -> None:
+    """Every (re)connection of the event WebSocket: a reconnect usually means Home Assistant restarted, so the next
+    HA_GRACE_S seconds don't count. On the first connection the grace ends at once if Home Assistant is already
+    running (its restores happened before this app was listening)."""
+    ha_started(why="connected to Home Assistant" if first else "Home Assistant restarted (reconnected)")
+    if not first:
+        return
+
+    def check():
+        from .common import ha_client
+        cfg = ha_client.fetch_config_blocking(timeout=10)
+        if isinstance(cfg, dict) and cfg.get("state") == "RUNNING" and HA["starting_at"] is None:
+            HA["until"] = None
+    threading.Thread(target=check, daemon=True, name="phones-ha-state").start()
+
+
+def _label(pid: str | None, eid: str | None) -> str:
+    """The entity's name for the diagnostics: never anything from the Last notification sensor but its name."""
+    if not eid:
+        return "—"
+    if "notification" in eid and "count" not in eid:
+        return "Last notification sensor"
+    with phones.LIVE.lock:
+        for e in phones.LIVE.phone_entities.get(pid, []):
+            if e["entity_id"] == eid and e.get("name"):
+                return str(e["name"])[:60]
+        st = phones.LIVE.states.get(eid) or {}
+    name = (st.get("attributes") or {}).get("friendly_name")
+    return str(name)[:60] if isinstance(name, str) and name else eid
+
+
+def _key(pid: str, eid: str) -> str | None:
+    with phones.LIVE.lock:
+        for e in phones.LIVE.phone_entities.get(pid, []):
+            if e["entity_id"] == eid:
+                return e["key"]
+    return None
+
+
+def note(pid: str, which: str, eid: str | None, kind: str | None, at: float, reason: str | None = None) -> None:
+    """Remember a counted check-in or an ignored update (the last RING_N of each per phone). Consecutive ignored
+    updates for the same reason fold into one entry with a count."""
+    from collections import deque
+    with _lock:
+        d = _diag.setdefault(pid, {"counted": deque(maxlen=RING_N), "ignored": deque(maxlen=RING_N)})
+        ring = d[which]
+        if which == "ignored" and ring and ring[-1]["reason"] == reason:
+            ring[-1].update(at=at, entity=eid, kind=kind, n=ring[-1]["n"] + 1)
+            return
+        ring.append({"at": at, "entity": eid, "kind": kind, "reason": reason, "n": 1})
+
+
+def diagnostics(p, now: float) -> dict:
+    """The phone page's "Check-in details" (admins): the last genuine check-in and where it came from, the last
+    RING_N counted check-ins and ignored updates. Entity names, event kinds, times and reasons only — never a state."""
+    pid = p["id"]
+    with _lock:
+        d = _diag.get(pid) or {"counted": [], "ignored": []}
+        counted, ignored = list(d["counted"]), list(d["ignored"])
+
+    def row(x):
+        return {"at": x["at"], "atText": config.hhmm(x["at"]), "entity": x["entity"], "name": _label(pid, x["entity"]),
+                "kind": KIND_TEXT.get(x["kind"] or "", x["kind"]), "reason": x["reason"], "n": x["n"]}
+    last = None
+    if p["last_checkin"]:
+        eid = p["checkin_entity"]
+        last = {"at": p["last_checkin"], "atText": config.hhmm(p["last_checkin"]), "entity": eid,
+                "name": _label(pid, eid) if eid else None, "kind": KIND_TEXT.get(p["checkin_kind"] or "", p["checkin_kind"])}
+        last["text"] = f"Last check-in {last['atText']}" + (f" — from {last['name']} ({last['kind']})" if eid else "")
+    sd = p["shutdown_at"]
+    return {"last": last, "counted": [row(x) for x in reversed(counted)], "ignored": [row(x) for x in reversed(ignored)],
+            "shutdown": {"at": sd, "atText": config.hhmm(sd)} if sd else None,
+            "haRestart": {"untilText": config.hhmm(HA["until"]), "why": HA["why"]} if ha_restarting(now) and HA["until"] else None,
+            "source": "events" if reported_events_seen(now) else "polling"}
+
+
+def last_checkin_text(p) -> str | None:
+    """"last check-in 14:02 from Battery level (changed)" for the history's status rows."""
+    if not p["last_checkin"]:
+        return None
+    text = f"last check-in {config.hhmm(p['last_checkin'])}"
+    if p["checkin_entity"]:
+        text += f" from {_label(p['id'], p['checkin_entity'])} ({KIND_TEXT.get(p['checkin_kind'] or '', p['checkin_kind'])})"
+    return text
+
+
+def _shutdown_at(pid: str) -> float | None:
+    with _lock:
+        if pid in _shutdown:
+            return _shutdown[pid]
+    with db.get_conn() as conn:
+        r = conn.execute("SELECT shutdown_at FROM phones WHERE id = ?", (pid,)).fetchone()
+    at = r["shutdown_at"] if r else None
+    with _lock:
+        _shutdown[pid] = at
+    return at
+
+
+def _set_shutdown(pid: str, at: float | None) -> None:
+    with db.get_conn() as conn:
+        conn.execute("UPDATE phones SET shutdown_at = ? WHERE id = ?", (at, pid))
+    with _lock:
+        _shutdown[pid] = at
+
+
+def is_shutdown(key: str | None, state) -> bool:
+    """The Last update trigger sensor saying the phone is shutting down (android.intent.action.ACTION_SHUTDOWN)."""
+    return key == "last_update" and isinstance(state, str) and "shutdown" in state.lower()
+
+
 # --------------------------------------------------------------------------------------------- check-ins
 
-def checkin(pid: str, ts: float, now: float | None = None, *, force: bool = False) -> bool:
-    """Record a report from the phone at `ts`. Writes at most every WRITE_EVERY_S per phone unless a request or a
-    Check now is waiting for it. True when written."""
+def checkin(pid: str, ts: float | None, now: float | None = None, *, force: bool = False,
+            src: dict | None = None) -> bool:
+    """Record a genuine report from the phone at `ts` (`src`: {entity, kind, change} for the diagnostics and the
+    shutdown rule). No timestamp, no check-in. Writes at most every WRITE_EVERY_S per phone unless a request or a
+    Check now is waiting for it; a Check now is answered only by a report made after it was sent. True when written."""
     now = config.clock() if now is None else now
+    if ts is None:
+        return False
     ts = min(ts, now)
+    src = src or {}
+    eid, kind = src.get("entity"), src.get("kind") or "direct"
+    sd = _shutdown_at(pid)
+    if kind == "shutdown":
+        _set_shutdown(pid, ts)
+        force = True
+    elif sd is not None and ts > sd + SHUTDOWN_HOLD_S:
+        if not src.get("change", True):
+            note(pid, "ignored", eid, kind, now, "after the phone said it was shutting down")
+            return False
+        _set_shutdown(pid, None)              # a real change: it's back
     with _lock:
         last = _last_write.get(pid)
         if not force and last is not None and ts <= last[0] + WRITE_EVERY_S and not last[1]:
@@ -282,31 +448,47 @@ def checkin(pid: str, ts: float, now: float | None = None, *, force: bool = Fals
         p = conn.execute("SELECT * FROM phones WHERE id = ?", (pid,)).fetchone()
         if p is None or not runs(p) or dnm.active(p, now):
             return False                      # not monitored (now): nothing is written
-        waiting = conn.execute("SELECT 1 FROM checks WHERE phone_id = ? AND state = 'waiting'", (pid,)).fetchone()
-        if p["last_checkin"] is not None and ts <= p["last_checkin"] and not waiting:
+        if p["last_checkin"] is not None and ts <= p["last_checkin"]:
+            if ts < p["last_checkin"] - 1 and src:
+                note(pid, "ignored", eid, kind, now, "older than the last check-in")
             with _lock:
-                _last_write[pid] = (p["last_checkin"], False)
+                _last_write[pid] = (p["last_checkin"], bool(last and last[1]))
             return False
+        waiting = conn.execute("SELECT started FROM checks WHERE phone_id = ? AND state = 'waiting'", (pid,)).fetchall()
         s = snapshot()
         t = timing(p, s)
-        answer = p["last_request_at"] is not None and 0 <= ts - p["last_request_at"] <= t.wait + 60
+        answer = p["last_request_at"] is not None and 0 < ts - p["last_request_at"] <= t.wait + 60
         conn.execute("UPDATE phones SET last_checkin = MAX(COALESCE(last_checkin, 0), ?), requests_sent = 0, "
                      "request_error = NULL, request_error_kind = NULL, overdue_from = NULL, "
+                     "checkin_entity = ?, checkin_kind = ?, "
                      "answers_requests = CASE WHEN ? THEN 1 ELSE answers_requests END, "
                      "last_spontaneous = CASE WHEN ? THEN last_spontaneous ELSE MAX(COALESCE(last_spontaneous, 0), ?) END "
-                     "WHERE id = ?", (ts, answer, answer, ts, pid))
+                     "WHERE id = ?", (ts, eid, kind, answer, answer, ts, pid))
         if p["pause_kind"] == "alerts" and p["pause_until_online"]:
             conn.execute("UPDATE phones SET pause_kind = NULL, pause_until = NULL, pause_until_online = 0, "
                          "pause_reason = NULL, pause_by = NULL WHERE id = ?", (pid,))
             phones.history(conn, pid, "pause", "Back online: alerts resumed.", now=now)
+        # a Check now is answered only by a report made after it was sent (§4)
         conn.execute("UPDATE checks SET state = 'online', replied = ?, finished = ? WHERE phone_id = ? AND "
-                     "state = 'waiting' AND started <= ?", (ts, now, pid, ts + 2))
+                     "state = 'waiting' AND started < ?", (ts, now, pid, ts))
         pending = p["last_request_at"] is not None and p["requests_sent"] > 0
+    if any(w["started"] >= ts for w in waiting):
+        note(pid, "ignored", eid, kind, now, "before the request (not an answer to Check now)")
+    note(pid, "counted", eid, kind, ts)
     with _lock:
-        _last_write[pid] = (ts, False)
+        still = any(w["started"] >= ts for w in waiting)
+        _last_write[pid] = (ts, still)
     if pending or waiting or (p["status"] not in ("online", "unknown", "paused")):
         WAKE.set()
     return True
+
+
+def forget(pid: str) -> None:
+    """The phone's history was deleted: its check-in details go too."""
+    with _lock:
+        _diag.pop(pid, None)
+        _shutdown.pop(pid, None)
+        _last_write.pop(pid, None)
 
 
 def mark_waiting(pid: str) -> None:
@@ -316,57 +498,107 @@ def mark_waiting(pid: str) -> None:
         _last_write[pid] = ((last or (0, False))[0], True)
 
 
-def event_time(new_state: dict | None, now: float | None) -> float | None:
-    """When Home Assistant last heard from the entity (`last_reported`, else `last_updated`); `now` without either."""
+def event_time(new_state: dict | None, now: float | None = None) -> float | None:
+    """When Home Assistant last heard from the entity (`last_reported`, else `last_updated`); None without either —
+    never "now" (`now` is ignored, kept for old callers)."""
     if isinstance(new_state, dict):
         for k in ("last_reported", "last_updated"):
             ts = config.parse_iso(new_state.get(k))
             if ts:
                 return ts
-    return now
+    return None
+
+
+def classify(etype: str | None, data: dict, now: float) -> tuple[float | None, str | None, str | None, bool]:
+    """Is this state event a genuine report from the phone? → (ts, kind, why_not, changed). Home Assistant writes the
+    Companion app's states with an empty context (no user, no parent), exactly like its own rewrites, so the context
+    can't tell them apart (spec §3); these rules do."""
+    eid = str(data.get("entity_id") or "")
+    new, old = data.get("new_state"), data.get("old_state")
+    if not isinstance(new, dict):
+        return None, None, "removed", False
+    if etype == "state_changed" and not isinstance(old, dict):
+        return None, None, "added or restored by Home Assistant", False
+    state = new.get("state")
+    if state in NOT_A_VALUE:
+        return None, None, str(state), False
+    if ha_restarting(now):
+        return None, None, "HA restart", False
+    if etype == "state_changed" and old.get("state") in NOT_A_VALUE:
+        return None, None, "back from unavailable (restored by Home Assistant)", False
+    ts = event_time(new)
+    if ts is None:
+        return None, None, "no timestamp", False
+    changed = etype == "state_changed" and old.get("state") != state
+    kind = "state_reported" if etype == "state_reported" else ("state_changed" if changed else "attributes")
+    domain = eid.split(".", 1)[0]
+    if domain not in SENSOR_DOMAINS and not (domain == "device_tracker" and changed):
+        return None, kind, "not a sensor update (Home Assistant can rewrite it)", False
+    return ts, kind, None, changed
 
 
 def on_state_event(event: dict) -> None:
-    """A state_changed / state_reported event (the WebSocket thread). Only the phones' own entities count."""
+    """A state_changed / state_reported event (the WebSocket thread). Only genuine reports of the phones' own
+    entities count (`classify`); every other one is noted with the reason (Check-in details)."""
     data = event.get("data") if isinstance(event, dict) else None
     if not isinstance(data, dict):
         return
+    now = config.clock()
+    etype = event.get("event_type")
+    if etype == "state_reported":
+        REPORTED["last"] = now                # Home Assistant sends them: the fallback poll stands down
     eid = data.get("entity_id")
     with phones.LIVE.lock:
         pid = phones.LIVE.entity_phone.get(eid)
     if pid is None:
         return
-    now = config.clock()
-    etype = event.get("event_type")
     new = data.get("new_state")
-    if etype == "state_reported":
-        REPORTED["last"] = now
-    if etype == "state_changed" and eid.endswith("_last_notification") and isinstance(new, dict):
-        from . import forwarding
-        forwarding.submit(pid, new, (data.get("old_state") or {}).get("state") if isinstance(data.get("old_state"), dict) else None)
+    old = data.get("old_state")
+    if (etype == "state_changed" and eid.endswith("_last_notification") and isinstance(new, dict)
+            and isinstance(old, dict)                                     # not added or restored after a restart
+            and old.get("state") != "unavailable"                        # nor the first value after being unavailable
+            and new.get("state") not in ("unavailable", "unknown", None)):
+        from . import forwarding                                          # a restored last message is never re-sent
+        forwarding.submit(pid, new, old.get("state"))
     if isinstance(new, dict):
         with phones.LIVE.lock:
             phones.LIVE.states[eid] = phones.clean_state(eid, new)
-    elif etype == "state_changed" and new is None:
-        return                                             # the entity was removed: not a report
-    checkin(pid, event_time(new, now), now)
+    ts, kind, why, changed = classify(etype, data, now)
+    if why is not None:
+        note(pid, "ignored", eid, kind or etype, now, why)
+        return
+    if is_shutdown(_key(pid, eid), new.get("state")):
+        kind = "shutdown"
+    checkin(pid, ts, now, src={"entity": eid, "kind": kind, "change": changed})
 
 
 def reported_events_seen(now: float) -> bool:
     return REPORTED["last"] is not None and now - REPORTED["last"] < REPORTED_FRESH_S
 
 
+def events_flowing(now: float) -> bool:
+    """state_reported events arrive, and the event connection is up (the fallback poll isn't needed)."""
+    if not reported_events_seen(now):
+        return False
+    from . import app_messages
+    ws = app_messages.WS["client"]
+    return ws is None or ws.connected.is_set()
+
+
 def poll_states(source=None, now: float | None = None, *, force: bool = False) -> int:
-    """The fallback (§3.1 phase-1 check): every minute, a newer `last_reported` (or `last_updated`) of any of a
-    phone's entities counts as a check-in. Skipped while state_reported events arrive. Returns check-ins found."""
+    """The fallback (§3.1 phase-1 check), only while state_reported events don't arrive: every minute, a newer
+    `last_reported` (or `last_updated`) of a phone's sensor counts as a check-in — except during Home Assistant's
+    start-up grace, and except a jump of all its sensors to the same instant (Home Assistant restoring them after a
+    restart). Returns check-ins found."""
     from . import ha_source
     now = config.clock() if now is None else now
-    if not force and reported_events_seen(now):
+    if not force and events_flowing(now):
         return 0
     states = (source or ha_source.SOURCE).states(max_age=30)
     if states is None:
         return 0
-    newest: dict = {}
+    jumps: dict = {}                          # phone id -> [(ts, entity)] that moved since the last poll
+    timed: dict = {}                          # phone id -> sensors with a time
     with phones.LIVE.lock:
         for st in states:
             eid = st.get("entity_id") if isinstance(st, dict) else None
@@ -374,12 +606,25 @@ def poll_states(source=None, now: float | None = None, *, force: bool = False) -
             if pid is None:
                 continue
             phones.LIVE.states[eid] = phones.clean_state(eid, st)
-            ts = event_time(st, None)
-            if ts is not None:
-                newest[pid] = max(newest.get(pid, 0), ts)
+            ts = event_time(st)
+            if ts is None or eid.split(".", 1)[0] not in SENSOR_DOMAINS:
+                continue
+            timed[pid] = timed.get(pid, 0) + 1
+            before = _poll_seen.get(eid)
+            _poll_seen[eid] = ts
+            if st.get("state") in NOT_A_VALUE or (before is not None and ts <= before):
+                continue
+            jumps.setdefault(pid, []).append((ts, eid))
     n = 0
-    for pid, ts in newest.items():
-        n += checkin(pid, ts, now)
+    for pid, moved in jumps.items():
+        ts, eid = max(moved)
+        if ha_restarting(now):
+            note(pid, "ignored", eid, "poll", now, "HA restart")
+            continue
+        if len(moved) >= 3 and len(moved) == timed.get(pid) and ts - min(m[0] for m in moved) <= 2:
+            note(pid, "ignored", eid, "poll", now, "HA restart (all sensors at the same instant)")
+            continue
+        n += checkin(pid, ts, now, src={"entity": eid, "kind": "poll", "change": False})
     return n
 
 
@@ -491,6 +736,8 @@ def tick(now: float | None = None, source=None, *, again: bool = True) -> dict:
                              (st, reason, now, late_since, pid))
                 if not (p["status"] == "unknown" and st == "unknown") and st != "dnm" and runs(p):
                     text = f"{STATUS_LABEL.get(st, st)}" + (f" — {REASON_TEXT[reason]}" if reason in REASON_TEXT else "")
+                    if st in ("late", "offline") and reason not in REASON_TEXT and last_checkin_text(p):
+                        text += f" — {last_checkin_text(p)}"
                     phones.history(conn, pid, "status", text, battery=battery, now=now)
                 out["changed"].append((pid, p["status"], st))
             elif late_since != p["late_since"]:
@@ -701,6 +948,10 @@ def reset() -> None:
     """Tests."""
     with _lock:
         _last_write.clear()
+        _diag.clear()
+        _shutdown.clear()
+        _poll_seen.clear()
+    HA.update(until=None, starting_at=None, why=None)
     STARTED["at"] = None
     REPORTED["last"] = None
     WAKE.clear()

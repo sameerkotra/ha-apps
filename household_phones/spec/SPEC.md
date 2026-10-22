@@ -78,9 +78,33 @@ building, and the phase-1 questions answered by fallbacks.**
 
 **Check-in interval** (App settings; per-phone override): 15 minutes by default, or 10 or 5.
 
-**The phone reports by itself.** A **check-in** is any report from the phone: a `state_reported` or `state_changed`
-event on any of its entities, even with an unchanged value (`monitor.on_state_event`, from the event's own
-`last_reported`). Bursts are written at most every 20 s per phone, except while a request or Check now waits.
+**The phone reports by itself.** A **check-in** is a genuine report from the phone: a `state_reported` or
+`state_changed` event on one of its sensors (`sensor.` / `binary_sensor.`), even with an unchanged value
+(`monitor.on_state_event` → `monitor.classify`, at the event's own `last_reported`, else `last_updated`). Bursts are
+written at most every 20 s per phone, except while a request or Check now waits.
+
+**What doesn't count** — Home Assistant writes the Companion app's states with an empty context (no user, no parent),
+exactly like its own rewrites, so the event's context can't tell them apart; these rules do:
+- a `state_changed` with no old state (an entity added, or restored after a restart or a reload), and the next value
+  after `unavailable` / `unknown`;
+- a new state `unavailable` or `unknown`;
+- anything while Home Assistant (re)starts: from `homeassistant_start` / `homeassistant_stop` until 2 minutes after
+  `homeassistant_started`, and for 2 minutes after the event WebSocket reconnects (usually a restart; on the app's first
+  connection the grace ends at once when `GET /api/config` says Home Assistant is already RUNNING);
+- an event without `last_reported` / `last_updated` — never "now";
+- the `device_tracker`, except a real change of its state (Home Assistant can rewrite its attributes);
+- after the phone said it is **shutting down** (the Last update trigger sensor's state contains "shutdown", e.g.
+  `android.intent.action.ACTION_SHUTDOWN`; kept in `phones.shutdown_at`): reports within 60 s still count (its last
+  words), later only a real change of a sensor's value (e.g. Last update trigger → BOOT_COMPLETED), which ends it. A
+  powered-off phone so goes Late at I + 2 and Offline at I + 12 after its last genuine report;
+- a report older than the last check-in.
+
+**Check-in details** (the admin's phone page, collapsed): "Last check-in 14:02 — from Battery level (reported,
+unchanged)" (`phones.checkin_entity` / `checkin_kind`; also on the history's Late / Offline rows), and the last 20
+counted check-ins and the last 20 ignored updates with the reason ("HA restart", "unavailable", "added or restored by
+Home Assistant", "before the request"…; consecutive ones with the same reason fold into one with a count), in memory.
+Entity names, event kinds, times and reasons only: never a state — the Last notification sensor is just "Last
+notification sensor".
 
 **Home Assistant asks only when a phone is overdue.** Silent for interval + **2 minutes** → `command_update_sensors`
 through `notify.mobile_app_<phone>` (`{"message": "command_update_sensors"}`). No reply within **5 minutes** → asked
@@ -143,7 +167,9 @@ who checked it and the alerts about it, **Share my last place**, **Forward my me
 
 ## 4. Check now
 
-1. Sends `command_update_sensors` at once (`checknow.start`).
+1. Sends `command_update_sensors` at once (`checknow.start`). Only a genuine check-in (§3) made strictly after the
+   request was sent answers it: a report from before it (even one arriving later) or older than the last check-in
+   never completes a check.
 2. A live result card (`#/check/<phone>`, polled every 1.5 s), waiting up to **60 seconds** (setting):
    - **✅ Online** — "replied in 4 s"; battery, charging; Wi-Fi *Home* / mobile data; last restart; and, for phones that
      forward, the **last forward** ("last message forwarded 14:02 into *Phone codes*" / "nothing forwarded in the
@@ -362,8 +388,10 @@ states (the Last notification state blanked), held forwards, unanswered forward 
 
 **Phase-1 unknowns, handled by fallbacks (no real phone could be tested):**
 - **`state_reported` events** (§3.1): subscribed to; if none has arrived in the last 30 minutes, the app looks at
-  every phone entity's `last_reported` (else `last_updated`) once a minute (`monitor.poll_states`) — self-detecting,
-  shown on All phones → Setup notes ("events" / "polling").
+  every phone sensor's `last_reported` (else `last_updated`) once a minute (`monitor.poll_states`) — self-detecting,
+  shown on All phones → Setup notes ("events" / "polling"); it also runs while the event WebSocket is down. It skips
+  `unavailable` / `unknown`, Home Assistant's start-up grace, and a jump of all of a phone's sensors (3 or more) to the
+  same instant (within 2 s) — Home Assistant restoring them after a restart.
 - **Does `command_update_sensors` get a reply when nothing changed?** Self-detecting per phone (`answers_requests`
   once it has answered one); until then the checklist asks for an always-changing sensor (**Battery power** or **Last
   update trigger**) and ticks it when one is on. Check now's "No reply" says what to check (Troubleshooting).

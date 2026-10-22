@@ -80,10 +80,19 @@ def iso(ts: float) -> str:
     return datetime.fromtimestamp(ts, timezone.utc).isoformat()
 
 
-def state_event(entity_id, state, attributes=None, *, at: float, etype="state_changed", old=None):
-    new = {"entity_id": entity_id, "state": state, "attributes": attributes or {}, "last_updated": iso(at),
-           "last_reported": iso(at), "last_changed": iso(at)}
+PREVIOUS = object()
+
+
+def state_event(entity_id, state, attributes=None, *, at: float, etype="state_changed", old=PREVIOUS, stamps=True):
+    """A state event as the phone's report makes it: by default a state_changed has an old state (a different value a
+    minute earlier); old=None is an entity added or restored; stamps=False leaves out the timestamps."""
+    new = {"entity_id": entity_id, "state": state, "attributes": attributes or {}}
+    if stamps:
+        new.update(last_updated=iso(at), last_reported=iso(at), last_changed=iso(at))
     data = {"entity_id": entity_id, "new_state": new}
     if etype == "state_changed":
+        if old is PREVIOUS:
+            old = {"entity_id": entity_id, "state": f"{state}-before", "attributes": {}, "last_updated": iso(at - 60),
+                   "last_reported": iso(at - 60), "last_changed": iso(at - 60)}
         data["old_state"] = old
     return {"event_type": etype, "data": data}

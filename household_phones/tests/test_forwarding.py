@@ -52,6 +52,24 @@ class Forwarding(PhonesCase):
         self.assertEqual(len(self.posted), 1)
         self.assertEqual(self.put(f"/api/phones/{self.pid}/forwarding", {"on": True}, ASHA).status_code, 403)
 
+    def test_a_restored_message_is_never_sent_again(self):
+        """After a Home Assistant restart the Last notification sensor is restored (no old state): not a new message.
+        Nor is the first value after the sensor was unavailable. The first real one after "unknown" (a sensor just
+        switched on) is."""
+        from app import monitor
+        from fakes import state_event
+        self.on()
+        eid = self.ha.eid("Asha Pixel", "last_notification")
+        monitor.on_state_event(state_event(eid, "x", note(), at=self.now, old=None))
+        self.advance(3)
+        monitor.on_state_event(state_event(eid, "y", note(text="Your code is 551122"), at=self.now,
+                                           old={"entity_id": eid, "state": "unavailable", "attributes": {}}))
+        self.assertEqual(self.posted, [])
+        self.advance(3)
+        monitor.on_state_event(state_event(eid, "z", note(text="Your code is 663344"), at=self.now,
+                                           old={"entity_id": eid, "state": "unknown", "attributes": {}}))
+        self.assertEqual(len(self.posted), 1)
+
     def test_codes_only_filter(self):
         self.on()
         for text, want in (("Your verification code: 4821", True), ("123456 is your OTP", True),

@@ -111,6 +111,11 @@ CREATE TABLE IF NOT EXISTS phones (
     offline_counted_at REAL,
     offline_alerted INTEGER NOT NULL DEFAULT 0,
     app_alerted INTEGER NOT NULL DEFAULT 0,
+    -- where the last genuine check-in came from (the phone page's Check-in details, §3), and when the phone said it
+    -- was shutting down (Last update trigger: ACTION_SHUTDOWN; NULL once it reports again)
+    checkin_entity TEXT,
+    checkin_kind TEXT,
+    shutdown_at REAL,
     -- forwarding (§6): only the owner switches it on
     fwd_on INTEGER NOT NULL DEFAULT 0,
     fwd_target TEXT NOT NULL DEFAULT 'my_room' CHECK (fwd_target IN ('my_room', 'chat')),
@@ -228,6 +233,9 @@ MIGRATIONS: dict = {"phones": [
     ("offline_counted_at", "REAL"),
     ("offline_alerted", "INTEGER NOT NULL DEFAULT 0"),
     ("app_alerted", "INTEGER NOT NULL DEFAULT 0"),
+    ("checkin_entity", "TEXT"),                      # where the last genuine check-in came from
+    ("checkin_kind", "TEXT"),
+    ("shutdown_at", "REAL"),                         # the phone said it was shutting down
 ]}
 
 ALL_DAYS = [0, 1, 2, 3, 4, 5, 6]

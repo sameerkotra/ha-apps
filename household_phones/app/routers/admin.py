@@ -201,8 +201,9 @@ def stop_monitoring(pid: str, body: dict = Body(...), admin: dict = Depends(requ
             for t in ("history", "checks", "forwards"):
                 conn.execute(f"DELETE FROM {t} WHERE phone_id = ?", (pid,))
             conn.execute("UPDATE phones SET last_checkin = NULL, last_spontaneous = NULL, last_request_at = NULL, "
-                         "battery = NULL, charging = NULL, answers_requests = NULL, redacted_at = NULL WHERE id = ?",
-                         (pid,))
+                         "battery = NULL, charging = NULL, answers_requests = NULL, redacted_at = NULL, "
+                         "checkin_entity = NULL, checkin_kind = NULL, shutdown_at = NULL WHERE id = ?", (pid,))
+            monitor.forget(pid)
     monitor.WAKE.set()
     return all_phones(admin)
 
