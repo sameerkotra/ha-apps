@@ -2,6 +2,10 @@
 
 All notable changes to Household Phones. See the [repository](https://github.com/sameerkotra/ha-apps).
 
+## 1.3.1
+
+- **Fixed:** a phone that was on but locked could show Offline until it was unlocked. Since 1.3.0, after a phone had once said it was shutting down, only a changed value counted, and a locked phone mostly re-sends unchanged ones; and when Home Assistant doesn't send report events, the every-minute check took the phone's normal batch report (all sensors at once) for a Home Assistant restart. Any genuine report counts again; restarts are still recognised by Home Assistant's start-up grace.
+
 ## 1.3.0
 
 - **Fixed:** after Home Assistant restarted, the last message on a phone could be forwarded into Chat again. A restored Last notification sensor is no longer treated as a new message.

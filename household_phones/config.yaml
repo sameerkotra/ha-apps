@@ -1,5 +1,5 @@
 name: "Household Phones"
-version: "1.3.0"
+version: "1.3.1"
 slug: household_phones
 description: >-
   Know whether the household's phones are on and reachable: each phone checks

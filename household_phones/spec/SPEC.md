@@ -95,8 +95,9 @@ exactly like its own rewrites, so the event's context can't tell them apart; the
 - the `device_tracker`, except a real change of its state (Home Assistant can rewrite its attributes);
 - after the phone said it is **shutting down** (the Last update trigger sensor's state contains "shutdown", e.g.
   `android.intent.action.ACTION_SHUTDOWN`; kept in `phones.shutdown_at`): reports within 60 s still count (its last
-  words), later only a real change of a sensor's value (e.g. Last update trigger → BOOT_COMPLETED), which ends it. A
-  powered-off phone so goes Late at I + 2 and Offline at I + 12 after its last genuine report;
+  words); the next genuine report after that — changed or not, since a phone left locked mostly re-sends unchanged
+  values — means it's back on and ends it. A powered-off phone sends nothing, so it goes Late at I + 2 and Offline at
+  I + 12 after its last genuine report;
 - a report older than the last check-in.
 
 **Check-in details** (the admin's phone page, collapsed): "Last check-in 14:02 — from Battery level (reported,
@@ -390,8 +391,8 @@ states (the Last notification state blanked), held forwards, unanswered forward 
 - **`state_reported` events** (§3.1): subscribed to; if none has arrived in the last 30 minutes, the app looks at
   every phone sensor's `last_reported` (else `last_updated`) once a minute (`monitor.poll_states`) — self-detecting,
   shown on All phones → Setup notes ("events" / "polling"); it also runs while the event WebSocket is down. It skips
-  `unavailable` / `unknown`, Home Assistant's start-up grace, and a jump of all of a phone's sensors (3 or more) to the
-  same instant (within 2 s) — Home Assistant restoring them after a restart.
+  `unavailable` / `unknown` and Home Assistant's start-up grace (when a restart restores the sensors). All of a phone's sensors moving to the same instant is a normal report: the Companion
+  app sends them in one batch.
 - **Does `command_update_sensors` get a reply when nothing changed?** Self-detecting per phone (`answers_requests`
   once it has answered one); until then the checklist asks for an always-changing sensor (**Battery power** or **Last
   update trigger**) and ticks it when one is on. Check now's "No reply" says what to check (Troubleshooting).

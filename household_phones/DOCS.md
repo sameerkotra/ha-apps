@@ -34,8 +34,7 @@ aren't) an admin.
 - The Companion app sends its sensors to Home Assistant every 15 minutes on its own (**Sensor update frequency:
   Normal**, its default), plus whenever something changes. Any report from the phone counts as a check-in, even with
   unchanged values — but not Home Assistant's own updates: states restored when Home Assistant restarts or reloads,
-  sensors going *unavailable* or *unknown*, updates without a time, and, once the phone has said it's shutting down
-  (the **Last update trigger** sensor), anything but a real change. A phone that's switched off goes Late 2 minutes
+  sensors going *unavailable* or *unknown*, and updates without a time. A phone that's switched off goes Late 2 minutes
   after its interval and Offline 12 minutes after it (17 and 27 minutes at the defaults).
 - **Check now** is answered only by a report made after it was sent.
 - When a phone hasn't checked in within the interval plus 2 minutes, the app sends it the Companion app's command

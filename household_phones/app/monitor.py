@@ -436,10 +436,10 @@ def checkin(pid: str, ts: float | None, now: float | None = None, *, force: bool
         _set_shutdown(pid, ts)
         force = True
     elif sd is not None and ts > sd + SHUTDOWN_HOLD_S:
-        if not src.get("change", True):
-            note(pid, "ignored", eid, kind, now, "after the phone said it was shutting down")
-            return False
-        _set_shutdown(pid, None)              # a real change: it's back
+        # Any genuine report after the shutdown burst means the phone is back on. Home Assistant's own rewrites never
+        # get here (classify / the poll's restart grace filter them), and a phone left locked mostly re-sends
+        # unchanged values, so "only a change counts" kept a phone that was back on looking Offline until unlocked.
+        _set_shutdown(pid, None)
     with _lock:
         last = _last_write.get(pid)
         if not force and last is not None and ts <= last[0] + WRITE_EVERY_S and not last[1]:
@@ -588,8 +588,8 @@ def events_flowing(now: float) -> bool:
 def poll_states(source=None, now: float | None = None, *, force: bool = False) -> int:
     """The fallback (§3.1 phase-1 check), only while state_reported events don't arrive: every minute, a newer
     `last_reported` (or `last_updated`) of a phone's sensor counts as a check-in — except during Home Assistant's
-    start-up grace, and except a jump of all its sensors to the same instant (Home Assistant restoring them after a
-    restart). Returns check-ins found."""
+    start-up grace (Home Assistant restoring them after a restart). The Companion app sends all its sensors in one
+    batch, so many sensors moving to the same instant is a normal report, not a restart. Returns check-ins found."""
     from . import ha_source
     now = config.clock() if now is None else now
     if not force and events_flowing(now):
@@ -620,9 +620,6 @@ def poll_states(source=None, now: float | None = None, *, force: bool = False) -
         ts, eid = max(moved)
         if ha_restarting(now):
             note(pid, "ignored", eid, "poll", now, "HA restart")
-            continue
-        if len(moved) >= 3 and len(moved) == timed.get(pid) and ts - min(m[0] for m in moved) <= 2:
-            note(pid, "ignored", eid, "poll", now, "HA restart (all sensors at the same instant)")
             continue
         n += checkin(pid, ts, now, src={"entity": eid, "kind": "poll", "change": False})
     return n

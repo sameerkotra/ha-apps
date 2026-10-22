@@ -182,21 +182,15 @@ class Fallback(PhonesCase):
         for e in eids or self.sensors:
             self.ha.state[e] = {"state": "5", "attributes": {}, "last_reported": iso(ts), "last_updated": iso(ts)}
 
-    def test_a_restart_jump_isnt_a_checkin(self):
+    def test_a_batch_report_counts(self):
+        """The Companion app sends every sensor in one batch: all of them moving to the same instant is a normal
+        report (a phone left locked re-sends unchanged values). Only Home Assistant's restart grace is skipped."""
         self.stamp(self.now - 600)
-        self.stamp(self.now - 300, self.sensors[:1])
         self.assertEqual(monitor.poll_states(self.ha, self.now), 1)            # the first look: its newest report
-        self.assertEqual(self.row(self.pid)["last_checkin"], self.now - 300)
         self.advance(5)
         self.stamp(self.now - 10)                                              # every sensor at the same instant
-        self.assertEqual(monitor.poll_states(self.ha, self.now), 0)
-        self.assertEqual(self.row(self.pid)["last_checkin"], self.now - 300 - 300)
-        self.advance(1)
-        self.stamp(self.now - 5, self.sensors[:2])                             # a real report afterwards
         self.assertEqual(monitor.poll_states(self.ha, self.now), 1)
-        self.assertEqual(self.row(self.pid)["last_checkin"], self.now - 5)
-        reasons = [x["reason"] for x in monitor.diagnostics(self.row(self.pid), self.now)["ignored"]]
-        self.assertIn("HA restart (all sensors at the same instant)", reasons)
+        self.assertEqual(self.row(self.pid)["last_checkin"], self.now - 10)
 
     def test_no_checkins_during_the_restart_grace(self):
         self.stamp(self.now - 600)
@@ -218,6 +212,7 @@ class Fallback(PhonesCase):
 
     def test_runs_only_while_state_reported_events_dont_come(self):
         self.stamp(self.now - 600)
+        monitor.poll_states(self.ha, self.now, force=True)                     # the starting point
         self.stamp(self.now - 30, self.sensors[:1])
         monitor.REPORTED["last"] = self.now                                    # Home Assistant sends them
         self.assertEqual(monitor.poll_states(self.ha, self.now), 0)
@@ -235,7 +230,7 @@ class Fallback(PhonesCase):
 
 
 class Shutdown(PhonesCase):
-    def test_after_shutting_down_only_a_real_report_counts(self):
+    def test_after_shutting_down_the_next_report_means_it_is_back(self):
         pid = self.add()
         self.report(pid, value="80")
         self.tick()
@@ -247,19 +242,16 @@ class Shutdown(PhonesCase):
         self.assertEqual((self.row(pid)["shutdown_at"], self.row(pid)["last_checkin"]), (off, off + 30))
         start = self.now
         statuses = {}
-        for minute in range(1, 29):
+        for minute in range(1, 29):                                            # off: nothing comes from it
             self.now = start + minute * 60
-            # Home Assistant rewriting a sensor (an automation, a reload): ignored now
-            self.report(pid, key="battery_level", value="79", etype="state_reported")
             self.tick()
             statuses.setdefault(self.row(pid)["status"], minute)
         self.assertEqual(statuses, {"online": 1, "late": 18, "offline": 27})
         d = monitor.diagnostics(self.row(pid), self.now)
-        self.assertEqual(d["ignored"][0]["reason"], "after the phone said it was shutting down")
         self.assertEqual(d["shutdown"]["at"], off)
         self.assertEqual(d["counted"][1]["kind"], "shutting down")
-        # it boots: a real change counts, and the shutdown is over
-        self.report(pid, key="last_update", value="android.intent.action.BOOT_COMPLETED")
+        # back on and left locked: an unchanged re-send is enough, and the shutdown is over
+        self.report(pid, key="battery_level", value="79", etype="state_reported")
         self.assertEqual((self.row(pid)["last_checkin"], self.row(pid)["shutdown_at"]), (self.now, None))
         self.tick()
         self.assertEqual(self.row(pid)["status"], "online")
