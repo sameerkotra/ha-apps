@@ -15,7 +15,7 @@ from .common import auth_core, ha_time
 logger = logging.getLogger("config")
 
 APP_TITLE = "Household Phones"
-APP_VERSION = "1.3.1"           # config.yaml's version
+APP_VERSION = "1.3.2"           # config.yaml's version
 SLUG = "household_phones"
 
 DATA_DIR = os.environ.get("DATA_DIR", "/data")

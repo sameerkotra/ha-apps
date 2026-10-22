@@ -64,13 +64,22 @@ class Genuine(PhonesCase):
         self.assertIsNone(monitor.event_time({"state": "1"}, self.now))      # never "now"
         self.assertFalse(monitor.checkin(self.pid, None, self.now))
 
-    def test_tracker_rewrites_dont_count(self):
+    def test_location_updates_count(self):
+        """The phone's location (device_tracker) is updated by the phone itself — often most of what it sends — so a
+        new position (attributes only), an unchanged re-send and a change of zone all count. A restored or unavailable
+        tracker doesn't."""
         tracker = "device_tracker.asha_pixel"
         self.advance(5)
-        self.event(eid=tracker, value="home", old={"state": "home", "attributes": {}})        # attributes only
-        self.event(eid=tracker, value="home", etype="state_reported")
+        self.event(eid=tracker, value="home", old=None)                                         # restored
+        self.event(eid=tracker, value="unavailable")
         self.assertEqual(self.last(), self.first)
-        self.event(eid=tracker, value="not_home", old={"state": "home", "attributes": {}})    # it moved: the phone
+        self.event(eid=tracker, value="home", old={"state": "home", "attributes": {}})        # a new position
+        self.assertEqual(self.last(), self.now)
+        self.advance(5)
+        self.event(eid=tracker, value="home", etype="state_reported")
+        self.assertEqual(self.last(), self.now)
+        self.advance(5)
+        self.event(eid=tracker, value="not_home", old={"state": "home", "attributes": {}})    # it moved
         self.assertEqual(self.last(), self.now)
 
     def test_ha_restart_restores_dont_count(self):
@@ -105,8 +114,8 @@ class Genuine(PhonesCase):
         self.tick()
         self.assertEqual(self.row(self.pid)["status"], "online")
         tracker = "device_tracker.asha_pixel"
-        noise = [lambda: self.event(eid=tracker, value="home", etype="state_reported"),
-                 lambda: self.event(eid=tracker, value="home", old={"state": "home", "attributes": {"x": 1}}),
+        noise = [lambda: self.event(eid=tracker, value="unavailable"),
+                 lambda: self.event(eid=tracker, value="home", old=None),
                  lambda: self.event(value="unavailable"),
                  lambda: self.event(value="80", old=None),
                  lambda: self.event(value="80", stamps=False, etype="state_reported"),

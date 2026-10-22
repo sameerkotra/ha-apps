@@ -79,7 +79,8 @@ building, and the phase-1 questions answered by fallbacks.**
 **Check-in interval** (App settings; per-phone override): 15 minutes by default, or 10 or 5.
 
 **The phone reports by itself.** A **check-in** is a genuine report from the phone: a `state_reported` or
-`state_changed` event on one of its sensors (`sensor.` / `binary_sensor.`), even with an unchanged value
+`state_changed` event on one of its sensors (`sensor.` / `binary_sensor.`) or its location (`device_tracker.`: a new
+position, a re-send or a change of zone — the phone updates it whenever it moves or wakes), even with an unchanged value
 (`monitor.on_state_event` → `monitor.classify`, at the event's own `last_reported`, else `last_updated`). Bursts are
 written at most every 20 s per phone, except while a request or Check now waits.
 
@@ -92,7 +93,6 @@ exactly like its own rewrites, so the event's context can't tell them apart; the
   `homeassistant_started`, and for 2 minutes after the event WebSocket reconnects (usually a restart; on the app's first
   connection the grace ends at once when `GET /api/config` says Home Assistant is already RUNNING);
 - an event without `last_reported` / `last_updated` — never "now";
-- the `device_tracker`, except a real change of its state (Home Assistant can rewrite its attributes);
 - after the phone said it is **shutting down** (the Last update trigger sensor's state contains "shutdown", e.g.
   `android.intent.action.ACTION_SHUTDOWN`; kept in `phones.shutdown_at`): reports within 60 s still count (its last
   words); the next genuine report after that — changed or not, since a phone left locked mostly re-sends unchanged

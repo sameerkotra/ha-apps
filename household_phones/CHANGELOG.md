@@ -2,6 +2,9 @@
 
 All notable changes to Household Phones. See the [repository](https://github.com/sameerkotra/ha-apps).
 
+## 1.3.2
+
+- **Fixed:** a phone could stay Late or Offline while in use. Its location updates — on many phones most of what it sends — were ignored as "not a sensor update"; they count as check-ins again (only Home Assistant restoring them after a restart, or *unavailable*, doesn't).
 ## 1.3.1
 
 - **Fixed:** a phone that was on but locked could show Offline until it was unlocked. Since 1.3.0, after a phone had once said it was shutting down, only a changed value counted, and a locked phone mostly re-sends unchanged ones; and when Home Assistant doesn't send report events, the every-minute check took the phone's normal batch report (all sensors at once) for a Home Assistant restart. Any genuine report counts again; restarts are still recognised by Home Assistant's start-up grace.

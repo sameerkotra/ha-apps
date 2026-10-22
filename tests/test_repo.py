@@ -34,7 +34,7 @@ PROXY = "household_proxy"
 PROXY_VERSION = "0.7.1"
 # Household Phones: the fourteenth app, the household's phones through the Companion app (household_phones/spec/SPEC.md).
 PHONES = "household_phones"
-PHONES_VERSION = "1.3.1"
+PHONES_VERSION = "1.3.2"
 NEWER = ((ARCADE, ARCADE_VERSION), (RECEIPTS, RECEIPTS_VERSION), (DOCS, DOCS_VERSION),
          (ASSISTANT, ASSISTANT_VERSION), (PROXY, PROXY_VERSION), (PHONES, PHONES_VERSION))
 # Household AI: the twelfth app, the model server the AI apps can share (household_ai/spec/SPEC.md). Unlike the

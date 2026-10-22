@@ -532,8 +532,11 @@ def classify(etype: str | None, data: dict, now: float) -> tuple[float | None, s
     changed = etype == "state_changed" and old.get("state") != state
     kind = "state_reported" if etype == "state_reported" else ("state_changed" if changed else "attributes")
     domain = eid.split(".", 1)[0]
-    if domain not in SENSOR_DOMAINS and not (domain == "device_tracker" and changed):
-        return None, kind, "not a sensor update (Home Assistant can rewrite it)", False
+    if domain not in SENSOR_DOMAINS and domain != "device_tracker":
+        return None, kind, "not one of the phone's sensors or its location", False
+    # The location (device_tracker) counts too, state or attributes: the Companion app updates it whenever the phone
+    # moves or wakes, and on many phones it's most of what the phone sends. Home Assistant's own rewrites of it (a
+    # restore after a restart, unavailable) are already filtered above.
     return ts, kind, None, changed
 
 
@@ -607,7 +610,7 @@ def poll_states(source=None, now: float | None = None, *, force: bool = False) -
                 continue
             phones.LIVE.states[eid] = phones.clean_state(eid, st)
             ts = event_time(st)
-            if ts is None or eid.split(".", 1)[0] not in SENSOR_DOMAINS:
+            if ts is None or eid.split(".", 1)[0] not in SENSOR_DOMAINS + ("device_tracker",):
                 continue
             timed[pid] = timed.get(pid, 0) + 1
             before = _poll_seen.get(eid)
