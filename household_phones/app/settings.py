@@ -149,12 +149,19 @@ SETTINGS = [
             help="After Home Assistant or this app starts, no phone is marked Offline (and no offline alert goes out) "
                  "until one interval plus this much has passed."),
     Setting("lost_contact_on", True, "Recognise lost contact", group="checkin",
-            help="When half or more of the monitored phones go quiet within a few minutes, the problem is almost "
-                 "certainly at home (Home Assistant lost the internet, or the push service is down): one alert to "
-                 "admins instead of one per phone."),
+            help="When Home Assistant can't send the \"please report\" requests to half or more of the monitored "
+                 "phones, which went quiet within a few minutes, the problem is at home (Home Assistant's internet, or "
+                 "Nabu Casa / the push service): one alert to admins instead of one per phone. A phone counts only once "
+                 "it has been offline for its own Alert-when-offline time. Phones that go quiet while the requests "
+                 "still go through are just asleep: no lost-contact alert, their own offline alerts as usual."),
     Setting("lost_contact_window_min", 10, "…within", group="checkin", min=2, max=60, unit="minutes",
             show_if="lost_contact_on"),
     Setting("lost_contact_min_phones", 2, "…and at least", group="checkin", min=2, max=20, unit="phones",
+            show_if="lost_contact_on"),
+    Setting("lost_contact_quiet_start", "", "Don't check for lost contact between", group="checkin",
+            validators=[_time_or_blank], placeholder="00:00", show_if="lost_contact_on",
+            help="Home Assistant's time zone. Empty: always check."),
+    Setting("lost_contact_quiet_end", "", "…and", group="checkin", validators=[_time_or_blank], placeholder="07:00",
             show_if="lost_contact_on"),
     # -- check now
     Setting("check_wait_s", 60, "Wait for a reply", group="checknow", min=15, max=180, unit="seconds"),

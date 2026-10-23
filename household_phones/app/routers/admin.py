@@ -267,7 +267,8 @@ def test_alert(body: dict = Body(...), admin: dict = Depends(require_admin)):
         raise HTTPException(422, "Choose an alert.")
     samples = {"offline": "Asha's Pixel is offline: no check-in since 14:02, battery 9% then.",
                "app": "Asha's Pixel: the HA app stopped reporting — signed out?",
-               "lost_contact": "Home Assistant has lost contact with the phones (5 of 6 silent since 14:02).",
+               "lost_contact": "Home Assistant couldn't send requests to 5 of 6 phones since 14:02 — check Home "
+                               "Assistant's internet / Nabu Casa.",
                "back": "Asha's Pixel is back online (battery 40%).",
                "restart": "Asha's Pixel restarted: battery was 3%, probably ran out.",
                "battery": "Asha's Pixel is at 12% and not charging.",

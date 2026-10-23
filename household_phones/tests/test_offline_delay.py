@@ -1,6 +1,6 @@
 """The offline alert's delay (spec/SPEC.md §5 "Alerts", §7): a household default and a per-phone choice; the phone is
 Offline as before and only its Offline / App not reporting alert waits; do-not-monitor hours and pauses don't count;
-the count survives a restart; lost contact isn't delayed. T0 is Friday 2027-01-15 08:00 (UTC here)."""
+the count survives a restart; lost contact waits for each phone's delay too (test_lost_contact.py). T0 is Friday 2027-01-15 08:00 (UTC here)."""
 import os
 import re
 import shutil
@@ -232,7 +232,7 @@ class AppNotReportingAndLostContact(PhonesCase):
             self.tick()
         self.assertEqual(len([s for s in self.sent if "App not reporting" in s[1]]), 1)
 
-    def test_lost_contact_is_not_delayed(self):
+    def test_lost_contact_waits_for_the_household_delay(self):
         self.setting(offline_alert_after_min=600)
         ids = [self.add(f"Phone {i}", user_id="u-asha") for i in range(4)]
         for i, pid in enumerate(ids):
@@ -240,9 +240,9 @@ class AppNotReportingAndLostContact(PhonesCase):
         self.tick()
         self.advance(18)
         self.report(ids[3], name="Phone 3")
+        self.ha.result = ha_source.CommandResult(False, "cant_check", "Timed out")
         self.tick()
-        self.assertEqual(len(self.ha.notes), 1)
-        self.assertIn("lost contact with the phones", self.ha.notes[0][1])
+        self.assertEqual(self.ha.notes, [])                     # not before each has been offline for 10 hours
 
 
 class Migration(PhonesCase):

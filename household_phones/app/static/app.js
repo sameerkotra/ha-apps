@@ -982,7 +982,7 @@
         r.lostMode.map((l) => h("p", null, h("a", { href: `#/phone/${l.id}` }, l.name), ` — since ${l.sinceText}${l.byName ? ` (by ${l.byName})` : ""}${l.untilText ? `, ends ${l.untilText}` : ""}`))));
     }
     if (r.lostContact) {
-      add(box, h("p", { class: "note bad" }, `Home Assistant has lost contact with the phones (${r.lostContact.silent} of ${r.lostContact.total} silent since ${hhmm(r.lostContact.since)}). Offline alerts wait until contact returns.`));
+      add(box, h("p", { class: "note bad" }, `Home Assistant couldn't send requests to ${r.lostContact.silent} of ${r.lostContact.total} phones since ${hhmm(r.lostContact.since)} — check Home Assistant's internet / Nabu Casa. Offline alerts wait until contact returns.`));
     }
     if (!r.haLoaded) add(box, h("p", { class: "note warn" }, "Home Assistant's devices haven't been read yet (or can't be: is the app running inside Home Assistant?)."));
     if (r.unused.length) {
@@ -1344,7 +1344,7 @@
     $("#startingBanner").hidden = !state.me.starting;
     const lost = state.me.lostContact;
     $("#lostBanner").hidden = !(lost && isAdmin());
-    if (lost) $("#lostBanner").textContent = `⚠️ Home Assistant has lost contact with the phones (${lost.silent} of ${lost.total} silent since ${hhmm(lost.since)}).`;
+    if (lost) $("#lostBanner").textContent = `⚠️ Home Assistant couldn't send requests to ${lost.silent} of ${lost.total} phones since ${hhmm(lost.since)} — check Home Assistant's internet / Nabu Casa.`;
     HouseholdWhoami.fillNoAdminBanner($("#noAdminBanner"), state.me.noAdmin, state.me.user.name, { onOpen: openWhoami });
   }
 

@@ -198,20 +198,29 @@ class FalseAlarms(PhonesCase):
         self.tick()
         self.advance(18)
         self.report(ids[3], name="Phone 3")                     # 3 of 4 go quiet together
+        self.ha.result = ha_source.CommandResult(False, "cant_check", "Timed out")     # and the requests fail
         self.tick()
         lost = self.get("/api/admin/phones").json()["lostContact"]
         self.assertEqual((lost["silent"], lost["total"]), (3, 4))
         self.assertEqual(len(self.ha.notes), 1)                  # one alert, as a Home Assistant notification too
-        self.assertIn("lost contact with the phones (3 of 4 silent since", self.ha.notes[0][1])
+        self.assertIn("couldn't send requests to 3 of 4 phones since 08:18", self.ha.notes[0][1])
         self.advance(12)
+        self.report(ids[3], name="Phone 3")
         self.tick()
-        self.assertEqual([statuses(self, p) for p in ids[:3]], ["offline"] * 3)
-        self.assertFalse([s for s in self.sent if "Offline" in s[1]])     # held while contact is lost
+        self.assertEqual([statuses(self, p) for p in ids[:3]], ["cant_check"] * 3)
+        self.assertFalse([s for s in self.sent if "Offline" in s[1]])
         # contact returns for two of them: only the one still silent is reported
+        self.ha.result = None
         self.report(ids[0], name="Phone 0")
         self.report(ids[1], name="Phone 1")
+        self.report(ids[3], name="Phone 3")
         self.tick()
         self.assertIsNone(self.get("/api/admin/phones").json()["lostContact"])
+        self.advance(5)                                         # the next request to the still-silent one goes through
+        self.tick()
+        self.tick()
+        self.assertIsNone(self.get("/api/admin/phones").json()["lostContact"])
+        self.assertEqual(statuses(self, ids[2]), "offline")
         offline = [s for s in self.sent if "Offline" in s[1]]
         self.assertEqual(len(offline), 1)
         self.assertIn("is offline", offline[0][2])

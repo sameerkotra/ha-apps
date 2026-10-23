@@ -2,6 +2,12 @@
 
 All notable changes to Household Phones. See the [repository](https://github.com/sameerkotra/ha-apps).
 
+## 1.4.1
+
+- **Fixed:** "Home Assistant has lost contact with the phones" could go off at night, again and again, when the phones were just asleep. Lost contact now needs proof that the problem is at home — the "please report" requests to the phones fail — and counts a phone only once it has been offline for its own *Alert when offline for at least* time. Phones that go quiet while the requests go through get their own offline alerts, on their own delays.
+- **One alert per lost-contact episode,** and none again within the alert cooldown. The alert now says what's wrong: "Home Assistant couldn't send requests to 3 of 3 phones since 04:53 — check Home Assistant's internet / Nabu Casa".
+- **Don't check for lost contact between:** a new App setting (Check-in) to skip the check for some hours.
+
 ## 1.4.0
 
 - **Find my phone:** rings a phone loudly on the alarm volume, even on silent or Do Not Disturb, until someone taps **Found it** on it; the volume and Do Not Disturb are put back afterwards. On iPhones it's a critical alert.

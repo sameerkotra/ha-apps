@@ -11,7 +11,7 @@ from common_tests import packaging_core as pk
 
 HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))     # the app folder
 REPO_URL = pk.REPO_URL
-VERSION = "1.4.0"
+VERSION = "1.4.1"
 TEXT_EXT = (".py", ".html", ".md", ".yaml", ".yml", ".js", ".css", ".txt", ".json")
 TEXT_NAMES = ("Dockerfile", ".dockerignore", ".gitignore")
 
@@ -52,7 +52,7 @@ class Packaging(unittest.TestCase):
 
     def test_changelog(self):
         versions = pk.check_changelog(HERE, VERSION)
-        self.assertEqual(versions, ["1.4.0", "1.3.3", "1.3.2", "1.3.1", "1.3.0", "1.2.0", "1.1.0", "1.0.0"])
+        self.assertEqual(versions, ["1.4.1", "1.4.0", "1.3.3", "1.3.2", "1.3.1", "1.3.0", "1.2.0", "1.1.0", "1.0.0"])
         log = read("CHANGELOG.md")
         self.assertIn("First release", log)
         self.assertIn(REPO_URL, log)

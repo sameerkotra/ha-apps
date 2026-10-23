@@ -68,11 +68,15 @@ reports every minute (more battery) and is never asked.
 - **After Home Assistant or this app starts**, no phone is marked Offline (and no offline alert goes out) until one
   interval plus 12 minutes has passed; the page says "Starting — waiting for phones to check in". The same grace
   applies to a phone just added to monitoring, and when its do-not-monitor hours end.
-- **Lost contact:** when half or more of the monitored phones (and at least 2) go quiet within 10 minutes, the problem
-  is almost certainly at home (Home Assistant lost the internet, or the push service is down). The admins get **one**
-  alert — "Home Assistant has lost contact with the phones (5 of 6 silent since 14:02)" — as a Home Assistant
-  notification and on their phones; the single offline alerts wait until contact returns, and then only the phones
-  still silent are reported.
+- **Lost contact:** when Home Assistant **can't send** the "please report" requests to half or more of the monitored
+  phones (and at least 2), which went quiet within 10 minutes, the problem is at home (Home Assistant's internet, or
+  Nabu Casa / the push service). The admins get **one** alert — "Home Assistant couldn't send requests to 5 of 6
+  phones since 14:02 — check Home Assistant's internet / Nabu Casa" — as a Home Assistant notification and on their
+  phones; the single offline alerts wait until contact returns, and then only the phones still silent are reported.
+  A phone counts only once it has been offline for its own *Alert when offline for at least* time. Phones that all go
+  quiet at night while the requests still go through are just asleep (Android's deep sleep): no lost-contact alert,
+  and each phone's offline alert follows its own delay. One alert per episode, never again within the cooldown. You
+  can switch the check off for some hours: *Don't check for lost contact between* (App settings → Check-in).
 - **Pause alerts** for a phone (its owner or an admin): for 1, 4 or 12 hours, until a time, or until it's back online.
   Its status stays visible and Check now still works.
 - **Do-not-monitor hours** (the owner, on the phone's page): see below.
@@ -326,7 +330,7 @@ In App settings, each alert on or off with its recipients (admins, the phone's o
   05:02, battery was 4%)". *Example:* for a phone that's often off at night, set its Alert when offline to 10 hours.
 - **App not reporting** — once it has lasted longer than the Offline time, and the phone's *Alert when offline* time
   if one is set ("Asha's Pixel: the HA app stopped reporting — signed out?").
-- **Lost contact with all phones** — to admins.
+- **Lost contact with all phones** — to admins, only when Home Assistant can't send the requests to the phones.
 - **Back online** (off by default) — when a phone that was Offline or App not reporting reports again; with an
   *Alert when offline* time, only if its alert had gone out.
 - **Restarted** — with a guess: "battery was 3%, probably ran out" or "probably an update".
@@ -369,7 +373,7 @@ forward to your own My room.
   days.
 - **Check-in:** interval (15, 10 or 5 minutes), ask after (2 minutes overdue), wait for a reply (5 minutes), requests
   before Offline (2), start-up grace (12 minutes after one interval), recognise lost contact (on: half the phones,
-  at least 2, within 10 minutes).
+  at least 2, within 10 minutes), don't check for lost contact between (empty: always check).
 - **Check now:** wait for a reply (60 s), at most 20 per phone an hour, people in a phone's forwarding chat may check
   it (on).
 - **Alerts:** each on/off with recipients, alert when offline for at least (as soon as it's Offline), battery threshold (15%), charging reminder time and level (22:00, 30%),

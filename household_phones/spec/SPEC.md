@@ -139,10 +139,19 @@ check-in within the wait after a request is an *answer* (learnt per phone: `answ
   and no offline alert sent until one interval + 12 minutes (setting) has passed; the pages say "Starting — waiting
   for phones to check in". The same grace applies to one phone after an admin adds it and after each of its
   do-not-monitor windows ends.
-- **Lost contact:** when half or more of the monitored phones (not in do-not-monitor hours or the grace after them) (and at least 2; settings) went Late within the same 10
-  minutes, one alert "Home Assistant has lost contact with the phones (5 of 6 silent since 14:02)" goes to the admins
-  as a Home Assistant notification plus their phones; individual offline alerts are held until contact returns, then
-  only the phones still Offline are reported.
+- **Lost contact:** only with evidence that the problem is at home. A phone counts when it went Late, the "please
+  report" request to it **failed** (the notify call errored: Can't check), and it has been offline for at least its
+  own effective *Alert when offline for at least* time — counted like the offline alert's spell, do-not-monitor hours
+  and pauses left out (from Late when that time is 0). When half or more of the monitored phones (not in
+  do-not-monitor hours or the grace after them) (and at least 2; settings) count and went Late within the same 10
+  minutes, one alert "Home Assistant couldn't send requests to 5 of 6 phones since 14:02 — check Home Assistant's
+  internet / Nabu Casa" goes to the admins as a Home Assistant notification plus their phones. Phones that go quiet
+  together while the requests still go through (Android's deep sleep at night: the Companion app sends only changed
+  values, and its replies can be delayed) are just asleep: no lost-contact alert, and their own offline alerts follow
+  their own delays. Only while an episode is on are individual offline alerts held; when contact returns, only the
+  phones still Offline are reported. One alert per episode, and none within the alert cooldown (30 minutes) of the
+  last one if an episode ends and starts again. Nothing is checked inside the optional *Don't check for lost contact
+  between* times (Home Assistant's time zone; empty = always).
 - **The push service can't be reached:** a failed request (an HA error, a relay error, a rate limit) → **Can't
   check**, with "Home Assistant couldn't send the request — check remote access / Nabu Casa".
 - **Pause alerts** (owner or admin): 1, 4 or 12 hours, until a time, or until back online. Status stays visible,
@@ -226,8 +235,9 @@ check is in the phone's log: who, when, via, result; the owner sees it.
   Offline or App-not-reporting alert went out (at once, Back online follows an Offline or App not reporting status, as
   before). The text says how long: "Asha's Pixel has been offline for 10 hours (since 05:02, battery was 4%)". Cooldown,
   quiet hours (queued) and lost contact (held) apply when it fires. **App not reporting** waits the same delay ("…
-  Unreachable for 10 hours (since 05:02)"); **Lost contact** is never delayed.
-- **App not reporting**; **Lost contact** (admins); **Back online** (off by default); **Restarted** with a guess
+  Unreachable for 10 hours (since 05:02)"). **Lost contact** counts a phone only once it has been offline for its
+  delay too (§3.1).
+- **App not reporting**; **Lost contact** (admins; only when the requests fail, once per episode, §3.1); **Back online** (off by default); **Restarted** with a guess
   ("battery was 3%, probably ran out" when ≤ 5%; "probably an update" after an OS or app version change in the last 6
   hours); **Battery low** (below 15%, not charging, once per discharge); **Charging reminder at night** (off; 22:00,
   30%; optionally to the phone itself).
@@ -292,7 +302,7 @@ turning off *Enhanced notifications*, until a normal message is forwarded after 
 | Group | Keys (default) |
 |---|---|
 | Phones | `guess_kind` (on), `min_app_version` ("" — optional, §15.6), `unused_days` (30) — nothing monitored until an admin adds it (§2) |
-| Check-in | `interval_min` (15; 10, 5), `ask_after_min` (2), `wait_reply_min` (5), `requests` (2), `startup_grace_min` (12), `lost_contact_on` (on), `lost_contact_window_min` (10), `lost_contact_min_phones` (2) |
+| Check-in | `interval_min` (15; 10, 5), `ask_after_min` (2), `wait_reply_min` (5), `requests` (2), `startup_grace_min` (12), `lost_contact_on` (on), `lost_contact_window_min` (10), `lost_contact_min_phones` (2), `lost_contact_quiet_start` / `lost_contact_quiet_end` ("" = always check; Home Assistant's time zone) |
 | Check now | `check_wait_s` (60), `check_per_hour` (20), `check_by_chat_members` (on) |
 | Alerts | `alert_offline` (on) + `_to` (admins), `offline_alert_after_min` (0 = at once; 30, 60, 120, 240, 360, 600, 720, 1440 minutes), `alert_app` (on) + `_to` (both), `alert_lost_contact` (on), `alert_back` (off) + `_to`, `alert_restart` (on) + `_to`, `alert_battery` (on) + `_to` (owner), `battery_low_pct` (15), `alert_charge` (off) + `_to` (owner), `charge_time` (22:00), `charge_pct` (30), `charge_to_phone` (off), `alert_storage` (on) + `_to` (owner), `storage_low_pct` (10), `alert_battery_health` (on) + `_to` (owner), `alert_last_place` (off), `alert_cooldown_min` (30), `alert_delivery` ([phones]; phones / ha / chat), `quiet_start` / `quiet_end` ("") |
 | Forwarding | `forwarding_allowed` (on), `forward_disappear` (1h), `forward_chats` (member; own_room / member / listed), `forward_groups` ([]), `forward_apps` (Google Messages, Samsung Messages), `forward_group_filter` (codes) |

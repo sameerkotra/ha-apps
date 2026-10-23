@@ -12,7 +12,8 @@
   plus paused (alerts or watching), dnm (the owner's do-not-monitor hours, dnm.py) and unknown (not monitored: no
   admin added it).
 - **False alarms**: the start-up grace (also after a do-not-monitor window and after an admin adds a phone), lost
-  contact with most phones at once, Can't check when the request itself failed, pauses.
+  contact with most phones at once (only when the requests to them fail, and only once each has been offline for its
+  own alert delay: `_lost_contact`), Can't check when the request itself failed, pauses.
 - **Not monitored** devices are left alone entirely: never asked, no check-ins written, no alerts, no history.
 - **The offline alert's delay** (`alert_delay_min`, §5): a phone can be Offline for a while before its Offline (or
   App not reporting) alert goes out. Each unreachable spell is kept on the phone's row (`offline_since`, the time
@@ -68,7 +69,8 @@ class Timing:
 
 def snapshot() -> dict:
     keys = ("interval_min", "ask_after_min", "wait_reply_min", "requests", "startup_grace_min", "lost_contact_on",
-            "lost_contact_window_min", "lost_contact_min_phones", "check_wait_s")
+            "lost_contact_window_min", "lost_contact_min_phones", "lost_contact_quiet_start", "lost_contact_quiet_end",
+            "check_wait_s", "alert_cooldown_min")
     return {k: settings.get(k) for k in keys}
 
 
@@ -658,10 +660,32 @@ def send_request(pid: str, source=None, now: float | None = None, *, count: bool
 
 # --------------------------------------------------------------------------------------------- the tick
 
+def _offline_counted(p, now: float, s: dict) -> float:
+    """Seconds this phone has been offline so far, counted as its offline alert counts them (do-not-monitor hours and
+    pauses left out): its unreachable spell, or — when the requests to it fail, so it is Can't check rather than
+    Offline and has no spell — from when it would have become Offline."""
+    if p["offline_since"] is not None:
+        running = max(0.0, now - p["offline_counted_at"]) if p["offline_counted_at"] is not None else 0.0
+        return (p["offline_counted_s"] or 0.0) + running
+    t = timing(p, s)
+    start = base_time(p, t) + t.offline_after
+    return _counted_between(p, start, now) if now > start else 0.0
+
+
+def lost_contact_quiet(now: float, s: dict) -> bool:
+    """Inside the App setting's "Don't check for lost contact between" times (Home Assistant's time zone)?"""
+    return alerts.in_quiet(s.get("lost_contact_quiet_start") or "", s.get("lost_contact_quiet_end") or "",
+                           config.local(now))
+
+
 def _lost_contact(rows, statuses: dict, now: float, s: dict, dnm_states: dict | None = None
                   ) -> tuple[bool, int, int, float | None]:
-    """(lost, silent, monitored, since): half or more of the monitored phones (at least the minimum) went quiet within
-    the same window. Phones in do-not-monitor hours, or just out of them (the grace), don't count."""
+    """(lost, failing, monitored, since): Home Assistant can't reach half or more of the monitored phones (at least the
+    minimum), which went quiet within the same window. A phone counts only with evidence that the problem is at home —
+    the "please report" request to it failed (Can't check) — and only once it has been offline for its own "Alert
+    when offline for at least" time (from Late when that is 0). Quiet phones whose requests go through are just asleep
+    (Android's deep sleep): not lost contact. Phones in do-not-monitor hours, or just out of them (the grace), don't
+    count; nothing counts inside the "Don't check for lost contact between" times."""
     dnm_states = dnm_states or {}
 
     def counted(p):
@@ -670,8 +694,16 @@ def _lost_contact(rows, statuses: dict, now: float, s: dict, dnm_states: dict | 
     active = [p for p in rows if runs(p) and not watching_paused(p, now) and not alerts_paused(p, now)
               and not phones.is_ios(p) and counted(p)]
     total = len(active)
-    times = sorted(statuses[p["id"]][2] for p in active
-                   if statuses[p["id"]][0] in ("late", "offline", "cant_check") and statuses[p["id"]][2])
+    if not s["lost_contact_on"] or total < s["lost_contact_min_phones"] or lost_contact_quiet(now, s):
+        return False, 0, total, None
+
+    def failing(p):
+        st, _, late_since = statuses[p["id"]]
+        if st not in ("late", "offline", "cant_check") or not late_since or p["request_error_kind"] != "cant_check":
+            return False
+        delay = alert_delay_min(p)
+        return not delay or _offline_counted(p, now, s) >= delay * 60
+    times = sorted(statuses[p["id"]][2] for p in active if failing(p))
     window = s["lost_contact_window_min"] * 60
     best, since = 0, None
     j = 0
@@ -681,8 +713,12 @@ def _lost_contact(rows, statuses: dict, now: float, s: dict, dnm_states: dict | 
         if i - j + 1 > best:
             best, since = i - j + 1, times[j]
     need = max(s["lost_contact_min_phones"], math.ceil(total / 2))
-    lost = bool(s["lost_contact_on"]) and total >= s["lost_contact_min_phones"] and best >= need
-    return lost, len(times), total, since
+    return best >= need, best, total, since
+
+
+def lost_contact_text(failing: int, total: int, since: float | None) -> str:
+    return (f"Home Assistant couldn't send requests to {failing} of {total} phones since {config.hhmm(since)} — check "
+            "Home Assistant's internet / Nabu Casa. Offline alerts wait until contact returns.")
 
 
 def tick(now: float | None = None, source=None, *, again: bool = True) -> dict:
@@ -716,10 +752,12 @@ def tick(now: float | None = None, source=None, *, again: bool = True) -> dict:
         was_lost = db.state_get(conn, "lost_contact")
         if lost and not was_lost:
             db.state_set(conn, "lost_contact", {"since": since, "silent": silent, "total": total, "at": now})
-            if alerts.enabled("lost_contact"):
-                to_alert.append(("lost_contact", None, f"Home Assistant has lost contact with the phones ({silent} of "
-                                                       f"{total} silent since {config.hhmm(since)}). The problem is "
-                                                       "probably at home: Home Assistant's internet or the push service."))
+            # one alert per episode, and never again within the cooldown (an episode that ends and starts again)
+            last = db.state_get(conn, "lost_contact_alerted")
+            fresh = not last or now - last.get("at", 0) >= (s.get("alert_cooldown_min") or 30) * 60
+            if alerts.enabled("lost_contact") and fresh:
+                db.state_set(conn, "lost_contact_alerted", {"at": now})
+                to_alert.append(("lost_contact", None, lost_contact_text(silent, total, since)))
         elif lost:
             db.state_set(conn, "lost_contact", dict(was_lost, silent=silent, total=total))
         elif was_lost:
