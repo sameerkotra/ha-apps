@@ -2,7 +2,7 @@
 
 Each `state_changed` of a phone's Last notification sensor is handled on its own, from the event's new state (never
 by reading the sensor again), on a small worker thread: `decide()` (a pure function the tests drive) applies the
-owner's switch, the household's switch, the loop guard, the owner's apps and filter, Android 15's redaction, group
+owner's switch, the household's switch, the loop guard, the owner's apps and filter, apps' own background notifications, Android 15's redaction, group
 summaries and long texts; duplicates within 2 minutes are dropped; quiet hours hold (in memory) or drop. Forwarding
 goes on during the owner's do-not-monitor hours (their own choice) unless that window also pauses forwarding.
 
@@ -41,6 +41,12 @@ SUMMARY_RE = re.compile(r"(?i)^\s*(\d{1,4})\s+(new\s+)?(messages|conversations|n
 MAX_TEXT = 4000                                            # the contract's limit
 STATE_LIMIT = 255                                          # Home Assistant's state length: a longer text is cut
 DUP_WINDOW = 120
+# Notifications an app shows while it works (Google Messages' "Messages is doing work in the background" when the phone
+# is locked, syncing, sending): never a message. Android marks most of them ongoing / not clearable or with a service
+# category; the words catch the rest.
+BACKGROUND_CATEGORIES = {"service", "progress", "sys", "status", "transport"}
+BACKGROUND_RE = re.compile(r"(?i)\b(?:doing work|running|working) in (?:the )?background\b|\bchecking for (?:new )?messages\b"
+                           r"|^\s*(?:syncing|sending|downloading|uploading)\b[^\n]{0,40}$")
 DISAPPEAR = ("1h", "1d", "7d", "30d")
 
 
@@ -73,6 +79,15 @@ def words_of(p) -> list[str]:
     except ValueError:
         v = []
     return [w for w in v if isinstance(w, str) and w.strip()]
+
+
+def is_background(attrs: dict, title: str, text: str) -> bool:
+    """An app's own "working" notification (§6.1), not a message."""
+    if attrs.get("is_ongoing") is True or attrs.get("is_clearable") is False:
+        return True
+    if str(attrs.get("category") or "").lower() in BACKGROUND_CATEGORIES:
+        return True
+    return bool(BACKGROUND_RE.search(title or "") or BACKGROUND_RE.search(text or ""))
 
 
 def is_redacted(title: str, text: str) -> bool:
@@ -129,6 +144,8 @@ def decide(p, new_state: dict, *, name: str, owner_first: str, now: float) -> tu
     if not text and not title:
         text = str(new_state.get("state") or "").strip()
         from_state = True
+    if is_background(attrs, title, text):
+        return None, "background notification"
     app = app_name(package)
     at = config.hhmm(config.parse_iso(attrs.get("post_time")) if isinstance(attrs.get("post_time"), str) else
                      (attrs.get("post_time") / 1000 if isinstance(attrs.get("post_time"), (int, float)) else now))

@@ -446,6 +446,11 @@ states (the Last notification state blanked), held forwards, unanswered forward 
 - **Does `command_update_sensors` get a reply when nothing changed?** Self-detecting per phone (`answers_requests`
   once it has answered one); until then the checklist asks for an always-changing sensor (**Battery power** or **Last
   update trigger**) and ticks it when one is on. Check now's "No reply" says what to check (Troubleshooting).
+- **Apps' own background notifications** (Google Messages' "Messages is doing work in the background" while the phone
+  is locked, syncing, sending) are never forwarded: skipped when the sensor says `is_ongoing` true, `is_clearable`
+  false or `category` service / progress / sys / status / transport, or when the title or text matches
+  `forwarding.BACKGROUND_RE`. Checked before the summary and redaction rules, so such a notice is never shown as a
+  hidden code.
 - **Android 15's redaction text:** a constant list (`forwarding.REDACTED_TEXTS`) matched anywhere in the text, plus
   the empty-text pattern; the checklist re-checks after each hidden code.
 

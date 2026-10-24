@@ -128,6 +128,30 @@ class Forwarding(PhonesCase):
         item = [c for c in self.get(f"/api/phones/{self.pid}", ASHA).json()["checklist"] if c["id"] == "android15"][0]
         self.assertIsNone(item["ok"])
 
+    def test_background_notifications_are_never_forwarded(self):
+        cases = [note(text="", title="Messages is doing work in the background"),
+                 note(text="Messages is doing work in the background", title="Messages"),
+                 note(text="Tap for more info", title="Messages", is_ongoing=True),
+                 note(text="Tap for more info", title="Messages", is_clearable=False),
+                 note(text="Sending…", title="Messages", category="progress"),
+                 note(text="Checking for new messages", title="WhatsApp", package="com.whatsapp")]
+        self.on(filter="all", allConfirmed=True, apps=[MSGS, "com.whatsapp"])
+        for attrs in cases:
+            self.advance(3)
+            self.notify(attrs)
+        self.assertEqual(self.posted, [])
+        # a real message (clearable, a message category) still goes, and so does a hidden code
+        self.advance(3)
+        self.notify(note(text="See you at 6", title="Bob", is_ongoing=False, is_clearable=True, category="msg"))
+        self.assertEqual(self.posted[0]["text"], "Bob\nSee you at 6")
+        self.advance(3)
+        self.notify(note(text="", title="Bank"))
+        self.assertIn("A code arrived", self.posted[1]["text"])
+        p, why = forwarding.decide(self.row(self.pid), {"attributes": cases[0]}, name="Pixel", owner_first="Asha",
+                                   now=config.clock())
+        self.assertIsNone(p)
+        self.assertEqual(why, "background notification")
+
     def test_big_text_long_text_and_summaries(self):
         self.on(filter="all", allConfirmed=True)
         self.notify(note(text="Code 1234…", **{"android.bigText": "Code 123456 — the full text of the message"}))

@@ -2,6 +2,10 @@
 
 All notable changes to Household Phones. See the [repository](https://github.com/sameerkotra/ha-apps).
 
+## 1.5.1
+
+- **No more "Messages is doing work in the background"** in Chat: the notices apps show while they work (when the phone is locked, syncing or sending) are never forwarded. Ongoing, can't-be-swiped-away and service notifications are skipped, and so is that kind of wording; real messages and hidden codes are forwarded as before.
+
 ## 1.5.0
 
 - **Online history:** a coloured line of when each phone was online (green), late (amber) or offline (red) — grey for pauses and do-not-monitor hours — like Household Proxy's Monitor strip. Open **📈 Online history** on a phone's page (and on your own phone's page) to see the last 24 hours, 7 days or 30 days, with the times of each part when you point at or tap it, and how much of the time it was online.
