@@ -1,10 +1,16 @@
 // list.html: this page's own script (moved out of the page so the Content-Security-Policy can forbid inline scripts).
     const { h, icon, api, toast } = RPI;
     const $ = (id) => document.getElementById(id);
+    // this browser's view choices (kept on the device; private mode or blocked storage just means the defaults)
+    const pref = (k, d) => { try { const v = localStorage.getItem(k); return v == null ? d : v; } catch (_) { return d; } };
+    const setPref = (k, v) => { try { localStorage.setItem(k, v); } catch (_) { /* not kept */ } };
 
-    let ctx = null, data = null, known = [], view = localStorage.getItem('list:view') || 'store', typed = '', hl = -1;
+    let ctx = null, data = null, known = [], view = pref('list:view', 'store'), typed = '', hl = -1;
     let pickOpen = false, pickQuery = '', picked = new Set(), busy = false;
-    let useOnline = localStorage.getItem('list:online') !== 'no';
+    let useOnline = pref('list:online', 'yes') !== 'no';
+    // Compact: one short row per item (name · cheapest store · cost) for scrolling while shopping; kept per person
+    let compact = false;
+    const compactKey = () => `list:compact:${(ctx && ctx.me && ctx.me.id) || ''}`;
     let restock = [], drops = [], helpOpen = false;
     const base = () => `api/v1/homes/${encodeURIComponent(ctx.homeId)}/list`;
     // $3.29, or $3.199 for a price posted to a tenth of a cent (fuel)
@@ -138,13 +144,13 @@
         it.also && it.also.length ? h('div', { class: 'also' }, 'Also: ' + it.also.map((a) => `${a.store} ${money(a.price)}${unitOf(a.unit)}`).join(' · ')) : null,
       ];
     }
+    const tick = (it) => (e) => { const on = e.target.checked; quick(() => { const x = findItem(it.id); if (x) x.checked = on; },
+      () => api(`${base()}/${it.id}`, { method: 'PATCH', body: { checked: on } })); };
     function itemRow(it) {
       const setQty = (q) => quick(() => { const x = findItem(it.id); if (x) x.qty = Math.max(1, q); },
         () => api(`${base()}/${it.id}`, { method: 'PATCH', body: { qty: Math.max(1, q) } }));
       return h('div', { class: 'litem' + (it.checked ? ' done' : '') },
-        h('input', { type: 'checkbox', checked: it.checked ? true : null, 'aria-label': `Bought ${it.text}`,
-          onchange: (e) => { const on = e.target.checked; quick(() => { const x = findItem(it.id); if (x) x.checked = on; },
-            () => api(`${base()}/${it.id}`, { method: 'PATCH', body: { checked: on } })); } }),
+        h('input', { type: 'checkbox', checked: it.checked ? true : null, 'aria-label': `Bought ${it.text}`, onchange: tick(it) }),
         h('div', { class: 'body' }, h('div', { class: 'nm' }, it.text), ...(it.checked ? [] : [].concat(whereLine(it)))),
         h('div', { class: 'ctl' },
           it.checked ? null : h('div', { class: 'qty' },
@@ -155,8 +161,20 @@
             onclick: () => quick(() => { data.items = data.items.filter((x) => x.id !== it.id); },
               () => api(`${base()}/${it.id}`, { method: 'DELETE' })) }, icon('x'))));
     }
+    // Compact row: the whole row is the tick box's label, so a tap anywhere on it ticks the item off (or back on).
+    // Cost is the price at the cheapest store for the quantity on the list; "—" when there is no price yet.
+    function compactRow(it) {
+      const c = it.cheapest, qty = +(it.qty || 1).toFixed(2);
+      const cost = !c ? '—' : qty === 1 ? `${money(c.price)}${unitOf(c.unit)}` : money(c.price * qty);
+      return h('label', { class: 'litem crow' + (it.checked ? ' done' : '') },
+        h('input', { type: 'checkbox', checked: it.checked ? true : null, 'aria-label': `Bought ${it.text}`, onchange: tick(it) }),
+        h('span', { class: 'nm' }, it.text, qty !== 1 ? h('span', { class: 'cq' }, ` ×${qty}`) : null),
+        h('span', { class: 'cs' }, c ? c.store : ''),
+        h('span', { class: 'cc' }, cost));
+    }
     function listCard() {
       const open = data.items.filter((i) => !i.checked), done = data.items.filter((i) => i.checked);
+      const row = compact ? compactRow : itemRow;
       const byId = Object.fromEntries(data.items.map((i) => [i.id, i]));
       const body = [];
       if (!open.length) body.push(done.length ? UI.empty('Everything is bought', 'Clear the bought items below, or add what you need next.')
@@ -165,9 +183,9 @@
         for (const g of data.by_store) {
           body.push(h('div', { class: 'grp-h' }, h('h3', {}, g.store ? `Cheapest at ${g.store}` : 'No price yet'),
             h('span', { class: 'note' }, `${g.items.length} item${g.items.length === 1 ? '' : 's'}${g.total ? ' · about ' + money(g.total) : ''}`)));
-          body.push(h('div', {}, ...g.items.map((id) => byId[id]).filter((it) => it && !it.checked).map(itemRow)));
+          body.push(h('div', {}, ...g.items.map((id) => byId[id]).filter((it) => it && !it.checked).map(row)));
         }
-      } else body.push(h('div', {}, ...open.map(itemRow)));
+      } else body.push(h('div', {}, ...open.map(row)));
       // the summary strip: 12 items · 3 stores · about $54 · Plan trip
       const stores = (data.by_store || []).filter((g) => g.store && g.items.some((id) => byId[id] && !byId[id].checked));
       const about = (data.by_store || []).reduce((t, g) => t + (g.total || 0), 0);
@@ -175,17 +193,21 @@
         about ? `about ${money(about)}` : null].filter(Boolean).join(' · ');
       return h('div', { class: 'card' }, h('div', { class: 'card-body stack' },
         h('div', { class: 'lsum' }, h('strong', {}, sum),
-          open.some((i) => i.item_id) ? h('button', { class: 'btn btn-sm', type: 'button', onclick: planTrip }, icon('map'), 'Plan trip') : null),
-        lookoutChips(),
+          h('div', { class: 'lsum-act' },
+            data.items.length ? h('button', { class: 'btn btn-sm ltoggle', type: 'button', 'aria-pressed': String(compact),
+              title: 'Just the item, cheapest store and cost: easy to scroll while shopping',
+              onclick: () => { compact = !compact; setPref(compactKey(), compact ? 'on' : 'off'); render(); } }, 'Compact') : null,
+            open.some((i) => i.item_id) ? h('button', { class: 'btn btn-sm', type: 'button', onclick: planTrip }, icon('map'), 'Plan trip') : null)),
+        compact ? null : lookoutChips(),
         open.length ? h('div', { class: 'row wrap', style: 'gap:8px 14px;justify-content:space-between;align-items:center' },
           h('div', { class: 'tabs', role: 'group', 'aria-label': 'Group the list' }, ...[['store', 'By cheapest store'], ['all', 'All']].map(([k, l]) =>
-            h('button', { class: 'btn btn-sm', type: 'button', 'aria-pressed': String(view === k), onclick: () => { view = k; localStorage.setItem('list:view', k); render(); } }, l))),
+            h('button', { class: 'btn btn-sm', type: 'button', 'aria-pressed': String(view === k), onclick: () => { view = k; setPref('list:view', k); render(); } }, l))),
           h('label', { class: 'small', style: 'display:flex;gap:6px;align-items:center' },
-            h('input', { type: 'checkbox', checked: useOnline ? true : null, onchange: (e) => { useOnline = e.target.checked; localStorage.setItem('list:online', useOnline ? 'yes' : 'no'); load(); } }),
+            h('input', { type: 'checkbox', checked: useOnline ? true : null, onchange: (e) => { useOnline = e.target.checked; setPref('list:online', useOnline ? 'yes' : 'no'); load(); } }),
             'Use online prices', h('span', { class: 'faint' }, '(untick for receipt prices only)'))) : null,
         ...body,
         done.length ? h('details', {}, h('summary', { style: 'cursor:pointer' }, `Bought (${done.length})`),
-          h('div', {}, ...done.map(itemRow)),
+          h('div', {}, ...done.map(row)),
           h('button', { class: 'btn btn-sm btn-ghost', type: 'button', onclick: () => act(() => api(base() + '/clear-checked', { method: 'POST' }), 'Bought items cleared') }, icon('trash'), 'Clear bought items')) : null));
     }
     function planTrip() {
@@ -279,6 +301,7 @@
     (async () => {
       try {
         ctx = await RPI.homeContext();
+        compact = pref(compactKey(), 'off') === 'on';
         const sw = RPI.homeSwitcher(ctx.homes, ctx.homeId, (id) => { ctx.homeId = id; load(); });
         $('homeSwitch').replaceChildren(...(sw ? [sw] : []));
         await load();

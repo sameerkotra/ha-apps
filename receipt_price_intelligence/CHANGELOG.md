@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.5.0
+
+- **Compact shopping list**: a **Compact** switch by the list summary shows one short row per item — the item, its cheapest store and the cost — so the list is easy to scroll in the shop. Tap anywhere on a row to tick it off; grouping by store still works, and each person's choice is remembered on their device.
+
 ## 1.4.1
 
 - **Retry buttons are styled again**, and moving between pages never leaves a stray step for Back.

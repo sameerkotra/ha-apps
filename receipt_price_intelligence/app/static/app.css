@@ -950,6 +950,8 @@ dialog.sheet { max-width: min(440px, calc(100vw - 16px)); }
 .pg-list .addcard { gap: 10px; }
 .pg-list .helpq { font-weight: 700; font-size: 1rem; border: 1px solid var(--line); width: 42px; height: 42px; }
 .pg-list .lsum { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+.pg-list .lsum-act { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.pg-list .ltoggle[aria-pressed="true"] { background: var(--accent); color: var(--accent-contrast); border-color: var(--accent); }
 .pg-list .lchips { display: flex; flex-wrap: wrap; gap: 6px; }
 .pg-list .lchip { display: inline-flex; align-items: center; gap: 2px; padding: 3px 10px; border-radius: 999px; border: 1px solid var(--line); background: var(--surface-2); font-size: .8rem; color: var(--muted); }
 .pg-list a.lchip { color: var(--accent); font-weight: 600; }
@@ -969,6 +971,19 @@ dialog.sheet { max-width: min(440px, calc(100vw - 16px)); }
 .pg-list .litem .where b { color: var(--accent); }
 .pg-list .litem .also { font-size: .74rem; color: var(--muted); }
 .pg-list .litem .ctl { display: flex; gap: 6px; align-items: center; flex: none; }
+/* compact rows: name · cheapest store · cost, the whole row (at least 44px tall) ticks the item */
+.pg-list .litem.crow { display: grid; grid-template-columns: auto minmax(0, 1fr) minmax(0, max-content) auto; align-items: center; gap: 10px; min-height: 44px; padding: 4px 0; cursor: pointer; -webkit-tap-highlight-color: transparent; }
+.pg-list .litem.crow input[type=checkbox] { margin-top: 0; }
+.pg-list .litem.crow .nm { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pg-list .litem.crow .cq { font-weight: 400; color: var(--muted); }
+.pg-list .litem.crow .cs { font-size: .82rem; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 14em; }
+.pg-list .litem.crow .cc { font-weight: 650; font-variant-numeric: tabular-nums; text-align: right; white-space: nowrap; }
+.pg-list .litem.crow:active { background: var(--surface-2); }
+.pg-list .litem.crow.done .cs, .pg-list .litem.crow.done .cc { color: var(--muted); font-weight: 400; }
+@media (max-width: 760px) {
+  .pg-list .litem.crow { gap: 8px; }
+  .pg-list .litem.crow .cs { max-width: 9em; }
+}
 .pg-list .qty { display: inline-flex; border: 1px solid var(--line); border-radius: 9px; overflow: hidden; }
 .pg-list .qty button { width: 28px; height: 30px; border: 0; background: var(--surface-2); color: var(--text); font-size: 1rem; cursor: pointer; }
 .pg-list .qty span { min-width: 30px; text-align: center; line-height: 30px; font-variant-numeric: tabular-nums; font-size: .85rem; }

@@ -214,6 +214,11 @@ right now, with the price, whether it is the store's online price or what you pa
 uses), and the next cheapest stores. *By cheapest store* groups the list by store with a rough total. Tick items off
 as you buy them; *Plan a trip with these* opens the trip planner with the list.
 
+**Compact** (next to the list summary) is the view for the shop: one short row per item with just its name, the
+cheapest store and the cost (the price there times the quantity on the list; "—" when there is no price yet). Tap
+anywhere on a row to tick it off, or tap a bought item to put it back; quantities and removing are in the normal view.
+*By cheapest store* grouping still applies. Each person's choice is remembered in their browser on that device.
+
 ### On your Home Assistant dashboard
 
 - **To-do list card**: set **Shopping list to-do entity** in Admin → App settings (for example `todo.shopping_list`, the
