@@ -559,12 +559,21 @@ def on_state_event(event: dict) -> None:
         return
     new = data.get("new_state")
     old = data.get("old_state")
+    from . import clearing
+    if clearing.is_text_sensor(eid) and clearing.is_ours(new):           # this app clearing it: not a report
+        with phones.LIVE.lock:
+            phones.LIVE.states[eid] = phones.clean_state(eid, new)
+        return
+    again = clearing.is_text_sensor(eid) and isinstance(new, dict) and clearing.was_cleared(eid, new)
     if (etype == "state_changed" and eid.endswith("_last_notification") and isinstance(new, dict)
             and isinstance(old, dict)                                     # not added or restored after a restart
             and old.get("state") != "unavailable"                        # nor the first value after being unavailable
-            and new.get("state") not in ("unavailable", "unknown", None)):
+            and new.get("state") not in ("unavailable", "unknown", None)
+            and not again):                                               # nor one this app cleared, sent again
         from . import forwarding                                          # a restored last message is never re-sent
         forwarding.submit(pid, new, old.get("state"))
+    if etype == "state_changed" and isinstance(new, dict):
+        clearing.submit(pid, eid, new)                                    # out of Home Assistant (§6.2)
     if isinstance(new, dict):
         with phones.LIVE.lock:
             phones.LIVE.states[eid] = phones.clean_state(eid, new)
@@ -595,7 +604,7 @@ def poll_states(source=None, now: float | None = None, *, force: bool = False) -
     `last_reported` (or `last_updated`) of a phone's sensor counts as a check-in — except during Home Assistant's
     start-up grace (Home Assistant restoring them after a restart). The Companion app sends all its sensors in one
     batch, so many sensors moving to the same instant is a normal report, not a restart. Returns check-ins found."""
-    from . import ha_source
+    from . import clearing, ha_source
     now = config.clock() if now is None else now
     if not force and events_flowing(now):
         return 0
@@ -611,6 +620,8 @@ def poll_states(source=None, now: float | None = None, *, force: bool = False) -
             if pid is None:
                 continue
             phones.LIVE.states[eid] = phones.clean_state(eid, st)
+            if clearing.is_ours(st):                  # this app cleared it: its new time isn't a report
+                continue
             ts = event_time(st)
             if ts is None or eid.split(".", 1)[0] not in SENSOR_DOMAINS + ("device_tracker",):
                 continue

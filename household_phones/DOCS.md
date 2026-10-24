@@ -328,9 +328,13 @@ settings (which also removes suggested replies).
 **The text is never stored by this app** — not in its database, logs, backups or sensors. It goes straight into Chat
 (Household Chat's *Phones may post forwarded messages* App setting must be on). Only the time and the chat of each
 forward are kept. **Home Assistant itself** keeps the latest notification as the Last notification sensor's value until the next one
-replaces it — this app can't clear it, and its lists (apps, filter, Never forward) don't stop it. Only the Companion
-app's own **Allow list** on the phone keeps other apps' notifications away from Home Assistant. It also records the
-sensor in its history; to keep the texts
+replaces it. With the App setting **Clear the Last notification sensors after reading them** (Forwarding, on by
+default), this app replaces it with "cleared" and no text right after reading it — forwarded or not, for monitored
+phones, the Last removed notification sensor too — so a message stays in Home Assistant only a moment; a sweep a minute
+after start and then hourly clears any left over. Your own automations that read these sensors see the message when it
+arrives, then "cleared". The app's lists (apps, filter, Never forward) don't stop Home Assistant from receiving a
+notification: only the Companion app's own **Allow list** on the phone does. Home Assistant also records the sensor in
+its history; to keep the texts
 out of it, add to `configuration.yaml`:
 
 ```yaml

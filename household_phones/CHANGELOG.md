@@ -2,6 +2,10 @@
 
 All notable changes to Household Phones. See the [repository](https://github.com/sameerkotra/ha-apps).
 
+## 1.7.0
+
+- **Messages don't stay in Home Assistant:** right after reading a notification (forwarded or not), the app replaces the Last notification and Last removed notification sensors' value with "cleared" and no text. On by default for monitored phones; the App setting *Clear the Last notification sensors after reading them* (Forwarding) turns it off. Anything left over (after a restart, or from before) is cleared a minute after start and then hourly.
+
 ## 1.6.0
 
 - **Never forward:** a new list under Forwarding — senders (as the phone shows them) or words, one per line. A message from one of them, or containing one, is never forwarded, whatever the filter.

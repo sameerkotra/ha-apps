@@ -7,7 +7,7 @@ import tempfile
 
 from starlette.concurrency import run_in_threadpool
 
-from . import alerts, app_messages, checknow, config, db, forwarding, phones, settings, timeline
+from . import alerts, app_messages, checknow, clearing, config, db, forwarding, phones, settings, timeline
 from .common import backup_core
 
 logger = logging.getLogger("housekeeping")
@@ -30,6 +30,10 @@ def prune(now: float | None = None) -> dict:
 
 def hourly() -> None:
     prune()
+    try:
+        clearing.sweep()
+    except Exception:
+        logger.exception("Clearing the notification sensors failed")
     backup_core.remove_stale(tempfile.gettempdir(), db.SNAPSHOT_PREFIX, 6 * 3600)
     try:
         app_messages.refresh_members()
@@ -43,6 +47,11 @@ def quick(n: int = 0) -> None:
     app_messages.resend_forwards()
     if n % 12 == 0:
         alerts.release_queue()
+    if n == 12:                                     # a minute after start, once the phones are known
+        try:
+            clearing.sweep()
+        except Exception:
+            logger.exception("Clearing the notification sensors failed")
 
 
 async def discovery_loop() -> None:

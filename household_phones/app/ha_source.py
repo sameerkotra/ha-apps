@@ -140,6 +140,13 @@ class HASource:
                                       {"title": title, "message": message, "notification_id": notification_id})
         return status is not None and 200 <= status < 300
 
+    def set_state(self, entity_id: str, state: dict) -> bool:
+        """Overwrite an entity's state in Home Assistant's state machine (clearing a notification sensor)."""
+        if not self.available():
+            return False
+        status, _ = ha_client.request("POST", f"/states/{entity_id}", state)
+        return status is not None and 200 <= status < 300
+
     def fire_event(self, event_type: str, data: dict) -> bool:
         if not self.available():
             return False

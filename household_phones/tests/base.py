@@ -6,7 +6,7 @@ import _env  # noqa: F401  (must be first)
 import unittest
 from unittest import mock
 
-from app import alerts, app_messages, config, db, forwarding, ha_source, monitor, phones, settings
+from app import alerts, app_messages, clearing, config, db, forwarding, ha_source, monitor, phones, settings
 from app.common import ha_notify, ha_people
 from common_tests.ingress import identity_headers, ingress_client
 
@@ -70,6 +70,7 @@ class PhonesCase(unittest.TestCase):
         app_messages.POST["fn"] = lambda data: self.posted.append(data) or True
         self.addCleanup(lambda: app_messages.POST.update(fn=None))
         forwarding.SYNC["on"] = True
+        clearing._cleared.clear()
         self.addCleanup(lambda: forwarding.SYNC.update(on=False))
         for who in (ADMIN, ASHA, BOB, KID):
             self.c.get("/api/me", headers=who)

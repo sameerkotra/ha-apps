@@ -19,6 +19,7 @@ class FakeSource:
         self.notes = []               # Home Assistant notifications
         self.events = []
         self.fail_registries = False
+        self.set_states = []          # (entity_id, state) this app wrote (clearing notification sensors)
 
     def available(self):
         return True
@@ -45,6 +46,11 @@ class FakeSource:
 
     def ha_notification(self, title, message, notification_id):
         self.notes.append((title, message))
+        return True
+
+    def set_state(self, entity_id, state):
+        self.set_states.append((entity_id, state))
+        self.state[entity_id] = {**self.state.get(entity_id, {}), **state}
         return True
 
     def fire_event(self, event_type, data):

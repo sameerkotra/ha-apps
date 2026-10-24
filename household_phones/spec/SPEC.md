@@ -301,6 +301,15 @@ this app's notifications); an identical text from the same phone within 2 minute
 **Home Assistant history:** HA records the sensor's text itself; the setup notes (All phones) and DOCS show the
 `recorder: exclude: entity_globs: sensor.*_last_notification` YAML.
 
+**Clearing the sensors (§6.2):** App setting `clear_notification_sensor` (Forwarding, on by default). After each
+`state_changed` of a monitored phone's `*_last_notification` / `*_last_removed_notification` holding a message
+(forwarded or not, restored values included), a worker POSTs `/api/states/<entity>` with state `cleared` and only
+`friendly_name`, `icon` and `cleared_by: Household Phones` (`app/clearing.py`). That value is recognised and never
+counts as a check-in (event or fallback poll) nor goes to forwarding. If the phone sends the cleared notification again
+(same post time and content: a keyed hash in memory, never the text) it is cleared again, not forwarded twice. A sweep
+(a minute after start, then hourly) clears any sensor still holding a message. The phone's next notification
+overwrites the value as usual.
+
 ### 6.1 Android 15+: one-time codes hidden
 
 Recognised by `forwarding.REDACTED_TEXTS` (a constant: "sensitive notification content hidden" and similar, anywhere

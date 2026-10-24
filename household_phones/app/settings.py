@@ -226,6 +226,12 @@ SETTINGS = [
     # -- forwarding
     Setting("forwarding_allowed", True, "Forwarding allowed in this household", group="forwarding",
             help="Off: no phone forwards, whatever its owner chose."),
+    Setting("clear_notification_sensor", True, "Clear the Last notification sensors after reading them",
+            group="forwarding",
+            help="Right after reading each notification of a monitored phone (forwarded or not), the app replaces the "
+                 "Last notification and Last removed notification sensors' value in Home Assistant with “cleared” and "
+                 "no text, so a message stays there only a moment. Off: Home Assistant keeps the latest one until the "
+                 "next replaces it. Your own automations that read these sensors only see “cleared” afterwards."),
     Setting("forward_disappear", "1h", "Forwarded messages disappear after", group="forwarding", choices=DISAPPEAR,
             help="The default; each owner can choose for their own forwards."),
     Setting("forward_chats", "member", "Owners may forward into", group="forwarding",
