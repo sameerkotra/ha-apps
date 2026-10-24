@@ -149,6 +149,7 @@ def admins_see(p, conn=None) -> list[str]:
            "Wi-Fi network name or mobile data", "Last restart", "The phone's model, Android/iOS version and Companion app "
            "version", "Every sensor the Companion app reports, except notification texts",
            "Its history: status changes, restarts, Check now and pauses",
+           "Its online history: a line of when it was online, late or offline (up to 30 days)",
            "Your last place (Home Assistant zone)" if p["share_place"] else "Not your place (Share my last place is off)"]
     if p["fwd_on"]:
         out.append("That it forwards messages and into which chat — never the messages, unless they're in that chat")

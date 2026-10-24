@@ -280,6 +280,9 @@ SETTINGS = [
     # -- history
     Setting("history_days", 7, "Keep history", group="history", min=1, max=90, unit="days",
             help="Status changes, restarts, Check now and pauses on each phone's page; the log on My phone."),
+    Setting("online_history_days", 30, "Keep the online history", group="history", min=1, max=30, unit="days",
+            help="The coloured online line on each phone's page (24 hours, 7 days, 30 days) and in All phones: only "
+                 "when its status changed, so it stays small. The line shows at most 30 days."),
     # -- Home Assistant
     Setting("ha_sensors", False, "Sensors in Home Assistant", group="ha",
             help="Publishes binary_sensor.phones_<phone>_online and sensor.phones_online_count, and listens for the "

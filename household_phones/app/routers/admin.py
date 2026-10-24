@@ -6,7 +6,7 @@ import os
 from fastapi import APIRouter, Body, Depends, File, HTTPException, UploadFile
 from starlette.concurrency import run_in_threadpool
 
-from .. import actions, alerts, app_messages, auth, bedtime, config, db, health, lost, monitor, phones, settings, views
+from .. import actions, alerts, app_messages, auth, bedtime, config, db, health, lost, monitor, phones, settings, timeline, views
 from ..auth import require_admin
 from ..common import backup_core, ha_client, ha_notify, people_admin
 
@@ -26,9 +26,10 @@ def available(conn, p, s: dict) -> dict:
 
 
 @router.get("/admin/phones")
-def all_phones(admin: dict = Depends(require_admin)):
+def all_phones(admin: dict = Depends(require_admin), history: bool = False):
     """All phones: the summary strip, not used lately, the monitored phones (problems first) and tablets, and the
-    Available devices no admin has added yet (watches and other devices last)."""
+    Available devices no admin has added yet (watches and other devices last). `history`: also each monitored phone's
+    24-hour online strip (`lines`, by phone id; none for a phone hidden from this admin, §9)."""
     now = config.clock()
     unused_s = settings.get("unused_days") * 86400
     with db.get_conn() as conn:
@@ -37,6 +38,8 @@ def all_phones(admin: dict = Depends(require_admin)):
         items = [(p, views.summary(conn, p, now, viewer=admin, best=best)) for p in rows]
         avail = [available(conn, p, s) for p, s in items if not p["monitored"]]
         lost = db.state_get(conn, "lost_contact")
+        lines = {p["id"]: timeline.strip(conn, p["id"], now) for p, s in items
+                 if history and p["monitored"] and not s.get("hidden")}
     def order(x):
         return (PROBLEM_ORDER.get(x[1]["status"], 9), x[1]["name"].lower())
     items = [(p, s) for p, s in items if p["monitored"]]
@@ -54,6 +57,7 @@ def all_phones(admin: dict = Depends(require_admin)):
             "phones": [s for p, s in sorted(items, key=order) if p["kind"] != "tablet"],
             "tablets": [s for p, s in sorted(items, key=order) if p["kind"] == "tablet"],
             "checkins": "events" if monitor.reported_events_seen(now) else "polling",
+            "lines": lines if history else None,
             "haLoaded": phones.LIVE.loaded_at is not None, "connected": app_messages.connected_apps()}
 
 
@@ -230,8 +234,9 @@ def stop_monitoring(pid: str, body: dict = Body(...), admin: dict = Depends(requ
             phones.history(conn, pid, "owner", f"Monitoring stopped by {admin['name']} (history kept).", by=admin["id"],
                            now=now)
         else:
-            for t in ("history", "checks", "forwards", "actions"):
+            for t in ("history", "checks", "forwards", "actions", "status_log"):
                 conn.execute(f"DELETE FROM {t} WHERE phone_id = ?", (pid,))
+            timeline.forget()
             conn.execute("UPDATE phones SET last_checkin = NULL, last_spontaneous = NULL, last_request_at = NULL, "
                          "battery = NULL, charging = NULL, answers_requests = NULL, redacted_at = NULL, "
                          "checkin_entity = NULL, checkin_kind = NULL, shutdown_at = NULL WHERE id = ?", (pid,))

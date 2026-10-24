@@ -6,7 +6,7 @@
  *   #/check/<id>     Check now's live result (Household Chat and the Household Assistant link here)
  *   #/phones         admins: All phones (the monitored ones, and Available devices to add to monitoring), by status
  *   #/phones/person  admins: All phones grouped by person
- *   #/phone/<id>     admins: a phone's page (every sensor, history, its settings)
+ *   #/phone/<id>     admins: a phone's page (every sensor, the online line, history, its settings)
  *   #/admin/<tab>    admins: App settings, People, Tests, Storage
  * Everything is built with DOM nodes (UI.h): names and texts are never parsed as HTML.
  */
@@ -285,6 +285,7 @@
         facts([batteryText(p), p.network ? `📶 ${p.network}` : null, p.lastReboot ? `🔄 last restart ${String(p.lastReboot).replace("T", " ").slice(0, 16)}` : null])),
       lostBanner(p, again),
       p.welcome ? welcomeCard(p, todo) : null,
+      onlineCard(p.id),
       actionsCard(p, again),
       pauseCard(p, again),
       p.welcome ? null : checklistCard(p, todo),
@@ -955,7 +956,7 @@
     const box = $("#phonesBody");
     let r = data;
     if (!r) {
-      try { r = await api("api/admin/phones"); } catch (e) { mount(clear(box), UI.errorBox(e, () => loadPhones())); return; }
+      try { r = await api(listLines() ? "api/admin/phones?history=1" : "api/admin/phones"); } catch (e) { mount(clear(box), UI.errorBox(e, () => loadPhones())); return; }
     }
     if (state.view !== "phones") return;
     renderPhones(r);
@@ -972,6 +973,7 @@
   }
 
   function renderPhones(r) {
+    if (listLines() && !r.lines) { loadPhones(); return; }   // an action's answer has no lines: ask again with them
     const box = clear($("#phonesBody"));
     const s = r.summary;
     add(box, h("div", { class: "summary-strip", "aria-label": `${s.phones} monitored, ${s.online} online, ${s.offline} offline, ${s.paused} paused or in do-not-monitor hours` },
@@ -1003,14 +1005,18 @@
     const list = (title, items) => {
       if (!items.length) return;
       add(box, h("div", { class: "card" }, h("div", { class: "ui-group-head" }, h("span", null, title), h("span", { class: "ui-group-total" }, String(items.length))),
-        h("div", { class: "phone-list" }, items.map(phoneRow))));
+        h("div", { class: "phone-list" }, items.map((x) => phoneRow(x, r.lines)))));
     };
     if (r.phones.length || r.tablets.length) {
       const by = state.phonesBy === "person" ? "person" : "status";
-      add(box, h("div", { class: "seg", role: "group", "aria-label": "Group the phones" },
+      add(box, h("div", { class: "list-tools" }, h("div", { class: "seg", role: "group", "aria-label": "Group the phones" },
         [["status", "By status", "#/phones"], ["person", "By person", "#/phones/person"]].map(([v, l, hash]) =>
           h("button", { type: "button", class: "seg-btn" + (by === v ? " active" : ""), "aria-pressed": by === v ? "true" : "false",
-            "aria-current": by === v ? "true" : null, onclick: () => replace(hash) }, l))));
+            "aria-current": by === v ? "true" : null, onclick: () => replace(hash) }, l))),
+        h("button", { type: "button", class: "chip-btn online-toggle" + (listLines() ? " on" : ""), "aria-pressed": listLines() ? "true" : "false",
+          title: "Each phone's last 24 hours as a line: green online, amber late, red offline, grey paused or do-not-monitor hours",
+          onclick: () => { state.onlineList = !listLines(); pref("phones.onlineList", state.onlineList ? "1" : "0"); loadPhones(); } },
+          "📈 Online history")));
       if (by === "person") {
         const all = {};
         r.phones.concat(r.tablets).forEach((x) => { all[x.id] = x; });
@@ -1103,8 +1109,9 @@
     try { renderPhones(await api(path, { method, body })); } catch (e) { toast(e.message, true); }
   }
 
-  function phoneRow(s) {
+  function phoneRow(s, lines) {
     const sub = s.hidden ? s.label : [s.owner, s.model].filter(Boolean).join(" · ");
+    const line = lines && lines[s.id];
     return h("div", { class: "phone-row" },
       h("button", { type: "button", class: "row-open", onclick: () => go(`#/phone/${s.id}`) },
         dot(s.status),
@@ -1113,7 +1120,8 @@
           s.dnmText ? h("div", { class: "dim small" }, `🌙 ${s.dnmText}`) : null,
           (s.lost || s.appOutdated) ? h("div", { class: "chips row-chips" },
             s.lost ? h("span", { class: "chip lost-chip" }, "🚨 Lost mode") : null,
-            s.appOutdated ? h("span", { class: "chip warn-chip", title: s.appOutdatedWhy || "" }, "HA app outdated") : null) : null),
+            s.appOutdated ? h("span", { class: "chip warn-chip", title: s.appOutdatedWhy || "" }, "HA app outdated") : null) : null,
+          line ? onlineStrip(line) : null),
         s.hidden ? null : h("div", { class: "row-cols" }, h("span", null, batteryText(s) || "—"), h("span", null, s.network || "—"),
           h("span", null, s.appVersion || s.osVersion || ""))),
       moreBtn(`More for ${s.name}`, () => [
@@ -1124,6 +1132,87 @@
         { label: "✏️ Edit", onclick: () => go(`#/phone/${s.id}`) },
         { label: "Stop monitoring", danger: true, onclick: () => stopDialog(s, () => loadPhones()) },
       ]));
+  }
+
+  // ---------- the online line (§5.1), drawn like Household Proxy's Monitor strip ----------
+  const LINE_RANGES = [["24h", "24 h"], ["7d", "7 days"], ["30d", "30 days"]];
+  const LINE_LEGEND = [["up", "Online"], ["late", "Late or can't check"], ["down", "Offline or app not reporting"],
+    ["off", "Paused, do-not-monitor hours or not monitored"], ["none", "No data"]];
+  // per-viewer conveniences only (the folded card, the range, the list toggle): fine to lose
+  function pref(key, value) {
+    try {
+      if (value === undefined) return localStorage.getItem(key);
+      localStorage.setItem(key, value);
+    } catch (e) { /* private window or storage blocked: not remembered */ }
+    return null;
+  }
+  // the strip: each part's tooltip says when and what; with a caption, tap or the arrow keys show it there too
+  function onlineStrip(buckets, caption) {
+    const parts = buckets.map((b) => h("span", { class: `ob ${b.c}`, title: b.t }));
+    if (!caption) return h("div", { class: "online-strip compact", role: "img", "aria-label": "Online in the last 24 hours" }, parts);
+    const strip = h("div", { class: "online-strip", tabindex: "0", role: "group",
+      "aria-label": "Online history: tap a part, or use the arrow keys, for its times" }, parts);
+    let sel = -1;
+    const pick = (i) => {
+      if (!parts.length) return;
+      if (sel >= 0) parts[sel].classList.remove("sel");
+      sel = Math.max(0, Math.min(parts.length - 1, i));
+      parts[sel].classList.add("sel");
+      caption.textContent = buckets[sel].t;
+    };
+    const at = (e) => parts.indexOf(e.target);
+    strip.addEventListener("click", (e) => { if (at(e) >= 0) pick(at(e)); });
+    strip.addEventListener("mouseover", (e) => { if (at(e) >= 0) pick(at(e)); });
+    strip.addEventListener("keydown", (e) => {
+      const to = { ArrowLeft: sel - 1, ArrowRight: sel < 0 ? parts.length - 1 : sel + 1, Home: 0, End: parts.length - 1 }[e.key];
+      if (to === undefined) return;
+      e.preventDefault();
+      pick(to);
+    });
+    return strip;
+  }
+  // a phone's Online history, folded away like Proxy's History: opened once, it stays open (this browser)
+  function onlineCard(id) {
+    const body = h("div", { class: "online-body" });
+    const det = h("details", { class: "card online-card" }, h("summary", null, "📈 Online history"), body);
+    let range = pref("phones.onlineRange");
+    if (!LINE_RANGES.some(([v]) => v === range)) range = "24h";
+    let loaded = false;
+    const load = async () => {
+      UI.loading(body);
+      let r;
+      try { r = await api(`api/phones/${id}/online-history?range=${range}`); }
+      catch (e) { mount(clear(body), UI.errorBox(e, load)); return; }
+      if (r.hidden) {
+        mount(clear(body), h("p", { class: "hint" }, "Not shown while the owner pauses being watched or is in do-not-monitor hours."));
+        return;
+      }
+      const pct = (v) => (v === null || v === undefined ? "—" : `${v}%`);
+      const caption = h("p", { class: "online-caption dim small", "aria-live": "polite" }, "Point at or tap the line for its times.");
+      mount(clear(body),
+        h("div", { class: "seg", role: "group", "aria-label": "How far back" }, LINE_RANGES.map(([v, l]) =>
+          h("button", { type: "button", class: "seg-btn" + (v === range ? " active" : ""), "aria-pressed": v === range ? "true" : "false",
+            onclick: () => { range = v; pref("phones.onlineRange", v); load(); } }, l))),
+        h("div", { class: "uptime", title: "Online %" }, h("span", null, `24 h: ${pct(r.uptime.day)}`),
+          h("span", null, `7 days: ${pct(r.uptime.week)}`), h("span", null, `30 days: ${pct(r.uptime.month)}`)),
+        onlineStrip(r.buckets, caption),
+        h("div", { class: "online-axis dim small" }, h("span", null, r.startText), h("span", null, "now")),
+        caption,
+        h("div", { class: "online-legend small" }, LINE_LEGEND.map(([c, l]) => h("span", null, h("span", { class: `ob ${c}`, "aria-hidden": "true" }), l))),
+        h("p", { class: "hint small" }, "Online %: Online and Late count as online; Offline, App not reporting and Can't check as not. " +
+          `Do-not-monitor hours, pauses and times without data are left out. Kept ${r.keepDays} days (App settings)` +
+          (r.since ? `; recorded since ${r.since}.` : ".")));
+    };
+    det.addEventListener("toggle", () => {
+      pref("phones.onlineOpen", det.open ? "1" : "0");
+      if (det.open && !loaded) { loaded = true; load(); }
+    });
+    if (pref("phones.onlineOpen") === "1") { loaded = true; det.open = true; load(); }
+    return det;
+  }
+  function listLines() {
+    if (state.onlineList === undefined) state.onlineList = pref("phones.onlineList") === "1";
+    return state.onlineList;
   }
 
   // ---------- Admin mode: a phone's page ----------
@@ -1165,7 +1254,8 @@
         : "The owner paused being watched: its status, battery, network and sensors aren't shown until the pause ends.") :
         facts([batteryText(a), a.network ? `📶 ${a.network}` : null, a.lastReboot ? `🔄 ${String(a.lastReboot).replace("T", " ").slice(0, 16)}` : null,
           a.zone ? `📍 ${a.zone}` : null, a.forwardingTarget ? `💬 forwards into ${a.forwardingTarget}` : null])));
-    add(box, lostBanner(a, again), actionsCard(a, again), a.health ? healthCard(a.health) : null, await bedtimeEditor(a, again));
+    add(box, lostBanner(a, again), a.hidden ? null : onlineCard(a.id), actionsCard(a, again), a.health ? healthCard(a.health) : null,
+      await bedtimeEditor(a, again));
     add(box, card("📱 Device", h("table", { class: "sensor-table" }, [["Manufacturer", a.manufacturer], ["Model", a.model],
       ["System", [a.osName, a.osVersion].filter(Boolean).join(" ")], ["Companion app", a.appVersion || "—"], ["Owner", a.owner || "nobody"],
       ["Kind", a.kind], ["In Home Assistant as", a.haName], ["Notify service", a.notifyService || a.defaultService || "—"]]

@@ -209,14 +209,34 @@ check is in the phone's log: who, when, via, result; the owner sees it.
 - **Phone list**, problems first (Offline, App not reporting, Can't check, Late): status dot and last check-in; name,
   owner and model; battery with charging; Wi-Fi network or mobile data; companion app / OS version; the owner's
   do-not-monitor hours; ⋯ (Check now, Pause alerts, Edit, Stop monitoring). Tablets in their own section.
+  **📈 Online history** (a toggle next to By status / By person, remembered in the browser: `localStorage`
+  `phones.onlineList`) adds each row's 24-hour strip (`GET /api/admin/phones?history=1` → `lines` by phone id).
 - **Phone page:** the device (manufacturer, model, OS, companion app version, owner, kind); its settings; **every
   enabled sensor** grouped (Battery, Network, Activity, Storage, Location zone — only if the owner shares it —, Last
   reboot and updates, Notifications — never their text —, Other); disabled sensors by name ("off on the phone");
   while an offline alert delay is counting, a hint under the status ("⏳ Offline 2 h 14 min — alert after 10 h", "not
   counting now" during do-not-monitor hours or a pause);
-  **history** (kept 7 days) with the battery at each change, grouped by day; Check now at the top; a danger zone
+  **📈 Online history** (§5.1, folded); **history** (kept 7 days) with the battery at each change, grouped by day;
+  Check now at the top; a danger zone
   (Stop monitoring — keep or delete the history —, Remove). A device not monitored shows only what discovery knows
   and Add to monitoring.
+
+### 5.1 Online history (`timeline.py`)
+
+Like Household Proxy's Monitor strip and History (its `.strip`: equal parts, 2 px apart, 16 px high), with Phones'
+status colours. **Kept:** `status_log` (phone, time, status) — one row each time the status machine's status changes
+(`monitor.tick` → `timeline.record`), monitored phones only, plus one `unknown` row when monitoring stops; `none` from
+the last heartbeat (`app_state.timeline_alive`, every 5 minutes) when the app was stopped for more than 10 minutes.
+While watching is paused or in do-not-monitor hours the row is just `paused` / `dnm`: the line never says more than
+the status did then. Pruned hourly after `online_history_days` (30; 1–30), keeping the last row before the cut;
+deleted with the history (Stop monitoring without keeping it, Remove), moved by Replaces. **Shown:** 24 h in 48
+half hours, 7 days in 84 two-hour parts, 30 days in 60 twelve-hour parts, aligned to Home Assistant's local midnight;
+a part's class is the worst status (down > late > up > off) that filled at least 2 % of it, else the longest; each
+part's tooltip (server text, Home Assistant's time zone) lists what each status lasted. **Online %** over 24 h, 7 and
+30 days: (Online + Late) / (that + Offline + App not reporting + Can't check); `null` without watched time. **Who:**
+`GET /api/phones/{id}/online-history?range=24h|7d|30d` — the owner, or admins; `{hidden: true}` (no parts) while the
+phone is hidden from that admin (§9). On the phone page and the owner's page: a folded card (open state and range
+remembered in the browser), the parts focusable with the arrow keys, a caption that repeats the tapped part.
 
 **Alerts** (App settings), each on/off with recipients (admins / the owner / both):
 - **Offline**, with the battery at the last check-in (+ last zone with *Last place in the offline alert*, for owners
@@ -309,7 +329,7 @@ turning off *Enhanced notifications*, until a normal message is forwarded after 
 | Phone actions | `actions_allowed` (on), `find_per_hour` (20), `actions_per_hour` (30), `find_restore_min` (5), `lost_ring_min` (10), `lost_location_min` (5) |
 | Children's bedtime | `bedtime_after_min` (5) |
 | Transparency | `adults_may_pause` (on), `pause_max_hours` (24), `dnm_allowed` (on), `dnm_max_hours` (12) |
-| History | `history_days` (7) |
+| History | `history_days` (7), `online_history_days` (30; 1–30, §5.1) |
 | Home Assistant | `ha_sensors` (off), `ha_find_event` (off), `assistant_answers` (on), `bus_signing_key` (secret) |
 
 **Sensors in Home Assistant** (off by default): `binary_sensor.phones_<phone>_online` (monitored phones; connectivity;
@@ -326,7 +346,7 @@ Single-page app (`app/static/app.js`), `#/` addresses with the shared back trail
 | Address | Page |
 |---|---|
 | `#/` | My phone (Phone mode) |
-| `#/mine/<id>` | one of my (monitored) phones: welcome card, pause, checklist, forwarding, do-not-monitor hours, what admins see, log, Replaces, stop request |
+| `#/mine/<id>` | one of my (monitored) phones: welcome card, online history, pause, checklist, forwarding, do-not-monitor hours, what admins see, log, Replaces, stop request |
 | `#/check/<id>` | Check now's live card (starts or joins a check) |
 | `#/phones` | All phones (admins): monitored phones by status, Available devices (Add to monitoring dialog) |
 | `#/phones/person` | All phones grouped by person (the toggle uses `BackNav.replace`) |
@@ -347,7 +367,7 @@ safe area; the user menu (How the app sees you, Theme, Admin); UI.loading / UI.e
 - **Adults can pause being watched** for up to 24 hours (settings): no requests, no alerts, admins see only "Paused by
   Asha until 18:00" (no status, battery, network, sensors; the API leaves them out); only the owner ends it.
 - **Do-not-monitor hours** (§3.1): the owner's schedule of windows with nothing asked, alerted or recorded, up to the
-  household's daily limit.
+  household's daily limit (the online line shows only that they were on, in grey: §5.1).
 - **Children** (Admin → People → Child; never an admin): can't pause being watched or set do-not-monitor hours; still
   see what admins see and the log.
 - **Location:** the zone only with **Share my last place** (off by default); coordinates are never kept. Lost mode posts
@@ -388,13 +408,14 @@ asked, Check now "Can't ask an iPhone — last check-in hh:mm", no forwarding.
 
 Everyone: `GET /api/me`, `GET /api/whoami`, `GET /api/my` (with `unmonitored`: name only), `PUT /api/me/quiet`,
 `GET /api/phones/{id}` (owner page, admins also `admin`; 409 "isn't monitored" for the owner of a device not added),
+`GET /api/phones/{id}/online-history?range=24h|7d|30d` (owner or admins, §5.1),
 `PUT /api/phones/{id}/mine` (sharePlace, welcomeSeen), `PUT /api/phones/{id}/dnm` (owner only: `windows`), `POST|DELETE /api/phones/{id}/pause`,
 `PUT /api/phones/{id}/forwarding`, `POST /api/phones/{id}/forwarding/chats` → `GET /api/requests/{rid}`,
 `POST /api/phones/{id}/stop-request`, `POST /api/phones/{id}/replaces`, `POST /api/phones/{id}/check`,
 `GET /api/checks/{cid}`, `GET /api/check/{id}/latest`, `POST /api/phones/{id}/actions/{action}` (owner, or admins
 as allowed), `PUT /api/phones/{id}/consent` (owner; admins on a child's phone: `allow`, `fromHa`, `lostExact`,
 `lostContact`, `lostMessage`), `POST|DELETE /api/phones/{id}/lost`, `POST /api/phones/{id}/lost/chats`,
-`POST /api/phones/{id}/test-everything` (owner). Admins: `PUT /api/admin/phones/{id}/bedtime`; `GET /api/admin/phones`, `POST /api/admin/refresh`,
+`POST /api/phones/{id}/test-everything` (owner). Admins: `PUT /api/admin/phones/{id}/bedtime`; `GET /api/admin/phones` (`?history=1`: the 24-hour strips), `POST /api/admin/refresh`,
 `PUT|DELETE /api/admin/phones/{id}`, `POST /api/admin/phones/{id}/monitor` (ownerId, name, kind, intervalMin, offlineAlertAfterMin; also on `PUT`),
 `POST /api/admin/phones/{id}/unmonitor` (keepHistory), `POST /api/admin/phones/{id}/keep`, `GET|PUT /api/admin/settings`,
 `GET /api/admin/people`, `PUT /api/admin/people/{uid}` (`isChild`), the notify routes, `POST /api/admin/test-alert`,
@@ -407,7 +428,8 @@ as allowed), `PUT /api/phones/{id}/consent` (owner; admins on a child's phone: `
 settings, monitored and since when, the welcome card, check-in and request state, status, pauses, do-not-monitor
 windows (JSON), share place, alert memory and the offline alert delay with its current spell, forwarding settings and
 its last error — no message text; the owner's action choices, Lost mode's state, Find my phone's restore values,
-bedtime, the storage and battery-health memory), `history`, `checks`, `actions` (who used which action, when, how and
+bedtime, the storage and battery-health memory), `history`, `status_log` (each status change, for the online line,
+§5.1), `checks`, `actions` (who used which action, when, how and
 the result), `forwards` (phone, time, chat name, kind), `alert_state`
 (cooldowns, held), `alert_queue` (alerts waiting for a recipient's quiet hours), `bus_requests`, `app_state`
 (lost contact), `app_settings`, and the bus tables. In memory only: Home Assistant's devices, entities and latest

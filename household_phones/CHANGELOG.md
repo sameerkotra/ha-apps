@@ -2,6 +2,12 @@
 
 All notable changes to Household Phones. See the [repository](https://github.com/sameerkotra/ha-apps).
 
+## 1.5.0
+
+- **Online history:** a coloured line of when each phone was online (green), late (amber) or offline (red) — grey for pauses and do-not-monitor hours — like Household Proxy's Monitor strip. Open **📈 Online history** on a phone's page (and on your own phone's page) to see the last 24 hours, 7 days or 30 days, with the times of each part when you point at or tap it, and how much of the time it was online.
+- **In the list too:** **📈 Online history** on All phones adds each phone's last 24 hours under its name, by status or by person.
+- **Keep the online history:** a new App setting (History), 30 days by default. Admins never see the line while a phone's owner pauses being watched or is in do-not-monitor hours — and those times show only as grey.
+
 ## 1.4.1
 
 - **Fixed:** "Home Assistant has lost contact with the phones" could go off at night, again and again, when the phones were just asleep. Lost contact now needs proof that the problem is at home — the "please report" requests to the phones fail — and counts a phone only once it has been offline for its own *Alert when offline for at least* time. Phones that go quiet while the requests go through get their own offline alerts, on their own delays.

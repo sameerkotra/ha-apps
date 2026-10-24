@@ -748,6 +748,8 @@ def tick(now: float | None = None, source=None, *, again: bool = True) -> dict:
             elif late_since is None:
                 late_since = now
             statuses[p["id"]] = (st, reason, late_since)
+        from . import timeline
+        timeline.record(conn, rows, statuses, now)          # the online line (§5.1)
         lost, silent, total, since = _lost_contact(rows, statuses, now, s, dnm_states)
         was_lost = db.state_get(conn, "lost_contact")
         if lost and not was_lost:
@@ -993,6 +995,8 @@ def reset() -> None:
     STARTED["at"] = None
     REPORTED["last"] = None
     WAKE.clear()
+    from . import timeline
+    timeline.reset()
 
 
 __all__ = ["compute", "tick", "checkin", "on_state_event", "poll_states", "time"]

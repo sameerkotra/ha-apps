@@ -1,7 +1,7 @@
 """The app's SQLite database, /data/phones.db (spec/SPEC.md §13).
 
 People (from Home Assistant's identity headers), the phones found in Home Assistant with their settings and status,
-each phone's history, the Check-now log, the time and target chat of each forward (never its text), alerts waiting
+each phone's history and status changes (the online line), the Check-now log, the time and target chat of each forward (never its text), alerts waiting
 for a quiet time to end, and the App settings. Each request gets its own short-lived connection; WAL lets reads and
 writes overlap. `secure_delete` overwrites deleted rows, so nothing removed lingers in the file's free pages.
 """
@@ -185,6 +185,16 @@ CREATE TABLE IF NOT EXISTS history (
     battery INTEGER
 );
 CREATE INDEX IF NOT EXISTS history_phone ON history (phone_id, at);
+-- The online line (timeline.py, §5.1): each change of a phone's status (online / late / offline / app_not_reporting /
+-- cant_check / paused / dnm / unknown = not monitored / none = the app wasn't running), kept the App setting's days.
+-- Added after 1.4.1: older databases and restored backups get the table at start-up (CREATE TABLE IF NOT EXISTS).
+CREATE TABLE IF NOT EXISTS status_log (
+    id INTEGER PRIMARY KEY,
+    phone_id TEXT NOT NULL REFERENCES phones(id) ON DELETE CASCADE,
+    at REAL NOT NULL,
+    status TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS status_log_phone ON status_log (phone_id, at);
 
 -- Check now (§4): who asked, when, and the result. No forwarded text.
 CREATE TABLE IF NOT EXISTS checks (

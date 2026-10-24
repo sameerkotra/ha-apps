@@ -120,6 +120,21 @@ def phone(pid: str, user: dict = Depends(get_current_user)):
         return {"admin": views.admin_page(conn, p, now, user), **views.summary(conn, p, now, viewer=user)}
 
 
+@router.get("/phones/{pid}/online-history")
+def online_history(pid: str, range: str = "24h", user: dict = Depends(get_current_user)):
+    """The phone's online line (§5.1): its owner, or admins — not while it is hidden from them (the owner pauses being
+    watched, or is in do-not-monitor hours: §9). `range`: 24h, 7d or 30d."""
+    from .. import timeline
+    if range not in timeline.RANGES:
+        raise HTTPException(422, "range is 24h, 7d or 30d.")
+    now = config.clock()
+    with db.get_conn() as conn:
+        p = _phone(conn, pid, user)
+        if views.summary(conn, p, now, viewer=user).get("hidden"):
+            return {"range": range, "hidden": True, "buckets": [], "uptime": None}
+        return timeline.line(conn, pid, now, range)
+
+
 @router.put("/phones/{pid}/mine")
 def phone_mine(pid: str, body: dict = Body(...), user: dict = Depends(get_current_user)):
     """The owner's own choices: Share my last place; welcomeSeen closes "Your phone is now monitored"."""
@@ -389,8 +404,10 @@ def replace(conn, old, new, user: dict) -> None:
         vals.update(monitored=new["monitored"], monitored_since=new["monitored_since"])
     conn.execute("UPDATE phones SET " + ", ".join(f"{c} = ?" for c in MOVED) + ", kind_confirmed = 1 WHERE id = ?",
                  (*vals.values(), new["id"]))
-    for t in ("history", "checks", "forwards", "actions"):
+    for t in ("history", "checks", "forwards", "actions", "status_log"):
         conn.execute(f"UPDATE {t} SET phone_id = ? WHERE phone_id = ?", (new["id"], old["id"]))
+    from .. import timeline
+    timeline.forget()
     conn.execute("DELETE FROM alert_state WHERE phone_id = ?", (old["id"],))
     conn.execute("UPDATE phones SET retired = 1, replaced_by = ?, device_id = NULL, fwd_on = 0, monitored = 0 WHERE id = ?",
                  (new["id"], old["id"]))

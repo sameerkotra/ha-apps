@@ -34,7 +34,7 @@ def main_app():
     return app
 
 
-TABLES = ("actions", "alert_queue", "alert_state", "forwards", "checks", "history", "bus_requests", "phones", "user_notify", "users",
+TABLES = ("status_log", "actions", "alert_queue", "alert_state", "forwards", "checks", "history", "bus_requests", "phones", "user_notify", "users",
           "app_state", "app_settings")
 
 

@@ -110,6 +110,8 @@ now and ⋯ (Find my phone, Screen on, Lost mode and the other actions). **Setti
 the device's own page:
 
 - **Phone actions** and **Lost mode** — see below.
+- **📈 Online history** (folded; it stays open once you open it) — the same line admins see on the phone's page, see
+  All phones below.
 - **Pause** — alerts (above), or **pause being watched** for up to 24 hours (adults only; App setting): no requests,
   no alerts, and admins see only "Paused by <you> until 18:00".
 - **Setup checklist** — the Companion app signed in; remote access working; the sensors this app uses switched on
@@ -257,7 +259,12 @@ and **Add to monitoring** (owner, name, kind, interval and when to alert that it
 delete the phone's history, switches forwarding off, and puts it back under Available devices. **Read Home Assistant
 again** reads the devices now (it also happens every few minutes and whenever Home Assistant's devices change).
 
-A **phone's page** shows Lost mode (when on), **Phone actions** (as its owner allows), **Health**, **Bedtime**
+**📈 Online history** (above the list) adds a thin line under each phone's name: its last 24 hours in half hours,
+green online, amber late, red offline, grey paused or in do-not-monitor hours, faint where there's no data. Point at a
+part for its times. It's remembered in this browser; phones hidden from you (paused being watched, or in
+do-not-monitor hours) have no line.
+
+A **phone's page** shows Lost mode (when on), **📈 Online history** (folded away; open it to see it), **Phone actions** (as its owner allows), **Health**, **Bedtime**
 (children's phones), the device (manufacturer, model, Android/iOS version, Companion app version, owner, kind),
 its settings (name, kind, its own interval, *Alert when offline for at least*, owner, and the notify service if Home Assistant names it
 differently from `notify.mobile_app_<device name>`), **every enabled sensor** grouped (Battery, Network, Activity,
@@ -266,6 +273,17 @@ Storage, Location zone, Last reboot and updates, Other — notification texts ar
 at each change). While an offline alert is waiting, a line under the status says so: "⏳ Offline 2 h 14 min — alert
 after 10 h". A phone whose owner paused being watched shows only "Paused by …"; one in its do-not-monitor hours only "Not
 monitored (until …)".
+
+**📈 Online history** (on a phone's page, and on the owner's own page): a line like Household Proxy's Monitor strip,
+for the last **24 hours** (half-hour parts), **7 days** (2-hour parts) or **30 days** (12-hour parts), in Home
+Assistant's time zone. Each part takes the colour of the worst status that lasted more than a moment in it — green
+Online, amber Late or Can't check, red Offline or App not reporting, grey Paused, do-not-monitor hours or not
+monitored, faint for no data (before the phone was monitored, or while the app was stopped). Point at or tap a part
+(or use the arrow keys) for its times and what each status lasted: "Fri 09:00–09:30 · Late 10 min, Online 20 min".
+Above the line, **Online %** over 24 hours, 7 days and 30 days — Online and Late count as online; do-not-monitor hours,
+pauses and gaps are left out. Only the status is kept — no battery, place or sensor — and only when it changes, for
+*Keep the online history* days (30). Admins don't see it while the owner pauses being watched or is in
+do-not-monitor hours, and those hours show only as grey.
 
 **Check-in details** (collapsed, on the phone's page): under the status, "Last check-in 14:02 — from Battery level
 (reported, unchanged)"; inside, the last 20 updates that counted as check-ins and the last 20 that were ignored, with
@@ -386,7 +404,7 @@ forward to your own My room.
   apps, the starting filter for a group (codes only).
 - **Transparency:** adults may pause being watched (on), longest pause (24 hours), owners may set do-not-monitor
   hours (on), at most 12 hours a day.
-- **History:** kept 7 days.
+- **History:** kept 7 days; the online history kept 30 days (at most 30).
 - **Home Assistant:** sensors in Home Assistant (off), ring phones from Home Assistant (off), answer the Household
   Assistant (on), the App-messages signing
   key (the same in every household app).
