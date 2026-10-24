@@ -291,7 +291,9 @@ only the time and target chat of each forward are kept (`forwards`). Deleted row
 
 **Filtering** (owner): which apps; **codes only** (a 4–8 digit number within 40 characters of code / OTP / one-time /
 passcode / PIN / verification / 2FA…), **containing…** words, or **everything** (confirmed first); a group starts on
-codes only; quiet hours **hold** (memory only) or **drop**.
+codes only; quiet hours **hold** (memory only) or **drop**. **Never forward** (`fwd_never`, up to 50): a sender
+(matches the whole title, any case) or a word (anywhere in title or text); it wins over every filter, summaries and
+hidden codes included.
 
 **Loop guard:** never notifications from `io.homeassistant.companion.android*` (which carries Household Chat's and
 this app's notifications); an identical text from the same phone within 2 minutes is dropped (a keyed hash in memory).

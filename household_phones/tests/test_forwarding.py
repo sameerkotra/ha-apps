@@ -152,6 +152,28 @@ class Forwarding(PhonesCase):
         self.assertIsNone(p)
         self.assertEqual(why, "background notification")
 
+    def test_never_forward_list(self):
+        self.on(filter="all", allConfirmed=True)
+        r = self.put(f"/api/phones/{self.pid}/forwarding", {"never": ["Mum", " prescription ", "Mum"]}, ASHA)
+        self.assertEqual(r.status_code, 200, r.text)
+        self.assertEqual(self.get(f"/api/phones/{self.pid}", ASHA).json()["forwarding"]["never"], ["Mum", "prescription"])
+        self.notify(note(text="Dinner at 7?", title="mum"))                    # the sender, any case
+        self.advance(3)
+        self.notify(note(text="Your Prescription is ready", title="Pharmacy"))   # a word
+        self.advance(3)
+        self.notify(note(text="", title="Mum"))                                # not shown as a hidden code either
+        self.assertEqual(self.posted, [])
+        self.advance(3)
+        self.notify(note(text="Running late", title="Bob"))
+        self.assertEqual(self.posted[0]["text"], "Bob\nRunning late")
+        # codes only still respects it
+        self.put(f"/api/phones/{self.pid}/forwarding", {"filter": "codes", "never": ["AX-BANK"]}, ASHA)
+        self.advance(3)
+        self.notify(note())
+        self.assertEqual(len(self.posted), 1)
+        for bad in ("Mum", ["x" * 61], [""], ["w"] * 51):
+            self.assertEqual(self.put(f"/api/phones/{self.pid}/forwarding", {"never": bad}, ASHA).status_code, 422)
+
     def test_big_text_long_text_and_summaries(self):
         self.on(filter="all", allConfirmed=True)
         self.notify(note(text="Code 1234…", **{"android.bigText": "Code 123456 — the full text of the message"}))

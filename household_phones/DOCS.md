@@ -307,6 +307,9 @@ is forwarded at once as one Chat message, e.g. "📱 Asha's Pixel · Messages ·
 - **Which apps:** Google Messages and Samsung Messages by default; you can add WhatsApp, Signal… The Companion app's
   own notifications (Household Chat's among them) are never forwarded, and the same text from the same phone within 2
   minutes goes once.
+- **Never forward:** senders (the name as the phone shows it) or words, one per line. A message from one of them, or
+  containing one, is never forwarded, whatever the filter. This only decides what goes into Chat: Home Assistant has
+  already received the notification (see below).
 - **Quiet hours:** forwards are held until the end (kept in memory only — lost if the app restarts meanwhile) or
   dropped.
 - A summary ("3 new messages") goes as "📱 3 new messages on Asha's phone". A text that looks cut is marked
@@ -324,7 +327,10 @@ settings (which also removes suggested replies).
 
 **The text is never stored by this app** — not in its database, logs, backups or sensors. It goes straight into Chat
 (Household Chat's *Phones may post forwarded messages* App setting must be on). Only the time and the chat of each
-forward are kept. **Home Assistant itself** records the Last notification sensor in its history; to keep the texts
+forward are kept. **Home Assistant itself** keeps the latest notification as the Last notification sensor's value until the next one
+replaces it — this app can't clear it, and its lists (apps, filter, Never forward) don't stop it. Only the Companion
+app's own **Allow list** on the phone keeps other apps' notifications away from Home Assistant. It also records the
+sensor in its history; to keep the texts
 out of it, add to `configuration.yaml`:
 
 ```yaml

@@ -502,6 +502,10 @@
     const apps = h("textarea", { rows: "3" }, f.apps.join("\n"));
     const saveApps = h("button", { type: "button", class: "btn-secondary", onclick: () =>
       save({ apps: apps.value.split(/\s+/).map((a) => a.trim()).filter(Boolean) }, "Saved") }, "Save the apps");
+    // never forward
+    const never = h("textarea", { rows: "3", placeholder: "Mum\nMy bank\nprescription" }, (f.never || []).join("\n"));
+    const saveNever = h("button", { type: "button", class: "btn-secondary", onclick: () =>
+      save({ never: never.value.split("\n").map((w) => w.trim()).filter(Boolean) }, "Saved") }, "Save the list");
     const quiet = h("div", null, quietForm(f.quietStart, f.quietEnd, (qs, qe) => save({ quietStart: qs, quietEnd: qe }, "Saved"),
       "Forwards that arrive in these hours…"));
     const mode = h("select", { onchange: () => save({ quietMode: mode.value }, "Saved") },
@@ -512,6 +516,9 @@
       h("details", { class: "fold" }, h("summary", null, `Which apps (${f.apps.length})`),
         h("p", { class: "hint" }, "Android package names, one per line: Google Messages com.google.android.apps.messaging, Samsung Messages com.samsung.android.messaging, WhatsApp com.whatsapp, Signal org.thoughtcrime.securesms. The Companion app's own notifications are never forwarded."),
         apps, h("div", { class: "card-actions" }, saveApps)),
+      h("details", { class: "fold" }, h("summary", null, `Never forward (${(f.never || []).length})`),
+        h("p", { class: "hint" }, "One per line: a sender's name as the phone shows it, or a word. Messages from these senders or containing these words are never forwarded, whatever the filter."),
+        never, h("div", { class: "card-actions" }, saveNever)),
       h("details", { class: "fold" }, h("summary", null, "Quiet hours for forwards"), quiet, field("…and then they", mode)));
     return c;
   }

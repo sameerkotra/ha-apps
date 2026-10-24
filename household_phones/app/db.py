@@ -305,7 +305,9 @@ MIGRATIONS: dict = {"phones": [
     ("lost_wake_at", "REAL"), ("lost_error", "TEXT"), ("find_token", "TEXT"), ("find_at", "REAL"),
     ("find_restore", "TEXT"), ("bed_windows", "TEXT"), ("bed_parents", "TEXT"), ("bed_dnd", "INTEGER NOT NULL DEFAULT 0"),
     ("bed_screen_since", "REAL"), ("bed_alerted_on", "TEXT"), ("bed_dnd_set", "INTEGER NOT NULL DEFAULT 0"),
-    ("storage_low_sent", "INTEGER NOT NULL DEFAULT 0"), ("battery_health", "TEXT"))]}
+    ("storage_low_sent", "INTEGER NOT NULL DEFAULT 0"), ("battery_health", "TEXT"))] + [
+    ("fwd_never", "TEXT"),                           # 1.6: never forward — senders or words (JSON list)
+]}
 
 ALL_DAYS = [0, 1, 2, 3, 4, 5, 6]
 

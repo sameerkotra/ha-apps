@@ -246,7 +246,7 @@ def forwarding_settings(pid: str, body: dict = Body(...), user: dict = Depends(g
     """The owner's Forward my messages (§6). Only the owner: an admin can't switch it on for someone else."""
     body = body if isinstance(body, dict) else {}
     allowed_keys = {"on", "target", "chatId", "chatName", "chatKind", "disappear", "apps", "filter", "words",
-                    "allConfirmed", "quietStart", "quietEnd", "quietMode"}
+                    "allConfirmed", "quietStart", "quietEnd", "quietMode", "never"}
     if set(body) - allowed_keys:
         raise HTTPException(422, f"Unknown field(s): {', '.join(sorted(set(body) - allowed_keys))}.")
     ask_members = False
@@ -256,7 +256,7 @@ def forwarding_settings(pid: str, body: dict = Body(...), user: dict = Depends(g
             raise HTTPException(409, "iPhones can't forward messages (the Companion app has no Last notification sensor there).")
         v = {k: p[k] for k in ("fwd_on", "fwd_target", "fwd_chat_id", "fwd_chat_name", "fwd_chat_kind", "fwd_disappear",
                                "fwd_apps", "fwd_filter", "fwd_words", "fwd_all_confirmed", "fwd_quiet_start",
-                               "fwd_quiet_end", "fwd_quiet_mode")}
+                               "fwd_quiet_end", "fwd_quiet_mode", "fwd_never")}
         if "on" in body:
             if not isinstance(body["on"], bool):
                 raise HTTPException(422, "on is true or false.")
@@ -303,6 +303,11 @@ def forwarding_settings(pid: str, body: dict = Body(...), user: dict = Depends(g
             if not isinstance(words, list) or len(words) > 20 or not all(isinstance(w, str) and 0 < len(w.strip()) <= 40 for w in words):
                 raise HTTPException(422, "Up to 20 words, each up to 40 letters.")
             v["fwd_words"] = json.dumps([w.strip() for w in words])
+        if "never" in body:
+            never = body["never"]
+            if not isinstance(never, list) or len(never) > 50 or not all(isinstance(w, str) and 0 < len(w.strip()) <= 60 for w in never):
+                raise HTTPException(422, "Up to 50 senders or words, each up to 60 letters.")
+            v["fwd_never"] = json.dumps(list(dict.fromkeys(w.strip() for w in never)))
         if "filter" in body:
             if body["filter"] not in ("codes", "words", "all"):
                 raise HTTPException(422, "filter is codes, words or all.")
@@ -394,7 +399,7 @@ MOVED = ("name", "kind", "monitored", "monitored_since", "interval_min", "owner_
          "act_allow", "act_from_ha", "lost_exact", "lost_contact", "lost_message", "bed_windows", "bed_parents", "bed_dnd",
          "offline_alert_after_min", "share_place", "fwd_on", "fwd_target", "fwd_chat_id", "fwd_chat_name", "fwd_chat_kind", "fwd_members",
          "fwd_members_at", "fwd_disappear", "fwd_apps", "fwd_filter", "fwd_words", "fwd_all_confirmed",
-         "fwd_quiet_start", "fwd_quiet_end", "fwd_quiet_mode")
+         "fwd_quiet_start", "fwd_quiet_end", "fwd_quiet_mode", "fwd_never")
 
 
 def replace(conn, old, new, user: dict) -> None:

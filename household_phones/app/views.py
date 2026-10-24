@@ -188,7 +188,7 @@ def forwarding_view(conn, p) -> dict:
             "target": p["fwd_target"], "chatId": p["fwd_chat_id"], "chatName": p["fwd_chat_name"],
             "chatKind": p["fwd_chat_kind"], "members": members + 1 if p["fwd_target"] == "chat" and p["fwd_members"] else None,
             "disappear": p["fwd_disappear"] or settings.get("forward_disappear"), "apps": forwarding.apps_of(p),
-            "filter": p["fwd_filter"], "words": forwarding.words_of(p), "allConfirmed": bool(p["fwd_all_confirmed"]),
+            "filter": p["fwd_filter"], "words": forwarding.words_of(p), "never": forwarding.never_of(p), "allConfirmed": bool(p["fwd_all_confirmed"]),
             "quietStart": p["fwd_quiet_start"], "quietEnd": p["fwd_quiet_end"], "quietMode": p["fwd_quiet_mode"],
             "error": p["fwd_error"], "chats": settings.get("forward_chats"), "groups": settings.get("forward_groups"),
             "groupFilter": settings.get("forward_group_filter"),

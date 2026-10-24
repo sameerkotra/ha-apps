@@ -2,6 +2,10 @@
 
 All notable changes to Household Phones. See the [repository](https://github.com/sameerkotra/ha-apps).
 
+## 1.6.0
+
+- **Never forward:** a new list under Forwarding — senders (as the phone shows them) or words, one per line. A message from one of them, or containing one, is never forwarded, whatever the filter.
+
 ## 1.5.1
 
 - **No more "Messages is doing work in the background"** in Chat: the notices apps show while they work (when the phone is locked, syncing or sending) are never forwarded. Ongoing, can't-be-swiped-away and service notifications are skipped, and so is that kind of wording; real messages and hidden codes are forwarded as before.

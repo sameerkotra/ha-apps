@@ -2,7 +2,7 @@
 
 Each `state_changed` of a phone's Last notification sensor is handled on its own, from the event's new state (never
 by reading the sensor again), on a small worker thread: `decide()` (a pure function the tests drive) applies the
-owner's switch, the household's switch, the loop guard, the owner's apps and filter, apps' own background notifications, Android 15's redaction, group
+owner's switch, the household's switch, the loop guard, the owner's apps, filter and Never forward list, apps' own background notifications, Android 15's redaction, group
 summaries and long texts; duplicates within 2 minutes are dropped; quiet hours hold (in memory) or drop. Forwarding
 goes on during the owner's do-not-monitor hours (their own choice) unless that window also pauses forwarding.
 
@@ -81,6 +81,25 @@ def words_of(p) -> list[str]:
     return [w for w in v if isinstance(w, str) and w.strip()]
 
 
+def never_of(p) -> list[str]:
+    """The owner's Never forward list: senders (as the phone shows them) or words."""
+    try:
+        v = json.loads(p["fwd_never"] or "[]")
+    except (ValueError, IndexError, KeyError):
+        v = []
+    return [w for w in v if isinstance(w, str) and w.strip()]
+
+
+def is_never(p, title: str, text: str) -> bool:
+    """On the Never forward list? A sender matches the whole title; a word matches anywhere (case-insensitive)."""
+    low_title, whole = (title or "").strip().lower(), f"{title}\n{text}".lower()
+    for w in never_of(p):
+        w = w.strip().lower()
+        if w == low_title or w in whole:
+            return True
+    return False
+
+
 def is_background(attrs: dict, title: str, text: str) -> bool:
     """An app's own "working" notification (§6.1), not a message."""
     if attrs.get("is_ongoing") is True or attrs.get("is_clearable") is False:
@@ -146,6 +165,8 @@ def decide(p, new_state: dict, *, name: str, owner_first: str, now: float) -> tu
         from_state = True
     if is_background(attrs, title, text):
         return None, "background notification"
+    if is_never(p, title, text):
+        return None, "on the Never forward list"
     app = app_name(package)
     at = config.hhmm(config.parse_iso(attrs.get("post_time")) if isinstance(attrs.get("post_time"), str) else
                      (attrs.get("post_time") / 1000 if isinstance(attrs.get("post_time"), (int, float)) else now))
