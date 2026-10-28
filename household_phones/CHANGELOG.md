@@ -2,6 +2,10 @@
 
 All notable changes to Household Phones. See the [repository](https://github.com/sameerkotra/ha-apps).
 
+## 1.7.1
+
+- **Updated dependencies:** FastAPI 0.146.0, Uvicorn 0.54.0, the base image (Python 3.12, Alpine 3.24). Security and bug fixes; nothing changes in how the app works.
+
 ## 1.7.0
 
 - **Messages don't stay in Home Assistant:** right after reading a notification (forwarded or not), the app replaces the Last notification and Last removed notification sensors' value with "cleared" and no text. On by default for monitored phones; the App setting *Clear the Last notification sensors after reading them* (Forwarding) turns it off. Anything left over (after a restart, or from before) is cleared a minute after start and then hourly.
