@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.5.1
+
+- **Updated dependencies:** FastAPI 0.146.0, Uvicorn 0.54.0, Pydantic 2.14.1, SQLAlchemy 2.0.55, Pillow 13.0.0. Security and bug fixes; nothing changes in how the app works.
+
 ## 1.5.0
 
 - **Compact shopping list**: a **Compact** switch by the list summary shows one short row per item — the item, its cheapest store and the cost — so the list is easy to scroll in the shop. Tap anywhere on a row to tick it off; grouping by store still works, and each person's choice is remembered on their device.
