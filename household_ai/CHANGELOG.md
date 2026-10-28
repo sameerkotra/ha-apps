@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.1.2
+
+- **Updated dependencies:** Ollama 0.40.7, FastAPI 0.146.0, Uvicorn 0.54.0. Security and bug fixes; nothing changes in how the app works.
+
 ## 1.1.1
 
 - Shared code updated (back navigation and page helpers); nothing visible changes.

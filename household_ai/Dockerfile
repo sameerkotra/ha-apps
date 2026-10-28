@@ -4,7 +4,7 @@ ARG BUILD_VERSION
 # of /usr/lib/ollama — `llama-server` (the process that runs a model), its libraries and the CPU backends. Every GPU
 # backend (CUDA, ROCm, Vulkan, MLX) is in a subfolder there and is left out: that is most of Ollama's image.
 # Ollama is built against glibc, so this app uses Debian slim, not Alpine.
-FROM ollama/ollama:0.40.0 AS ollama
+FROM ollama/ollama:0.40.7 AS ollama
 RUN mkdir /ollama-cpu && find /usr/lib/ollama -maxdepth 1 ! -type d -exec cp -a {} /ollama-cpu/ \;
 
 # Pinned to one Debian release (trixie) so a rebuild can't quietly move to the next one. (Pin by digest too —

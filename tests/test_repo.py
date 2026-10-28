@@ -16,7 +16,7 @@ VERSIONS = {"calorie_tracker": "2.6.2", "family_tree": "2.7.2", "household_chat"
 # Finance Dashboard is published as it is, at its own version, with its own packaging tests
 # (finance/tests/test_packaging.py); only the repository-wide basics are checked here.
 FINANCE = "finance"
-FINANCE_VERSION = "1.14.3"
+FINANCE_VERSION = "1.14.4"
 # Household Arcade: a newer app, built the same way as the six above, at its own version.
 ARCADE = "household_arcade"
 ARCADE_VERSION = "1.14.2"
@@ -40,7 +40,7 @@ NEWER = ((ARCADE, ARCADE_VERSION), (RECEIPTS, RECEIPTS_VERSION), (DOCS, DOCS_VER
 # Household AI: the twelfth app, the model server the AI apps can share (household_ai/spec/SPEC.md). Unlike the
 # others it has an admin-only panel and a declared (unpublished) port, so it has its own checks here.
 HOUSEHOLD_AI = "household_ai"
-HOUSEHOLD_AI_VERSION = "1.1.1"
+HOUSEHOLD_AI_VERSION = "1.1.2"
 # Paths that .gitignore keeps out of the repository.
 IGNORED_DIRS = {"Claude outputs", "__pycache__", ".git", ".venv", "venv", ".pytest_cache"}
 TEXT_EXT = {".py", ".js", ".css", ".html", ".md", ".yaml", ".yml", ".txt", ".json", ".sql", ".mermaid",
