@@ -232,7 +232,7 @@ class TestSizes(Base):
         with open(os.path.join(HERE, "Dockerfile")) as f:
             docker = f.read()
         self.assertIn('"--ws-max-size", "65536"', docker)
-        self.assertIn("FROM python:3.12-alpine3.22", docker)
+        self.assertIn("FROM python:3.12-alpine3.24", docker)
         with open(os.path.join(HERE, "config.yaml")) as f:
             self.assertIn("watchdog: http://[HOST]:[PORT:8104]/api/health", f.read())
 
