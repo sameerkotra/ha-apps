@@ -64,7 +64,7 @@ household_todo/
 
 | Group | Settings |
 |---|---|
-| App | `slug: household_todo`, `version: "2.8.1"`, arch amd64/aarch64/armv7/armhf/i386, `startup: application`, `boot: auto`, `url: https://github.com/sameerkotra/ha-apps` |
+| App | `slug: household_todo`, `version: "2.8.2"`, arch amd64/aarch64/armv7/armhf/i386, `startup: application`, `boot: auto`, `url: https://github.com/sameerkotra/ha-apps` |
 | Ingress | `ingress: true`, `ingress_port: 8100`, **no `ports:`** |
 | Panel | `panel_icon: mdi:format-list-checks`, `panel_title: Household Todo`, `panel_admin: false` |
 | Permissions | `homeassistant_api: true`, every other API/privilege false, `apparmor: true`; `map: share:rw` (maintenance files) |
@@ -639,8 +639,8 @@ The lifespan starts the background loops (unless `BACKGROUND_LOOPS=0`) through t
 ## 11. Build, test & release
 
 - **Dependencies (pinned).**
-  - Runtime: `fastapi==0.141.1`, `uvicorn==0.53.0`, `python-multipart==0.0.32`.
-  - Dev: adds `httpx2==2.13.1`.
+  - Runtime: `fastapi==0.146.0`, `uvicorn==0.54.0`, `python-multipart==0.0.32`.
+  - Dev: adds `httpx2==2.15.1`.
   - Bump them together with the sibling apps.
 - **Running tests.** `pip install -r requirements-dev.txt`, then `python3 -m unittest discover -s tests`. Every module runs with the pinned dependencies; `tests/test_packaging.py` also checks `config.yaml`, the `?v=` strings, the docs, the icons and that no personal details are in any text file (the shared checks come from `common_tests/packaging_core.py`, run with the app's own values). `tests/test_security_headers.py` checks the CSP and `nosniff` and that the page has no inline scripts, handlers or style attributes.
 - **Test harness.**
