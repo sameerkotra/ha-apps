@@ -52,10 +52,10 @@ class Caching(Base):
 class Packaging(unittest.TestCase):
     def test_image_and_requirements_pinned(self):
         docker = (ROOT / "Dockerfile").read_text(encoding="utf-8")
-        self.assertIn("FROM python:3.12-alpine3.22", docker)
+        self.assertIn("FROM python:3.12-alpine3.24", docker)
         self.assertIn("apk add --no-cache tzdata", docker)
         reqs = (ROOT / "requirements.txt").read_text(encoding="utf-8").split()
-        self.assertIn("uvicorn==0.53.0", reqs)
+        self.assertIn("uvicorn==0.54.0", reqs)
         self.assertFalse([r for r in reqs if "[" in r or "==" not in r])
 
     def test_app_version_matches(self):
