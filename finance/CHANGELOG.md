@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.14.4
+
+- **Updated dependencies:** FastAPI 0.146.0, Starlette 1.9.0, Uvicorn 0.54.0. Security and bug fixes; nothing changes in how the app works.
+
 ## 1.14.3
 
 - **Accounts fits the screen again.** Type and preferred upload now sit under the account's name, and the latest transaction under the count, so **Transactions** and **Upload** are no longer cut off at the right; on a narrow window the two buttons stack instead of running off the edge.
