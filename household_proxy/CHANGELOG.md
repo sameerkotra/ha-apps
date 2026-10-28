@@ -2,6 +2,10 @@
 
 All notable changes to Household Proxy. See the [repository](https://github.com/sameerkotra/ha-apps).
 
+## 0.7.2
+
+- **Updated dependencies:** FastAPI 0.146.0, Uvicorn 0.54.0, websockets 17.3, cryptography 50.0.2, the base image (Python 3.12, Alpine 3.24). Security and bug fixes; nothing changes in how the app works.
+
 ## 0.7.1
 
 - Shared code updated (back navigation and page helpers); nothing visible changes.

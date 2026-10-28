@@ -31,7 +31,7 @@ ASSISTANT = "household_assistant"
 ASSISTANT_VERSION = "1.7.2"
 # Household Proxy: the thirteenth app, home-network sites opened inside Home Assistant (household_proxy/spec/SPEC.md).
 PROXY = "household_proxy"
-PROXY_VERSION = "0.7.1"
+PROXY_VERSION = "0.7.2"
 # Household Phones: the fourteenth app, the household's phones through the Companion app (household_phones/spec/SPEC.md).
 PHONES = "household_phones"
 PHONES_VERSION = "1.7.1"
