@@ -7,7 +7,7 @@ ARG BUILD_ARCH
 ARG BUILD_VERSION
 # checked: pinned Python minor version. Alpine by default; Debian slim (trixie, pinned) only when the
 # app needs Debian packages (poppler-utils for PDFs: Finance, Receipt Price Intelligence).
-FROM python:3.12-alpine
+FROM python:3.12-alpine3.24
 
 # tzdata: python:alpine and the slim images ship without a zoneinfo database; the apps read Home
 # Assistant's time zone, and without it they silently run on UTC. Plus the app's runtime libraries.
