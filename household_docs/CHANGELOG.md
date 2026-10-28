@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.8.2
+
+- **Updated dependencies:** FastAPI 0.146.0, Uvicorn 0.54.0, pypdf 6.21.1, the base image (Python 3.12, Alpine 3.24). Security and bug fixes; nothing changes in how the app works.
+
 ## 1.8.1
 
 - **Undo after deleting a checklist item** is now a proper button in the message.

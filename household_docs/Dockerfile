@@ -1,7 +1,7 @@
 ARG BUILD_ARCH
 ARG BUILD_VERSION
 # Pinned to one Alpine release so a rebuild cannot quietly move to the next one (add the digest when you can).
-FROM python:3.12-alpine3.22
+FROM python:3.12-alpine3.24
 
 # tzdata: python:alpine has no zoneinfo database; without it the app silently
 # runs on UTC instead of Home Assistant's time zone.

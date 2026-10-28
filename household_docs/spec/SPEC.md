@@ -68,7 +68,7 @@ promise ("everything here is encrypted") simple and its review small.
   - **`openpyxl`** (MIT) with **`defusedxml`** — reads and writes `.xlsx` sheets (§8.4); *(built)* pinned
     `openpyxl==3.1.5`, `et-xmlfile==2.0.0` (openpyxl's one dependency, pinned for a reproducible image) and
     `defusedxml==0.7.1` — all pure Python, nothing to compile on Alpine;
-  - **`pypdf`** (BSD) — PDF text for search (§17.5), from step 9. *(built)* `pypdf==6.19.0`, pure Python with no
+  - **`pypdf`** (BSD) — PDF text for search (§17.5), from step 9. *(built)* `pypdf==6.21.1`, pure Python with no
     dependencies; it runs only inside `formats/pdf_worker.py` (§17.5). No crypto library is installed, so PDFs
     encrypted with AES count as password-protected even when they open with an empty password (RC4 ones are read).
 - **Storage:**
