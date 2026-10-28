@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.3.3
+
+- **Updated dependencies:** FastAPI 0.146.0, Uvicorn 0.54.0, cryptography 50.0.2, the base image (Python 3.12, Alpine 3.24). Security and bug fixes; nothing changes in how the app works.
+
 ## 2.3.2
 
 - **Picking a folder no longer reloads the sidebar.** Only the highlight moves, so a long list of vaults and folders stays where you scrolled it; when the sidebar does redraw (new counts, a folder opened or closed) it keeps its place too.

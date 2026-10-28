@@ -1,6 +1,6 @@
-fastapi==0.141.1
-uvicorn==0.53.0
+fastapi==0.146.0
+uvicorn==0.54.0
 python-multipart==0.0.32
-cryptography==46.0.7
+cryptography==50.0.2
 # Argon2d for KeePassXC files (its default); Argon2id also comes from cryptography.
 argon2-cffi==25.1.0
