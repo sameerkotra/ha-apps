@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.8.1
+
+- **Updated dependencies:** FastAPI 0.146.0, Uvicorn 0.54.0, Pillow 13.0.0, the base image (Python 3.12, Alpine 3.24). Security and bug fixes; nothing changes in how the app works.
+
 ## 2.8.0
 
 - **Forwarded phone messages**: the new Household Phones app can post the texts a phone forwards into a chat or your My room. They show a **📱 Phones** badge and which phone and app they came from, and can disappear (⏱) — even from a child's phone; in a disappearing chat the shorter time applies.
