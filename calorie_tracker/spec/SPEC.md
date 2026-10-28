@@ -363,7 +363,7 @@ card `PeopleData.menu` (⋯ Data) as its `actions` and puts `PeopleData.importBu
 - `python-multipart` is required by the import route (`File`/`UploadFile`).
 
 ## 11. Build, test & release
-- `requirements.txt`: `fastapi==0.141.1`, `uvicorn==0.53.0`, `python-multipart==0.0.32`. `requirements-dev.txt`: `-r requirements.txt` plus `httpx2==2.13.1` (needed by Starlette's TestClient). All household apps use the same pins; bump them together.
+- `requirements.txt`: `fastapi==0.146.0`, `uvicorn==0.54.0`, `python-multipart==0.0.32`. `requirements-dev.txt`: `-r requirements.txt` plus `httpx2==2.15.1` (needed by Starlette's TestClient). All household apps use the same pins; bump them together.
 - Tests: run `python3 -m unittest discover -s tests` from the app folder with the dev requirements installed.
   - `tests/_env.py` must be imported first. Built on `common_tests/env.py`, it sets a temp `DATA_DIR`, removes `SUPERVISOR_TOKEN`, and sets `DEV_ADMIN_USERS=adminy`.
   - The client is `TestClient(app, client=("127.0.0.1", 12345))` so requests pass the origin gate (`common_tests/ingress.py` has `ingress_client`, `identity_headers`, `user_headers` for the same).

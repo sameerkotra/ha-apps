@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.6.2
+
+- **Updated dependencies:** FastAPI 0.146.0, Uvicorn 0.54.0, the base image (Python 3.12, Alpine 3.24). Security and bug fixes; nothing changes in how the app works.
+
 ## 2.6.1
 
 - **Retry buttons are styled again**, and Back from Goals (opened with **Edit goals**) returns to the page you came from.
