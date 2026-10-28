@@ -1,8 +1,8 @@
 ARG BUILD_ARCH
 ARG BUILD_VERSION
 # Pinned to one Alpine release so a rebuild can't quietly move to the next one. (Pin by digest too —
-# python:3.12-alpine3.22@sha256:… — when you can look it up; the Python version stays 3.12.)
-FROM python:3.12-alpine3.22
+# python:3.12-alpine3.24@sha256:… — when you can look it up; the Python version stays 3.12.)
+FROM python:3.12-alpine3.24
 
 # tzdata: python:alpine has no zoneinfo database; without it the app silently
 # runs on UTC. The image libraries are Pillow's runtime needs (JPEG, PNG/zlib,

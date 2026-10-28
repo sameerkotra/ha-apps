@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.7.2
+
+- **Updated dependencies:** FastAPI 0.146.0, Uvicorn 0.54.0, Pillow 13.0.0, the base image (Python 3.12, Alpine 3.24). Security and bug fixes; nothing changes in how the app works.
+
 ## 2.7.1
 
 - **The ‹ back link names the page you actually came from.**
