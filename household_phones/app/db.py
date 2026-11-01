@@ -32,7 +32,8 @@ PRAGMA journal_mode = WAL;
 
 -- Everyone who has opened the app (Home Assistant identity). is_child: set by an admin (Admin → People); a child's
 -- phone can be watched without the child pausing it (§9). quiet_*: the person's own alert quiet hours ("" = the
--- household's from App settings).
+-- household's from App settings). offline_*: an admin's own Offline alerts (digest.py): 'now' / 'summary' / 'off', the
+-- summary's times ("08:00" or "08:00,20:00", Home Assistant's time zone) and the last summary time handled.
 CREATE TABLE IF NOT EXISTS users (
     id TEXT PRIMARY KEY,
     name TEXT NOT NULL,
@@ -40,6 +41,9 @@ CREATE TABLE IF NOT EXISTS users (
     is_child INTEGER NOT NULL DEFAULT 0,
     quiet_start TEXT NOT NULL DEFAULT '',
     quiet_end TEXT NOT NULL DEFAULT '',
+    offline_mode TEXT NOT NULL DEFAULT 'now',
+    offline_times TEXT NOT NULL DEFAULT '',
+    offline_digest_at REAL,
     created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
 );
 -- Extra notify services an admin adds for a person under Admin → People (common/people_admin.py).
@@ -307,6 +311,10 @@ MIGRATIONS: dict = {"phones": [
     ("bed_screen_since", "REAL"), ("bed_alerted_on", "TEXT"), ("bed_dnd_set", "INTEGER NOT NULL DEFAULT 0"),
     ("storage_low_sent", "INTEGER NOT NULL DEFAULT 0"), ("battery_health", "TEXT"))] + [
     ("fwd_never", "TEXT"),                           # 1.6: never forward — senders or words (JSON list)
+], "users": [                                        # each admin's own Offline alerts: right away, a summary, off
+    ("offline_mode", "TEXT NOT NULL DEFAULT 'now'"),
+    ("offline_times", "TEXT NOT NULL DEFAULT ''"),
+    ("offline_digest_at", "REAL"),
 ]}
 
 ALL_DAYS = [0, 1, 2, 3, 4, 5, 6]

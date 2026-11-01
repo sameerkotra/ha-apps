@@ -25,6 +25,7 @@ ALERTS = {
     "storage": ("Storage almost full", "alert_storage", "alert_storage_to"),
     "battery_health": ("Battery health", "alert_battery_health", "alert_battery_health_to"),
     "bedtime": ("Phone in use at bedtime", None, None),
+    "summary": ("Offline summary", None, None),         # an admin's own summary (digest.py)
 }
 
 
@@ -106,16 +107,19 @@ def held(conn, phone_id: str, alert: str) -> bool:
 
 
 def send(alert: str, phone_id: str | None, message: str, *, to: str | None = None, now: float | None = None,
-         test: bool = False, also_phone: bool = False, only: list | None = None, data: dict | None = None) -> dict:
-    """Send one alert. `to` defaults to the alert's App setting; `only`: these people instead (a test, or bedtime's
-    parents); `data`: the notification's platform data (bedtime's quiet alert). Returns
+         test: bool = False, also_phone: bool = False, only: list | None = None, data: dict | None = None,
+         quiet: bool = True) -> dict:
+    """Send one alert. `to` defaults to the alert's App setting; `only`: these people instead (a test, bedtime's
+    parents, an admin's summary); `data`: the notification's platform data (bedtime's quiet alert); `quiet`: False
+    sends even in the recipients' quiet hours (a summary at the time they chose). Admins who chose a summary or Off
+    for Offline alerts are left out of Offline / App not reporting / Back online (digest.py). Returns
     {"sent": [names], "queued": [names], "failed": [names], "skipped": reason|None}. Blocking."""
     now = config.clock() if now is None else now
     title = f"📱 {ALERTS[alert][0]}" + (" (test)" if test else "")
     delivery = list(settings.get("alert_delivery") or ["phones"])
     if alert == "lost_contact":
         delivery = sorted(set(delivery) | {"ha", "phones"})
-    plan, queued, own_service = [], [], None
+    plan, queued, own_service, later = [], [], None, []
     with db.get_conn() as conn:
         phone = conn.execute("SELECT * FROM phones WHERE id = ?", (phone_id,)).fetchone() if phone_id else None
         if not test and phone is not None and (not phone["monitored"] or phone["retired"]):
@@ -124,14 +128,18 @@ def send(alert: str, phone_id: str | None, message: str, *, to: str | None = Non
             return {"sent": [], "queued": [], "failed": [], "skipped": "do-not-monitor hours"}
         if not test and cooling(conn, phone_id, alert, now):
             return {"sent": [], "queued": [], "failed": [], "skipped": "cooldown"}
-        people = only if only is not None else recipients(conn, to or (ALERTS[alert][2] and settings.get(ALERTS[alert][2]))
-                                                          or "admins", phone)
+        to = to or (ALERTS[alert][2] and settings.get(ALERTS[alert][2])) or "admins"
+        if only is not None:
+            people = only
+        else:
+            from . import digest
+            people, later = digest.split(conn, recipients(conn, to, phone), alert, phone, to)
         if phone is not None:
             own_service = phones.notify_service(phone)
         local_now = config.local(now)
         for u in people:
             qs, qe = _quiet_for(conn, u)
-            if not test and in_quiet(qs, qe, local_now):
+            if not test and quiet and in_quiet(qs, qe, local_now):
                 due = quiet_end(qs, qe, local_now).timestamp()
                 conn.execute("INSERT INTO alert_queue (user_id, phone_id, alert, title, message, due) VALUES (?,?,?,?,?,?)",
                              (u["id"], phone_id, alert, title, message, due))
@@ -157,11 +165,13 @@ def send(alert: str, phone_id: str | None, message: str, *, to: str | None = Non
             sent.append("the phone itself")
     if "ha" in delivery:
         from . import ha_source
-        if ha_source.SOURCE.ha_notification(title, message, f"household_phones_{alert}_{phone_id or 'all'}"):
+        tag = phone_id or (f"u_{people[0]['id']}" if alert == "summary" and people else "all")
+        if ha_source.SOURCE.ha_notification(title, message, f"household_phones_{alert}_{tag}"):
             sent.append("Home Assistant")
     if phone_id and not test:
         with db.get_conn() as conn:
-            who = ", ".join(sent + [f"{n} (later: quiet hours)" for n in queued]) or "nobody (no phone to reach)"
+            who = ", ".join(sent + [f"{n} (later: quiet hours)" for n in queued]
+                            + [f"{n} (in their summary)" for n in later]) or "nobody (no phone to reach)"
             phones.history(conn, phone_id, "alert", f"{ALERTS[alert][0]} alert: {who}.", now=now)
     if failed:
         logger.info("Alert %s for %s reached nobody for %d people.", alert, phone_id or "all", len(failed))

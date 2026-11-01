@@ -21,7 +21,7 @@
   don't count (`_spell`).
 
 `tick()` runs every 30 seconds (and soon after a check-in): it decides under one database connection, then sends
-requests and alerts with none open.
+requests and alerts with none open, then the admins' Offline summaries that are due (digest.py).
 """
 import logging
 import math
@@ -866,6 +866,12 @@ def tick(now: float | None = None, source=None, *, again: bool = True) -> dict:
         second = tick(now, source, again=False)
         out["changed"] += second["changed"]
         out["alerts"] += second["alerts"]
+    if again:                                 # each admin's Offline summary, when one of their times has come
+        from . import digest
+        try:
+            out["summaries"] = digest.run(now)
+        except Exception:
+            logger.exception("The offline summaries failed")
     return out
 
 

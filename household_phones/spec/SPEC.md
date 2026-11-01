@@ -257,6 +257,24 @@ remembered in the browser), the parts focusable with the arrow keys, a caption t
   quiet hours (queued) and lost contact (held) apply when it fires. **App not reporting** waits the same delay ("…
   Unreachable for 10 hours (since 05:02)"). **Lost contact** counts a phone only once it has been offline for its
   delay too (§3.1).
+- **Offline alerts for you** (`digest.py`, per admin — not an App setting: each admin's own choice, on My phone):
+  `users.offline_mode` 'now' (default: as before) / 'summary' / 'off', `users.offline_times` ("08:00" or
+  "08:00,20:00", Home Assistant's time zone; 1 or 2 different HH:MM), `users.offline_digest_at` (the last summary time
+  handled). Covers the Offline and App not reporting alerts and their Back online, for admins who get them *as
+  admins* (recipients admins / both): `alerts.send` drops summary and off admins from those (the phone's history says
+  "Ann (in their summary)"); an admin who gets one as the phone's owner (owner / both, their own phone) gets it right
+  away. Owners, Lost contact, tests (`only=`) and the other alerts are unchanged. **Summary:** the watcher's round
+  (`monitor.tick` → `digest.run`) sends, at each time, one "📱 Offline summary" to that admin (`only=[admin]`, the
+  household's delivery, sent even in their quiet hours: they chose the time) listing the monitored phones whose
+  status is Offline (if that alert is on and goes to admins) or App not reporting (likewise) — Can't check and Late
+  aren't listed —, once their Alert-when-offline time has passed (`offline_alerted` / `app_alerted` with a delay),
+  not paused (alerts or watching), not in do-not-monitor hours; per phone: name (owner), status for how long and
+  since when, battery at the last check-in; a line about lost contact when on. None listed: nothing is sent (the time
+  still counts as handled). **No Back online** for summary admins: the next summary just doesn't list the phone.
+  **Once per time:** the latest time ≤ now not yet handled is sent if it is at most 2 hours ago, never during the
+  start-up grace (interval + grace: phones aren't Offline yet); saving the choice marks now as handled. `PUT
+  /api/me/offline-alerts` (`mode`, `times`), `POST /api/me/offline-alerts/test` (the summary as it would be now, or
+  "All phones are online").
 - **App not reporting**; **Lost contact** (admins; only when the requests fail, once per episode, §3.1); **Back online** (off by default); **Restarted** with a guess
   ("battery was 3%, probably ran out" when ≤ 5%; "probably an update" after an OS or app version change in the last 6
   hours); **Battery low** (below 15%, not charging, once per discharge); **Charging reminder at night** (off; 22:00,
@@ -417,7 +435,8 @@ asked, Check now "Can't ask an iPhone — last check-in hh:mm", no forwarding.
 
 ## 12. API (ingress; JSON)
 
-Everyone: `GET /api/me`, `GET /api/whoami`, `GET /api/my` (with `unmonitored`: name only), `PUT /api/me/quiet`,
+Everyone: `GET /api/me`, `GET /api/whoami`, `GET /api/my` (with `unmonitored`: name only; admins also
+`offlineAlerts`), `PUT /api/me/quiet`, admins `PUT /api/me/offline-alerts` and `POST /api/me/offline-alerts/test`,
 `GET /api/phones/{id}` (owner page, admins also `admin`; 409 "isn't monitored" for the owner of a device not added),
 `GET /api/phones/{id}/online-history?range=24h|7d|30d` (owner or admins, §5.1),
 `PUT /api/phones/{id}/mine` (sharePlace, welcomeSeen), `PUT /api/phones/{id}/dnm` (owner only: `windows`), `POST|DELETE /api/phones/{id}/pause`,
@@ -435,7 +454,8 @@ as allowed), `PUT /api/phones/{id}/consent` (owner; admins on a child's phone: `
 
 ## 13. Data (`/data/phones.db`)
 
-`users` (id, name, username, is_child, own alert quiet hours), `user_notify`, `phones` (the device, kind, owner,
+`users` (id, name, username, is_child, own alert quiet hours, an admin's Offline alerts choice and summary times
+with the last time handled), `user_notify`, `phones` (the device, kind, owner,
 settings, monitored and since when, the welcome card, check-in and request state, status, pauses, do-not-monitor
 windows (JSON), share place, alert memory and the offline alert delay with its current spell, forwarding settings and
 its last error — no message text; the owner's action choices, Lost mode's state, Find my phone's restore values,

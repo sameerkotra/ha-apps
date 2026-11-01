@@ -2,6 +2,11 @@
 
 All notable changes to Household Phones. See the [repository](https://github.com/sameerkotra/ha-apps).
 
+## 1.8.0
+
+- **Offline alerts your way:** each admin chooses on My phone (📵 Offline alerts for you) how they get the alerts about phones that are Offline or App not reporting — right away (as before, the default), in a summary once or twice a day at the times they pick, or off. The summary lists every phone still unreachable then, with its owner, since when and its last battery; nothing is sent when all are online.
+- **Send a test summary now** shows what the summary would say at the moment. Admin → People shows each admin's choice.
+
 ## 1.7.1
 
 - **Updated dependencies:** FastAPI 0.146.0, Uvicorn 0.54.0, the base image (Python 3.12, Alpine 3.24). Security and bug fixes; nothing changes in how the app works.

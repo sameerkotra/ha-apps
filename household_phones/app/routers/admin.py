@@ -6,7 +6,7 @@ import os
 from fastapi import APIRouter, Body, Depends, File, HTTPException, UploadFile
 from starlette.concurrency import run_in_threadpool
 
-from .. import actions, alerts, app_messages, auth, bedtime, config, db, health, lost, monitor, phones, settings, timeline, views
+from .. import actions, alerts, app_messages, auth, bedtime, config, db, digest, health, lost, monitor, phones, settings, timeline, views
 from ..auth import require_admin
 from ..common import backup_core, ha_client, ha_notify, people_admin
 
@@ -268,8 +268,6 @@ def remove(pid: str, admin: dict = Depends(require_admin)):
 def test_alert(body: dict = Body(...), admin: dict = Depends(require_admin)):
     """A sample of one alert, to you, the way alerts are delivered (App settings)."""
     alert = (body or {}).get("alert") if isinstance(body, dict) else None
-    if alert not in alerts.ALERTS or alert == "request":
-        raise HTTPException(422, "Choose an alert.")
     samples = {"offline": "Asha's Pixel is offline: no check-in since 14:02, battery 9% then.",
                "app": "Asha's Pixel: the HA app stopped reporting — signed out?",
                "lost_contact": "Home Assistant couldn't send requests to 5 of 6 phones since 14:02 — check Home "
@@ -278,6 +276,8 @@ def test_alert(body: dict = Body(...), admin: dict = Depends(require_admin)):
                "restart": "Asha's Pixel restarted: battery was 3%, probably ran out.",
                "battery": "Asha's Pixel is at 12% and not charging.",
                "charge": "Asha's Pixel is at 25% and not charging."}
+    if not isinstance(alert, str) or alert not in samples:
+        raise HTTPException(422, "Choose an alert.")
     r = alerts.send(alert, None, samples[alert] + " (This is a test.)", test=True, only=[admin])
     if not r["sent"]:
         raise HTTPException(409, "Nothing reached you: no phone is linked to you in Home Assistant (Settings → People → "
@@ -337,7 +337,8 @@ def admin_people(refresh: bool = False, admin: dict = Depends(require_admin)):
         u = auth.user_dict(r)
         out.append({"id": u["id"], "name": u["name"], "username": u["username"], "you": u["id"] == admin["id"],
                     "isAdmin": u["is_admin"], "isChild": u["is_child"], "phones": owned[u["id"]],
-                    "notify": notify[u["id"]], "ha": people_admin.ha_person_json(u["id"])})
+                    "notify": notify[u["id"]], "ha": people_admin.ha_person_json(u["id"]),
+                    "offlineAlerts": digest.label(digest.prefs(r)) if u["is_admin"] else None})
     return {"people": out}
 
 

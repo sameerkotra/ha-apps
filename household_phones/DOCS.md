@@ -134,8 +134,8 @@ the device's own page:
 - **Stop monitoring my phone** — sends the admins a request.
 
 Below your phones: **Phones that forward into your chats** — a **Check <owner>'s phone** button for each phone that
-forwards into a chat you're in (you see only the Check-now result), and your own **quiet hours for alerts you
-receive**.
+forwards into a chat you're in (you see only the Check-now result), your own **quiet hours for alerts you
+receive** and, for admins, **📵 Offline alerts for you** (see Alerts).
 
 ## Check now
 
@@ -376,6 +376,24 @@ delivered to the recipients' phones (Home Assistant → Settings → People → 
 added under Admin → People), as a Home Assistant notification, and/or into each recipient's 📌 My room in Household
 Chat. There is no escalation to other people. **Admin → Tests** sends a sample of each alert to you, and a test
 forward to your own My room.
+
+**📵 Offline alerts for you** (admins, on My phone): how *you* get the Offline and App not reporting alerts —
+
+- **Right away** (the default) — as above, one alert per phone as it goes Offline.
+- **In a summary once a day** or **twice a day**, at the times you choose (Home Assistant's time zone) — no alert per
+  phone, and no Back online either; at each time one message lists every monitored phone that is still Offline or App
+  not reporting, with its owner, how long and since when, and its battery at the last check-in: "2 phones can't be
+  reached (08:00): • Asha's Pixel — Offline for 10 h, since Thu 22:02 — battery 4% at the last check-in …". Nothing is
+  sent when all phones are online. A phone shows up only once its own *Alert when offline* time has passed, and never
+  while its alerts are paused or in its owner's do-not-monitor hours. The summary comes at your time even in your
+  quiet hours. If the app was stopped at that time, it is sent when it starts again (after the start-up grace) only
+  if that's within 2 hours; it is never sent twice.
+- **Off** — no Offline, App not reporting or Back online alerts for you.
+
+It only changes what reaches you as an admin: alerts that go to a phone's owner (recipients *The phone's owner* or
+*The owner and admins*) still reach the owner right away — also when the owner is an admin, about their own phone.
+When those alerts go only to owners, the choice changes nothing. **Send a test summary now** sends you the summary as
+it would be at this moment. Admin → People shows each admin's choice.
 
 ## Who can see what, and where your data goes
 

@@ -191,6 +191,7 @@
       }
     }
     add(box, myQuiet(r));
+    if (r.offlineAlerts) add(box, myOfflineAlerts(r.offlineAlerts));
     every(30000, () => { if (state.view === "my") refreshMy(); });
   }
   async function refreshMy() {
@@ -255,6 +256,51 @@
         try { await api("api/me/quiet", { method: "PUT", body: { quietStart: qs.value, quietEnd: qe.value } }); toast("Saved"); }
         catch (e) { toast(e.message, true); }
       } }, "Save")));
+  }
+
+  // admins: how you get Offline alerts — right away, a summary once or twice a day, or off
+  const OFFLINE_MODES = [["now", "Right away (as each phone goes Offline)"], ["once", "In a summary once a day"],
+    ["twice", "In a summary twice a day"], ["off", "Off — none for me"]];
+  function myOfflineAlerts(o) {
+    const times = o.times.length ? o.times : o.defaultTimes;
+    const kind = o.mode === "summary" ? (o.times.length === 2 ? "twice" : "once") : o.mode;
+    const t1 = h("input", { type: "time", value: times[0] || o.defaultTimes[0], "aria-label": "First summary time" });
+    const t2 = h("input", { type: "time", value: times[1] || o.defaultTimes[1], "aria-label": "Second summary time" });
+    const mode = h("select", null, OFFLINE_MODES.map(([v, l]) => h("option", { value: v, selected: v === kind ? true : null }, l)));
+    const second = field("…and at", t2);
+    const timesRow = h("div", { class: "grid2" }, field("At", t1), second);
+    const sync = () => {
+      timesRow.hidden = !["once", "twice"].includes(mode.value);
+      second.hidden = mode.value !== "twice";
+    };
+    mode.addEventListener("change", sync);
+    sync();
+    const body = () => {
+      const m = mode.value;
+      if (m === "once") return { mode: "summary", times: [t1.value] };
+      if (m === "twice") return { mode: "summary", times: [t1.value, t2.value] };
+      return { mode: m };
+    };
+    return h("details", { class: "card about", open: o.mode !== "now" ? true : null },
+      h("summary", null, "📵 Offline alerts for you"),
+      h("p", { class: "hint" }, "How you, as an admin, get the alerts about phones that are Offline or App not reporting. " +
+        "A summary lists every phone that is still unreachable at that time (with its owner, since when and its last battery), " +
+        "and nothing is sent when all are online; there is no Back online message in between. Times are Home Assistant's." +
+        (o.ownerToo ? " Alerts about your own phone still reach you right away (they go to owners too)." : "")),
+      o.applies ? null : h("p", { class: "note" }, "Right now Offline and App not reporting alerts don't go to admins (Admin → App settings), so this changes nothing yet."),
+      field("Get them", mode), timesRow,
+      h("div", { class: "card-actions" },
+        h("button", { type: "button", class: "btn-secondary", onclick: async () => {
+          try { await api("api/me/offline-alerts", { method: "PUT", body: body() }); toast("Saved"); }
+          catch (e) { toast(e.message, true); }
+        } }, "Save"),
+        h("button", { type: "button", class: "btn-ghost", onclick: async (e) => {
+          const b = e.currentTarget;
+          b.disabled = true;
+          try { const r = await api("api/me/offline-alerts/test", { method: "POST" }); toast(`Sent: ${r.sent.join(", ")}`); }
+          catch (err) { toast(err.message, true); }
+          finally { b.disabled = false; }
+        } }, "Send a test summary now")));
   }
 
   // ---------- one of my phones ----------
@@ -1377,7 +1423,8 @@
       checkAgain: async () => { await loadPeople(true); toast("Read from Home Assistant"); },
       person: (p) => ({
         badges: [p.you ? ["you"] : null, p.isAdmin ? ["admin", "accent"] : null, p.isChild ? ["child", "accent"] : null],
-        sub: `${p.phones} ${p.phones === 1 ? "phone" : "phones"}` + (p.username ? ` · ${p.username}` : ""),
+        sub: `${p.phones} ${p.phones === 1 ? "phone" : "phones"}` + (p.username ? ` · ${p.username}` : "") +
+          (p.offlineAlerts ? ` · offline alerts: ${p.offlineAlerts}` : ""),
         controls: h("label", { class: "pp-toggle", title: p.isAdmin ? "Admins can't be marked as children" : "" }, "Child ",
           PeoplePage.accessSwitch(p.isChild, async (on, t) => {
             try { await api(`api/admin/people/${encodeURIComponent(p.id)}`, { method: "PUT", body: { isChild: on } }); p.isChild = on; }

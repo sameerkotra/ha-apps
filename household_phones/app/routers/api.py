@@ -7,7 +7,7 @@ import re
 from fastapi import APIRouter, Body, Depends, HTTPException, Request
 from starlette.concurrency import run_in_threadpool
 
-from .. import actions, app_messages, auth, checknow, config, db, dnm, lost, monitor, phones, phonesetup, settings, sidebar, views
+from .. import actions, app_messages, auth, checknow, config, db, digest, dnm, lost, monitor, phones, phonesetup, settings, sidebar, views
 from ..auth import get_current_user
 from ..common import auth_core
 from ..common import whoami as whoami_core
@@ -55,9 +55,10 @@ def my(user: dict = Depends(get_current_user)):
         others = [{"id": p["id"], "name": phones.display_name(conn, p),
                    "owner": phones.first_name(phones.owner_name(conn, p["owner_id"])),
                    "chat": p["fwd_chat_name"]} for p in checknow.checkable(conn, user)]
-        row = conn.execute("SELECT quiet_start, quiet_end FROM users WHERE id = ?", (user["id"],)).fetchone()
+        row = conn.execute("SELECT * FROM users WHERE id = ?", (user["id"],)).fetchone()
     return {"phones": mine, "unmonitored": unmonitored, "others": others, "starting": _starting(now),
             "quietStart": row["quiet_start"] if row else "", "quietEnd": row["quiet_end"] if row else "",
+            "offlineAlerts": _offline_alerts(row) if user["is_admin"] else None,
             "adultsMayPause": bool(settings.get("adults_may_pause")) and not user["is_child"],
             "pauseMaxHours": settings.get("pause_max_hours"), "forwardingAllowed": bool(settings.get("forwarding_allowed"))}
 
@@ -81,6 +82,42 @@ def my_quiet(body: dict = Body(...), user: dict = Depends(get_current_user)):
     with db.get_conn() as conn:
         conn.execute("UPDATE users SET quiet_start = ?, quiet_end = ? WHERE id = ?", (qs, qe, user["id"]))
     return {"quietStart": qs, "quietEnd": qe}
+
+
+def _offline_alerts(row) -> dict:
+    p = digest.prefs(row) if row is not None else {"mode": "now", "times": []}
+    return {**p, "applies": digest.applies(), "defaultTimes": digest.DEFAULT_TIMES,
+            "ownerToo": settings.get("alert_offline_to") == "both"}
+
+
+@router.put("/me/offline-alerts")
+def my_offline_alerts(body: dict = Body(...), user: dict = Depends(get_current_user)):
+    """Admins: how you get Offline alerts — right away, a summary at one or two times a day, or off (digest.py)."""
+    if not user["is_admin"]:
+        raise HTTPException(403, "Only admins get Offline alerts as admins.")
+    try:
+        mode, times = digest.clean(body if isinstance(body, dict) else {})
+    except ValueError as e:
+        raise HTTPException(422, str(e))
+    with db.get_conn() as conn:
+        # from now on: a time earlier today isn't sent as if it had been missed
+        conn.execute("UPDATE users SET offline_mode = ?, offline_times = ?, offline_digest_at = ? WHERE id = ?",
+                     (mode, ",".join(times), config.clock(), user["id"]))
+        row = conn.execute("SELECT * FROM users WHERE id = ?", (user["id"],)).fetchone()
+    return _offline_alerts(row)
+
+
+@router.post("/me/offline-alerts/test")
+def my_offline_summary_test(user: dict = Depends(get_current_user)):
+    """Admins: the summary as it would be now, to you, the way alerts are delivered."""
+    if not user["is_admin"]:
+        raise HTTPException(403, "Only admins get Offline alerts as admins.")
+    from .. import alerts
+    r = alerts.send("summary", None, digest.test_text(), test=True, only=[user])
+    if not r["sent"]:
+        raise HTTPException(409, "Nothing reached you: no phone is linked to you in Home Assistant (Settings → People → "
+                                 "Track device) and no other delivery is chosen (App settings → Deliver alerts by).")
+    return {"sent": r["sent"]}
 
 
 def _phone(conn, pid: str, user: dict, *, owner: bool = False, admin_ok: bool = True, unmonitored: bool = False):
