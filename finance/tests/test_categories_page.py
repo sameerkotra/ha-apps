@@ -132,11 +132,14 @@ def test_this_months_total_the_12_month_count_and_the_rules_count(env):
 
 
 def test_the_three_sorts(env):
+    # "use" counts the last 12 months up to today: a date later this month wouldn't count yet (on the 1st, every
+    # day but the 1st is still to come), so no date here is after today
+    day = lambda n: f"{MONTH}-{min(n, date.today().day):02d}"
     chk = env.account("Checking")
-    env.txn(chk, f"{MONTH}-01", -300.0, "RENT", category="Housing")
-    env.txn(chk, f"{MONTH}-02", -10.0, "A", category="Health")
+    env.txn(chk, day(1), -300.0, "RENT", category="Housing")
+    env.txn(chk, day(2), -10.0, "A", category="Health")
     for i in range(4):
-        env.txn(chk, f"{MONTH}-0{i + 3}", -1.0, f"COFFEE {i}", category="Dining")
+        env.txn(chk, day(i + 3), -1.0, f"COFFEE {i}", category="Dining")
     by_name = order(panel(cats(env, sort="name"), "spending"))
     assert by_name == sorted(by_name, key=str.lower)
     assert order(panel(cats(env, sort="total"), "spending"))[:3] == ["Housing", "Health", "Dining"]

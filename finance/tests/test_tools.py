@@ -122,6 +122,10 @@ def test_spending_at_one_shop(env):
     card = env.account("Amex", "credit_card")
     env.txn(card, f"{_months_ago(2)}-10", 80.0, "FRESH MART #12", category="Groceries")
     env.txn(card, f"{_months_ago(14)}-10", 999.0, "FRESHMART OLD", category="Groceries")      # too long ago
+    # the tool looks up to today: seed's charge on the 2nd hasn't happened yet on the 1st of a month
+    with env.db() as c:
+        c.execute("UPDATE transactions SET date = ? WHERE description = 'FRESHMART 0042'",
+                  (f"{month}-{min(2, date.today().day):02d}",))
     res = call("finance.merchant", merchant="Fresh Mart")
     assert res["text"].startswith("200.50 at “Fresh Mart” since ")
     assert "in 2 charges" in res["text"]

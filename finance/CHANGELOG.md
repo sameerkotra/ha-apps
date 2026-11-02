@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.14.5
+
+- **Two tests no longer fail on the 1st of a month** (they dated sample transactions later in the current month, which the app rightly hasn't counted yet). No change to the app itself.
+
 ## 1.14.4
 
 - **Updated dependencies:** FastAPI 0.146.0, Starlette 1.9.0, Uvicorn 0.54.0. Security and bug fixes; nothing changes in how the app works.
