@@ -14,7 +14,7 @@ sole source of bank transactions. utility_deterministic.py's job is only
 to sanity-check the numbers this path returns against the bill's own
 printed text, not to re-derive them independently.
 """
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Callable
 
 from .vision import MAX_NOTES_CHARS, ask_vision_json, clean_amount, clean_date, clean_text, debug_call
@@ -58,6 +58,17 @@ class ParsedUtilityBill:
 class UtilityVisionResult:
     bills: list[ParsedUtilityBill]
     raw_response: str  # kept for the admin debug view, same as statements
+    skipped: list[str] = field(default_factory=list)   # entries the AI listed that couldn't be read (why)
+
+
+# The AI doesn't always write the type exactly as asked ("Natural Gas", "electricity"): read the usual variants.
+_TYPE_WORDS = {"electric": "electric", "electricity": "electric", "electric service": "electric", "power": "electric",
+               "gas": "gas", "natural gas": "gas", "natural_gas": "gas", "gas service": "gas", "natural gas service": "gas",
+               "water": "water", "water service": "water"}
+
+
+def utility_type_of(value) -> str | None:
+    return _TYPE_WORDS.get(" ".join(str(value or "").replace("-", " ").split()).lower())
 
 
 _METER_FIELDS = [
@@ -210,11 +221,12 @@ def extract_vision_utility(
     malformed bill entry is skipped, not fatal."""
     data, raw = ask_vision_json(pdf_path, ollama_url, model, utility_prompt(provider, notes), on_step)
     bills: list[ParsedUtilityBill] = []
+    skipped: list[str] = []
     for row in data.get("bills", []):
         try:
-            utility_type = str(row["utility_type"])
-            if utility_type not in ("electric", "gas", "water"):
-                continue  # malformed type -- skip this one entry, not the whole response
+            utility_type = utility_type_of(row.get("utility_type"))
+            if utility_type is None:
+                continue  # not electric, gas or water (trash, internet…): left out, as the prompt asks
 
             meter = None
             meter_raw = row.get("electric_meter_details")
@@ -229,7 +241,9 @@ def extract_vision_utility(
             # infinity would fail the save or poison every total), and short text.
             start, end = clean_date(row["period_start_date"]), clean_date(row["period_end_date"])
             if start is None or end is None:
-                raise ValueError("unreadable billing period")
+                raise ValueError("no readable billing period")
+            if row.get("cost") is None:
+                raise ValueError("no total")
             bills.append(ParsedUtilityBill(
                 utility_type=utility_type,
                 provider=clean_text(row["provider"], MAX_PROVIDER_CHARS),
@@ -243,7 +257,12 @@ def extract_vision_utility(
                                       if row.get("account_number_last4") else None),
                 electric_meter_details=meter,
             ))
-        except (KeyError, TypeError, ValueError):
-            continue  # one malformed bill entry doesn't invalidate the whole response
+        except (KeyError, TypeError, ValueError) as e:
+            # one malformed bill entry doesn't invalidate the whole response, but it isn't dropped silently:
+            # the pipeline flags the statement for review with the reason
+            kind = utility_type_of(row.get("utility_type")) if isinstance(row, dict) else None
+            why = str(e) if isinstance(e, ValueError) else "missing figures"
+            skipped.append(f"a {kind} bill ({why})" if kind else f"a bill ({why})")
+            continue
 
-    return UtilityVisionResult(bills=bills, raw_response=raw)
+    return UtilityVisionResult(bills=bills, raw_response=raw, skipped=skipped)

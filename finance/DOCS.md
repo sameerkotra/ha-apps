@@ -181,7 +181,10 @@ preferred upload type — any, PDF, CSV or QFX, a reminder on the Upload page, n
   Confirm), **Re-extract** reads the PDF again with your notes. Tick **Skip the confirmation step**
   when uploading to save bills straight away. On an electric bill the meter table (delivered by Xcel,
   delivered by you, net delivered, net generated) is also read from the bill's own text, and any
-  figure the AI read differently is listed when you check it.
+  figure the AI read differently is listed when you check it. A combined statement (Xcel electric +
+  gas) gives two bills; if its text shows gas (or electric) charges but no such bill was read, the
+  statement waits for you with that note — even with Skip the confirmation step — so **Re-extract**
+  it (a note like "read the gas bill too" helps).
 
 ### Bills (optional)
 - **Utilities**: electric, gas and water bills with usage and cost per period, and Compare.

@@ -115,6 +115,41 @@ def test_skipping_confirmation_completes_at_once(env, fake_xcel):
     assert "Skip the confirmation step" in env.get("utilities?tab=upload").text
 
 
+def test_a_gas_bill_the_reading_missed_is_flagged(env, fake_xcel):
+    """A combined statement with gas charges, but the AI returned only the electric bill: not saved as if complete."""
+    lines = ["Xcel Energy", "Electricity Charges Total $68.86", "Natural Gas Charges Total $41.20",
+             "Natural gas usage 38 therms", "Amount due by 10/27/26 $110.06"] + TABLE
+    with open(env.pdf(lines), "rb") as f:
+        r = env.post("utility-upload", data={"provider": "Xcel Energy", "skip_confirmation": "1"},
+                     files={"files": ("xcel.pdf", f.read(), "application/pdf")}).json()
+    row = env.wait_status("utility_bills", r["results"][0]["utility_bill_id"])
+    assert row["status"] == "pending_review" and row["review_status"] == "pending_review"
+    assert "also has gas charges, but no gas bill was read" in row["error_message"]
+    # an electric-only statement isn't flagged (the other tests: "clean")
+
+
+def test_reading_accepts_type_variants_and_reports_what_it_skipped(monkeypatch):
+    from app.parser import utility_vision as uv
+    data = {"bills": [
+        {"utility_type": "Electricity", "provider": "Xcel Energy", "period_start_date": "2026-09-02",
+         "period_end_date": "2026-10-04", "cost": 68.86},
+        {"utility_type": "Natural Gas", "provider": "Xcel Energy", "period_start_date": "2026-09-02",
+         "period_end_date": "2026-10-04", "cost": 41.2, "usage_amount": 38, "usage_unit": "therms"},
+        {"utility_type": "gas", "provider": "Xcel Energy", "period_start_date": None, "period_end_date": None,
+         "cost": 12.0},
+        {"utility_type": "internet", "provider": "X", "period_start_date": "2026-09-02",
+         "period_end_date": "2026-10-04", "cost": 1.0},
+    ]}
+    monkeypatch.setattr(uv, "ask_vision_json", lambda *a, **k: (data, "{}"))
+    res = uv.extract_vision_utility("x.pdf", "http://ai", "m")
+    assert [b.utility_type for b in res.bills] == ["electric", "gas"]
+    assert res.skipped == ["a gas bill (no readable billing period)"]
+    from app.parser.utility_pipeline import missing_bills
+    assert "The AI listed a gas bill (no readable billing period) that couldn't be read." in \
+        missing_bills("", res.bills, res.skipped)
+    assert missing_bills("Electricity Charges 831 kWh Natural Gas Charges 38 therms", res.bills, []) is None
+
+
 def _gas_sibling(env, bid):
     """The gas bill a dual-fuel PDF produced alongside the electric one (same upload, higher id)."""
     with env.db() as c:

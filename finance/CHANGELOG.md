@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.14.6
+
+- **A combined Xcel statement no longer loses its gas bill silently:** when the statement's text shows gas (or electric) charges but no such bill was read from it, or the AI listed one it couldn't read (no billing period or total), the statement waits for you with a note saying so — even with *Skip the confirmation step* — so you can Re-extract it.
+- **More gas bills are read:** the type is accepted however the AI writes it ("Natural Gas", "Electricity"…), instead of the entry being dropped.
+
 ## 1.14.5
 
 - **Two tests no longer fail on the 1st of a month** (they dated sample transactions later in the current month, which the app rightly hasn't counted yet). No change to the app itself.

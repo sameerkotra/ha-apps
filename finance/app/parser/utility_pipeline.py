@@ -18,6 +18,7 @@ statement pipeline's text pass (extract_deterministic, _consume_amount).
   kept until then.
 """
 import logging
+import re
 import sqlite3
 from functools import partial
 from collections import Counter
@@ -108,6 +109,29 @@ def _find_existing_bill(conn: sqlite3.Connection, utility_bill_id: int, provider
         (user_id, provider, bill.utility_type, bill.period_start_date, bill.period_end_date,
          utility_bill_id, file_hash, bill.account_number_last4, bill.account_number_last4),
     ).fetchone()
+
+
+# Signs in the statement's own text that it bills a utility (a combined Xcel statement: electric AND gas).
+_BILLED = {
+    "gas": re.compile(r"(?i)\bnatural\s+gas\s+(?:service|charges)\b|\b\d[\d,]*(?:\.\d+)?\s*therms?\b"),
+    "electric": re.compile(r"(?i)\belectric(?:ity)?\s+(?:service|charges)\b|\b\d[\d,]*(?:\.\d+)?\s*kwh\b"),
+}
+
+
+def missing_bills(raw_text: str, bills: list, skipped: list[str]) -> str | None:
+    """A note when the statement bills a utility the reading didn't return (or returned unreadable), else None."""
+    have = {b.utility_type for b in bills}
+    missing = [kind for kind, rx in _BILLED.items() if kind not in have and rx.search(raw_text or "")]
+    parts = []
+    if missing:
+        parts.append(f"This statement also has {' and '.join(missing)} charges, but no {' or '.join(missing)} "
+                     "bill was read from it.")
+    if skipped:
+        parts.append("The AI listed " + "; ".join(skipped) + " that couldn't be read.")
+    if not parts:
+        return None
+    return " ".join(parts) + (" Re-extract (a note like \"read the gas bill too\" helps) so every bill on the "
+                              "statement is saved.")
 
 
 def _drop_duplicate_bills(conn: sqlite3.Connection, utility_bill_id: int, provider: str,
@@ -258,6 +282,11 @@ def process_utility_bill(utility_bill_id: int, user_id: str, ollama_url: str, ol
                     "anywhere on the statement — one bill's cost may be misread."
                 )
                 bill_flags = [note if f is None else f"{f} {note}" for f in bill_flags]
+
+        absent = missing_bills(det_result.raw_text, vision_result.bills, vision_result.skipped)
+        if absent:
+            logger.info("Utility bill %s: %s", utility_bill_id, absent)
+            bill_flags = [absent if f is None else f"{f} {absent}" for f in bill_flags]
 
         if not known:
             # A provider the app has no tuned reading for: always checked by a person (section 23).
