@@ -23,8 +23,8 @@ splitpot/
 ├── config.yaml  Dockerfile  .dockerignore  README.md (app store page)  DOCS.md (Documentation tab: the user guide)
 ├── CHANGELOG.md           # shown in Home Assistant's update dialog
 ├── icon.png (128×128)  logo.png (250×100)
-├── requirements.txt       # fastapi==0.146.0, uvicorn[standard]==0.53.0, python-multipart==0.0.32
-├── requirements-dev.txt   # -r requirements.txt + httpx2==2.15.1 (TestClient)
+├── requirements.txt       # fastapi==0.162.0, uvicorn[standard]==0.53.0, python-multipart==0.0.33
+├── requirements-dev.txt   # -r requirements.txt + httpx2==2.16.0 (TestClient)
 ├── translations/en.yaml   # option names/descriptions
 ├── app/__init__.py
 ├── app/main.py            # entire backend

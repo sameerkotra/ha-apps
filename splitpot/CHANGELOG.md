@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.8.3
+
+- **Updated dependencies:** FastAPI 0.162.0. Security and bug fixes; nothing changes in how the app works.
+
 ## 2.8.2
 
 - **Updated dependencies:** FastAPI 0.146.0, Uvicorn 0.54.0, the base image (Python 3.12, Alpine 3.24). Security and bug fixes; nothing changes in how the app works.
