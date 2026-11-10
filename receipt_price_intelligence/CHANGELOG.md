@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.5.2
+
+- **Updated dependencies:** FastAPI 0.162.0, python-multipart 0.0.33, Pydantic 2.14.2. Security and bug fixes; nothing changes in how the app works.
+
 ## 1.5.1
 
 - **Updated dependencies:** FastAPI 0.146.0, Uvicorn 0.54.0, Pydantic 2.14.1, SQLAlchemy 2.0.55, Pillow 13.0.0. Security and bug fixes; nothing changes in how the app works.
