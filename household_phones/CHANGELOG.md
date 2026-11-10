@@ -2,6 +2,10 @@
 
 All notable changes to Household Phones. See the [repository](https://github.com/sameerkotra/ha-apps).
 
+## 1.8.1
+
+- **Updated dependencies:** FastAPI 0.162.0, python-multipart 0.0.33. Security and bug fixes; nothing changes in how the app works.
+
 ## 1.8.0
 
 - **Offline alerts your way:** each admin chooses on My phone (📵 Offline alerts for you) how they get the alerts about phones that are Offline or App not reporting — right away (as before, the default), in a summary once or twice a day at the times they pick, or off. The summary lists every phone still unreachable then, with its owner, since when and its last battery; nothing is sent when all are online.
