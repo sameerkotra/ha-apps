@@ -186,9 +186,30 @@ function strengthMeter(input) {
 function pwInput(opts = {}) {
   // "off" by default: the browser's own password manager shouldn't offer to keep the master password
   const input = h("input", { type: "password", autocomplete: opts.autocomplete || "off", placeholder: opts.placeholder || "", "aria-label": opts.label || "Password", spellcheck: "false" });
-  const eye = h("button", { class: "icon-btn", type: "button", "aria-label": "Show password", title: "Show / hide" }, "👁");
-  eye.addEventListener("click", () => { input.type = input.type === "password" ? "text" : "password"; });
-  return { el: h("div", { class: "input-with" }, input, eye), input };
+  const r = revealInput(input, opts.load, opts.label || "password");
+  return { el: r.el, input, unchanged: r.unchanged };
+}
+// A secret box with 👁. Editing an item, the box starts empty ("(unchanged)"); with `load`, the first 👁 on an empty
+// box fetches the saved value (the same /secret call as the item's own 👁, nothing before it's asked for), puts it in
+// the box and shows it; 👁 then hides / shows. `unchanged()`: it still holds exactly the saved value, so Save leaves
+// it alone (no new history entry).
+function revealInput(input, load, label = "value") {
+  let loaded = null;
+  const eye = h("button", { class: "icon-btn", type: "button", "aria-label": `Show ${label}`, "aria-pressed": "false", title: "Show / hide" }, "👁");
+  const paint = () => {
+    const shown = input.type !== "password";
+    eye.setAttribute("aria-pressed", String(shown));
+    eye.setAttribute("aria-label", `${shown ? "Hide" : "Show"} ${label}`);
+  };
+  eye.addEventListener("click", async () => {
+    if (load && loaded === null && !input.value) {
+      eye.disabled = true;
+      try { loaded = await load(); } catch (e) { fail(e); return; } finally { eye.disabled = false; }
+      input.value = loaded; input.type = "text"; input.dispatchEvent(new Event("input")); paint(); return;
+    }
+    input.type = input.type === "password" ? "text" : "password"; paint();
+  });
+  return { el: h("div", { class: "input-with" }, input, eye), unchanged: () => loaded !== null && input.value === loaded };
 }
 
 // ---------- clipboard (overwritten after N seconds; we can't check it still holds our value) ----------
@@ -1337,7 +1358,10 @@ function itemEditor(d, tplKey, opts = {}) {
   remind.value = String(d ? d.remindDays : 30);
   const expLbl = h("span", { class: "lbl" }, "Expires on");
   const expiryBox = h("div", { class: "form-row" }, h("label", { class: "field" }, expLbl, expires), field("Remind me", remind));
-  const pw = pwInput({ autocomplete: "new-password", label: "Password", placeholder: d && d.password.set ? "(unchanged)" : "" });
+  // editing: 👁 loads the saved value into the box (so it can be seen, or changed a little)
+  const savedSecret = (name) => d ? () => api(`api/vaults/${d.vaultId}/items/${d.id}/secret?field=${encodeURIComponent(name)}`).then((r) => r.value) : null;
+  const pw = pwInput({ autocomplete: "new-password", label: "password", placeholder: d && d.password.set ? "(unchanged — 👁 shows it)" : "",
+    load: d && d.password.set ? savedSecret("Password") : null });
   const gen = h("button", { class: "btn small", type: "button", onclick: () => generatorDialog((p) => { pw.input.value = p; pw.input.type = "text"; pw.input.dispatchEvent(new Event("input")); }) }, "🎲 Generate");
   const url = h("input", { type: "text", value: d ? d.url : "", placeholder: "https://…", "aria-label": "Website", inputmode: "url", spellcheck: "false" });
   const openUrl = h("button", { class: "btn small", type: "button", title: "Open site", "aria-label": "Open site", onclick: () => {
@@ -1402,7 +1426,8 @@ function itemEditor(d, tplKey, opts = {}) {
   }
   const totpRemove = d && d.totp ? h("button", { class: "btn small", type: "button", onclick: () => { removeTotp = true; totpIn.value = ""; totpIn.type = "text"; totpIn.placeholder = "(will be removed)"; } }, "Remove 2FA") : null;
   const holder = h("input", { type: "text", value: d ? d.cardholder : "", "aria-label": "Name on card" });
-  const number = h("input", { type: "text", inputmode: "numeric", placeholder: d && d.card.number.set ? "(unchanged)" : "", autocomplete: "off", "aria-label": "Card number" });
+  const number = h("input", { type: "text", inputmode: "numeric", placeholder: d && d.card.number.set ? "(unchanged — 👁 shows it)" : "", autocomplete: "off", "aria-label": "Card number" });
+  const numberR = revealInput(number, d && d.card.number.set ? savedSecret("Number") : null, "card number");
   const expiry = h("input", { type: "text", value: d ? d.expiry : "", placeholder: "MM/YY", "aria-label": "Expiry" });
   expiry.addEventListener("change", () => {
     const m = /^\s*(\d{1,2})\s*[\/\-.]\s*(\d{2}|\d{4})\s*$/.exec(expiry.value);
@@ -1414,19 +1439,24 @@ function itemEditor(d, tplKey, opts = {}) {
   });
   const cvv = h("input", { type: "password", placeholder: d && d.card.cvv.set ? "(unchanged)" : "", autocomplete: "off", "aria-label": "CVV" });
   const pin = h("input", { type: "password", placeholder: d && d.card.pin.set ? "(unchanged)" : "", autocomplete: "off", "aria-label": "PIN" });
+  const cvvR = revealInput(cvv, d && d.card.cvv.set ? savedSecret("CVV") : null, "CVV");
+  const pinR = revealInput(pin, d && d.card.pin.set ? savedSecret("PIN") : null, "PIN");
   const notes = h("textarea", { "aria-label": "Notes" }); notes.value = d ? d.notes : "";
   const tags = h("input", { type: "text", value: d ? d.tags.join(", ") : "", placeholder: "bank, family", "aria-label": "Tags" });
   const fav = h("input", { type: "checkbox", checked: d ? d.favourite : false });
-  let extra = (d ? d.fields : []).map((f) => ({ name: f.name, value: f.value, protected: f.protected, existing: true }));
+  let extra = (d ? d.fields : []).map((f) => ({ name: f.name, saved: f.name, value: f.value, protected: f.protected, existing: true }));
   const extraBox = h("div");
   const drawExtra = () => mount(extraBox, extra.map((f, i) => {
     const n = h("input", { type: "text", value: f.name, placeholder: "Field name", "aria-label": "Field name" });
     n.addEventListener("input", () => { f.name = n.value; });
     const val = h("input", { type: f.protected ? "password" : "text", value: f.value || "", placeholder: f.protected && f.existing ? "(unchanged)" : "Value", "aria-label": "Field value" });
     val.addEventListener("input", () => { f.value = val.value; f.changed = true; });
+    // a saved hidden field: 👁 loads its value (changing nothing until it's edited)
+    const valR = revealInput(val, f.protected && f.existing && !f.changed && d ? () => savedSecret(f.saved)().then((v) => { f.loaded = v; f.value = v; return v; }) : null, f.name || "value");
+    val.addEventListener("input", () => { if (f.loaded !== undefined && val.value === f.loaded) f.changed = false; });
     const prot = h("input", { type: "checkbox", checked: f.protected, title: "Hidden (like a password)" });
     prot.addEventListener("change", () => { f.protected = prot.checked; val.type = prot.checked ? "password" : "text"; });
-    return h("div", { class: "cf-row" }, n, val, h("label", { class: "check", title: "Hidden" }, prot, "🔒"),
+    return h("div", { class: "cf-row" }, f.protected && f.existing ? valR.el : val, h("label", { class: "check", title: "Hidden" }, prot, "🔒"),
       h("button", { class: "icon-btn", type: "button", "aria-label": "Remove field", onclick: () => { extra.splice(i, 1); drawExtra(); } }, "✕"));
   }));
   drawExtra();
@@ -1440,7 +1470,7 @@ function itemEditor(d, tplKey, opts = {}) {
   const loginBox = h("div", null, h("label", { class: "field" }, userLbl, username), field("Password", pw.el), h("div", { class: "row" }, gen), strengthMeter(pw.input), breachHint(pw.input),
     totpLive,
     field("2FA (time-based code)", h("div", { class: "input-with totp-row" }, totpIn, totpKeyEye, scanBtn), "Scan the QR code, or paste the otpauth:// link or the setup key your site shows."), totpRemove);
-  const cardBox = h("div", null, field("Name on card", holder), field("Card number", number), h("div", { class: "form-row" }, field("Expiry", expiry), field("CVV", cvv), field("PIN", pin)));
+  const cardBox = h("div", null, field("Name on card", holder), field("Card number", numberR.el), h("div", { class: "form-row" }, field("Expiry", expiry), field("CVV", cvvR.el), field("PIN", pinR.el)));
   const sync = () => {
     const t = TEMPLATES[kind.value];
     loginBox.hidden = t.type !== "login"; cardBox.hidden = t.type !== "card";
@@ -1464,15 +1494,15 @@ function itemEditor(d, tplKey, opts = {}) {
     if (creating) { body.type = type.value; if (!["login", "card", "note"].includes(kind.value)) body.template = kind.value; }
     if (type.value === "login") {
       body.username = username.value;
-      if (pw.input.value || creating) body.password = pw.input.value;
+      if ((pw.input.value && !pw.unchanged()) || creating) body.password = pw.input.value;
       const t = totpIn.value.trim();
       if (t && t !== editTotp.loaded) body.totp = t; else if (removeTotp) body.totp = "";
     } else if (type.value === "card") {
       body.cardholder = holder.value; body.expiry = expiry.value;
       body.card = {};
-      if (number.value) body.card.number = number.value;
-      if (cvv.value) body.card.cvv = cvv.value;
-      if (pin.value) body.card.pin = pin.value;
+      if (number.value && !numberR.unchanged()) body.card.number = number.value;
+      if (cvv.value && !cvvR.unchanged()) body.card.cvv = cvv.value;
+      if (pin.value && !pinR.unchanged()) body.card.pin = pin.value;
     }
     body.fields = extra.filter((f) => f.name.trim() && !(f.preset && !f.value)).map((f) => ({ name: f.name.trim(), protected: f.protected,
       value: f.protected && f.existing && !f.changed ? null : (f.value || "") }));

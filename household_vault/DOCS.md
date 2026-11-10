@@ -224,6 +224,14 @@ Card numbers, CVVs, PINs and 2FA secrets are never printed. The choice is saved
 inside the vault file, so it travels with downloads. Other members are alerted
 when someone prints the sheet.
 
+## Seeing a password while editing
+
+**✎ Edit** leaves the saved password empty ("unchanged"). Press **👁** next to it
+to load the current password into the box and show it — then change it a little,
+or just check it; **👁** again hides it. The same works for a card's number, CVV
+and PIN and for hidden custom fields. Nothing is fetched until you press 👁, and
+saving without changing it leaves it as it was (no new entry in its history).
+
 ## 2FA codes while editing
 
 **✎ Edit** on a login with a 2FA code shows **Current 2FA code** as dots: press

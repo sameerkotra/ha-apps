@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.3.5
+
+- **See the current password while editing:** 👁 next to the password box now loads the saved password and shows it (it used to show only what you typed). The same for a card's number, CVV and PIN and hidden custom fields; nothing is fetched until you press 👁, and saving without changing it leaves it as it was.
+
 ## 2.3.4
 
 - **Updated dependencies:** FastAPI 0.162.0, python-multipart 0.0.33. Security and bug fixes; nothing changes in how the app works.
