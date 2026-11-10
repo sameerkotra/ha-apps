@@ -2336,7 +2336,7 @@ let leafletReady = null, sanscriptReady = null;
 function loadSanscript() {
   if (window.Sanscript) return Promise.resolve(window.Sanscript);
   if (!sanscriptReady) sanscriptReady = new Promise((resolve, reject) => {
-    document.head.appendChild(h("script", { src: "vendor/sanscript/sanscript.js?v=2.7.2",
+    document.head.appendChild(h("script", { src: "vendor/sanscript/sanscript.js?v=2.7.3",
       onload: () => resolve(window.Sanscript), onerror: () => { sanscriptReady = null; reject(new Error("Couldn't load the transliteration helper.")); } }));
   });
   return sanscriptReady;
@@ -2345,8 +2345,8 @@ function loadLeaflet() {
   if (window.L) return Promise.resolve(window.L);
   if (!leafletReady) {
     leafletReady = new Promise((resolve, reject) => {
-      document.head.appendChild(h("link", { rel: "stylesheet", href: "vendor/leaflet/leaflet.css?v=2.7.2" }));
-      document.head.appendChild(h("script", { src: "vendor/leaflet/leaflet.js?v=2.7.2",
+      document.head.appendChild(h("link", { rel: "stylesheet", href: "vendor/leaflet/leaflet.css?v=2.7.3" }));
+      document.head.appendChild(h("script", { src: "vendor/leaflet/leaflet.js?v=2.7.3",
         onload: () => resolve(window.L), onerror: () => { leafletReady = null; reject(new Error("Couldn't load the map.")); } }));
     });
   }
