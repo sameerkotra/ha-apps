@@ -9,7 +9,7 @@ import unittest
 from common_tests import packaging_core as pk
 
 HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))     # the app folder
-VERSION = "1.14.2"
+VERSION = "1.14.3"
 REPO_URL = pk.REPO_URL
 
 
@@ -106,7 +106,7 @@ class PackagingTests(unittest.TestCase):
 
     def test_requirements_pure_python_and_pinned(self):
         reqs = [l.strip() for l in read("requirements.txt").splitlines() if l.strip()]
-        self.assertEqual(reqs, ["fastapi==0.146.0", "uvicorn==0.54.0", "python-multipart==0.0.32", "wsproto==1.3.2"])   # wsproto: the live link's WebSocket
+        self.assertEqual(reqs, ["fastapi==0.162.0", "uvicorn==0.54.0", "python-multipart==0.0.33", "wsproto==1.3.2"])   # wsproto: the live link's WebSocket
         docker = read("Dockerfile")
         self.assertIn("python:3.12-alpine", docker)
         self.assertIn("tzdata", docker)
