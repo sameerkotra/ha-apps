@@ -4,7 +4,7 @@
 # OLLAMA_LIBS: "all" (the default) copies all of Ollama's libraries, so an NVIDIA graphics card is used when the
 # container is given one (docker-compose.yml's `gpus`); "cpu" copies only the CPU parts — a much smaller image for a
 # machine without a supported graphics card.
-ARG OLLAMA_VERSION=0.40.7
+ARG OLLAMA_VERSION=0.40.13
 FROM docker.io/ollama/ollama:${OLLAMA_VERSION} AS ollama
 ARG OLLAMA_LIBS=all
 RUN mkdir /ollama-libs \

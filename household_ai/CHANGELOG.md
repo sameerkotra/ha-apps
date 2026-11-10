@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.1.3
+
+- **Updated dependencies:** Ollama 0.40.13, FastAPI 0.162.0, python-multipart 0.0.33. Security and bug fixes; nothing changes in how the app works.
+
 ## 1.1.2
 
 - **Updated dependencies:** Ollama 0.40.7, FastAPI 0.146.0, Uvicorn 0.54.0. Security and bug fixes; nothing changes in how the app works.
