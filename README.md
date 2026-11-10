@@ -77,9 +77,9 @@ Tree and Household Chat keep their files in the same `/share` folder either way.
 ### The Household Assistant in Assist (an integration)
 
 The Household Assistant can also answer **Assist**, Home Assistant's voice assistant, through a small companion
-integration in this repository's `custom_components/household_assistant` folder: in HACS add this repository as a
-custom repository of type *Integration* and install **Household Assistant**, or copy the folder into your
-configuration's `custom_components`. Then add the integration, turn on **Answer Assist** in the app's App
+integration in this repository's `custom_components/household_assistant` folder: in **Settings → Marketplace**
+(Home Assistant 2026.11 and later; HACS before that) choose **Add from link**, enter this repository's address and
+install **Household Assistant**, or copy the folder into your configuration's `custom_components`. Then add the integration, turn on **Answer Assist** in the app's App
 settings, and choose *Household Assistant* as a voice assistant's conversation agent. The app's Documentation
 tab has the details.
 

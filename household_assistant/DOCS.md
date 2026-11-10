@@ -170,10 +170,13 @@ the same app again with the change.
 The assistant can answer **Assist**, Home Assistant's own voice assistant ("What's on my list today?" to a phone,
 a voice satellite or the Assist dialog), through a small companion **integration** from this repository:
 
-1. **Install the integration.** With HACS: HACS → ⋮ → **Custom repositories**, add
-   `https://github.com/sameerkotra/ha-apps` as an *Integration*, then install **Household Assistant**. Without
-   HACS: copy the repository's `custom_components/household_assistant` folder into your Home Assistant
-   configuration folder's `custom_components`. Restart Home Assistant.
+1. **Install the integration.** From the Marketplace (Home Assistant 2026.11 and later): **Settings →
+   Marketplace → Add from link**, enter `https://github.com/sameerkotra/ha-apps` (it asks you to approve a GitHub
+   sign-in and to accept the community-project notice once), then install **Household Assistant** — it opens its
+   setup straight away, no restart needed (updates still ask for one). On older versions with HACS: HACS → ⋮ →
+   **Custom repositories**, add the same address as an *Integration*, install, and restart. Without either: copy
+   the repository's `custom_components/household_assistant` folder into your Home Assistant configuration
+   folder's `custom_components` and restart.
 2. **Add it**: Settings → Devices & services → **Add integration** → *Household Assistant*.
 3. **Turn on Answer Assist** in this app: Admin → App settings → People.
 4. **Choose it in a voice assistant**: Settings → Voice assistants → a voice assistant → *Conversation agent*:

@@ -16,7 +16,7 @@ VERSIONS = {"calorie_tracker": "2.6.3", "family_tree": "2.7.3", "household_chat"
 # Finance Dashboard is published as it is, at its own version, with its own packaging tests
 # (finance/tests/test_packaging.py); only the repository-wide basics are checked here.
 FINANCE = "finance"
-FINANCE_VERSION = "1.14.6"
+FINANCE_VERSION = "1.14.7"
 # Household Arcade: a newer app, built the same way as the six above, at its own version.
 ARCADE = "household_arcade"
 ARCADE_VERSION = "1.14.3"
@@ -28,7 +28,7 @@ DOCS = "household_docs"
 DOCS_VERSION = "1.8.3"
 # Household Assistant: the eleventh app, answering from what the other apps know (HOUSEHOLD_ASSISTANT_SPEC.md).
 ASSISTANT = "household_assistant"
-ASSISTANT_VERSION = "1.7.3"
+ASSISTANT_VERSION = "1.7.4"
 # Household Proxy: the thirteenth app, home-network sites opened inside Home Assistant (household_proxy/spec/SPEC.md).
 PROXY = "household_proxy"
 PROXY_VERSION = "0.7.3"

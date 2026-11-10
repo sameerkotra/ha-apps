@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.7.4
+
+- **Install steps for Home Assistant 2026.11:** the Assist integration is now installed from **Settings → Marketplace → Add from link** (HACS became the built-in Marketplace); the HACS and manual steps stay for older versions.
+
 ## 1.7.3
 
 - **Updated dependencies:** FastAPI 0.162.0, python-multipart 0.0.33. Security and bug fixes; nothing changes in how the app works.
