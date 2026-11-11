@@ -981,6 +981,11 @@ button:disabled, input:disabled { opacity: 0.55; cursor: not-allowed; }
 .card-head-tools { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
 .btn-link { text-decoration: none; display: inline-flex; align-items: center; }
 .pattern { border-top: 1px solid var(--border); padding: 10px 0; }
+.sym-times { margin-top: 6px; }
+.sym-times li { align-items: center; flex-wrap: wrap; }
+.sym-times .link-btn { min-height: 44px; }
+.sym-note { flex-basis: 100%; color: var(--text-dim); font-size: 0.85rem; }
+#symHistFilter { width: 100%; margin-bottom: 8px; }
 .pattern:first-child { border-top: none; }
 .pattern > summary { list-style: none; cursor: pointer; border-radius: 8px; }
 .pattern > summary::-webkit-details-marker { display: none; }

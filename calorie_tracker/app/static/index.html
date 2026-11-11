@@ -4,11 +4,11 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Calorie Tracker</title>
-<script src="common/theme-boot.js?v=2.6.3"></script>
-<link rel="stylesheet" href="common/themes.css?v=2.6.3">
-<link rel="stylesheet" href="common/settings.css?v=2.6.3">
-<link rel="stylesheet" href="common/person-data.css?v=2.6.3">
-<link rel="stylesheet" href="style.css?v=2.6.3">
+<script src="common/theme-boot.js?v=2.7.0"></script>
+<link rel="stylesheet" href="common/themes.css?v=2.7.0">
+<link rel="stylesheet" href="common/settings.css?v=2.7.0">
+<link rel="stylesheet" href="common/person-data.css?v=2.7.0">
+<link rel="stylesheet" href="style.css?v=2.7.0">
 </head>
 <body>
 <div id="app">
@@ -204,6 +204,24 @@
           <p id="patternAbout"></p>
         </details>
         <div id="patternList"></div>
+      </div>
+
+      <div class="card">
+        <div class="card-head-row">
+          <h3>Every time</h3>
+          <div class="card-head-tools">
+            <select id="symHistDays" aria-label="Over">
+              <option value="30">Last 30 days</option>
+              <option value="90">Last 90 days</option>
+              <option value="180">Last 6 months</option>
+              <option value="365">Last year</option>
+              <option value="0" selected>All time</option>
+            </select>
+          </div>
+        </div>
+        <p class="hint" id="symHistIntro">Each symptom you've logged — even once — and every time it came. Tap a date to open that day.</p>
+        <input id="symHistFilter" type="search" placeholder="Find a symptom" aria-label="Find a symptom" hidden>
+        <div id="symHistList"></div>
       </div>
     </section>
 
@@ -414,13 +432,13 @@
   </div>
 </div>
 
-<script src="common/ui.js?v=2.6.3"></script>
-<script src="common/settings.js?v=2.6.3"></script>
-<script src="common/people.js?v=2.6.3"></script>
-<script src="common/person-data.js?v=2.6.3"></script>
-<script src="common/backnav.js?v=2.6.3"></script>
-<script src="common/whoami.js?v=2.6.3"></script>
-<script src="common/deeplink.js?v=2.6.3"></script>
-<script src="app.js?v=2.6.3"></script>
+<script src="common/ui.js?v=2.7.0"></script>
+<script src="common/settings.js?v=2.7.0"></script>
+<script src="common/people.js?v=2.7.0"></script>
+<script src="common/person-data.js?v=2.7.0"></script>
+<script src="common/backnav.js?v=2.7.0"></script>
+<script src="common/whoami.js?v=2.7.0"></script>
+<script src="common/deeplink.js?v=2.7.0"></script>
+<script src="app.js?v=2.7.0"></script>
 </body>
 </html>

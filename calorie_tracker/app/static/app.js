@@ -182,7 +182,7 @@ function openTab(tab) {
   activateTab(tab);
   if (tab === "ai") refreshAiStatus();
   if (tab === "weight") loadWeightHistory();
-  if (tab === "symptoms") { loadSymptomDay(); loadPatterns(); }
+  if (tab === "symptoms") { loadSymptomDay(); loadPatterns(); loadSymptomHistory(); }
   // The history canvas sizes itself from its container's clientWidth, which is 0 while its tab-panel is
   // display:none — so it has to re-measure once Dashboard is what's actually visible.
   if (tab === "dashboard") { loadHistory(); loadDashTop(); }
@@ -1656,7 +1656,7 @@ $("#symAddBtn").addEventListener("click", withErrors(async () => {
   $("#symNote").value = "";
   $("#symTime").value = "";
   $all("#symQuick .chip").forEach(x => x.classList.remove("on"));
-  await Promise.all([loadSymptomDay(), loadChoices(), loadPatterns()]);
+  await Promise.all([loadSymptomDay(), loadChoices(), loadPatterns(), loadSymptomHistory()]);
 }));
 
 async function loadSymptomDay() {
@@ -1695,7 +1695,7 @@ async function loadSymptomDay() {
     const s = syms.find(x => String(x.id) === btn.dataset.id);
     if (!confirm(`Delete "${s ? s.symptom : "this symptom"}"?`)) return;
     await api(withUser(`/api/symptoms/${btn.dataset.id}`), { method: "DELETE" });
-    await Promise.all([loadSymptomDay(), loadPatterns()]);
+    await Promise.all([loadSymptomDay(), loadPatterns(), loadSymptomHistory()]);
   })));
 }
 
@@ -1737,6 +1737,48 @@ async function loadPatterns() {
     <p class="hint">Logged too few times to compare (${p.minCount} needed): ${p.tooFew.map(s => `${escapeHtml(s.name)} (${s.count})`).join(", ")}.</p>` : "");
 }
 $("#patternDays").addEventListener("change", withErrors(loadPatterns));
+
+// Every time: each symptom logged in the chosen time (all time by default), even once, with every occurrence.
+state.symHist = null;
+async function loadSymptomHistory() {
+  const list = $("#symHistList");
+  let h;
+  try { h = await api(withUser(`/api/symptoms/history?days=${$("#symHistDays").value}`)); }
+  catch (e) { list.replaceChildren(UI.errorBox(e, loadSymptomHistory)); return; }
+  state.symHist = h;
+  $("#symHistFilter").hidden = h.symptoms.length < 6;
+  drawSymptomHistory();
+}
+function drawSymptomHistory() {
+  const h = state.symHist, list = $("#symHistList");
+  if (!h) return;
+  if (!h.symptoms.length) {
+    list.replaceChildren(UI.empty("No symptoms logged", $("#symHistDays").value === "0" ? "Log one above and it shows here." : "None in this time — try All time."));
+    return;
+  }
+  const q = $("#symHistFilter").value.trim().toLowerCase();
+  const shown = h.symptoms.filter(s => !q || s.name.toLowerCase().includes(q));
+  const when = (d) => new Date(d + "T12:00:00").toLocaleDateString(undefined, { weekday: "short", day: "numeric", month: "short", year: "numeric" });
+  list.innerHTML = (shown.length ? shown.map(s => `
+    <details class="pattern">
+      <summary><div class="pattern-head"><h4>${escapeHtml(s.name)}</h4>
+        <span class="hint">${s.count === 1 ? `once, on ${escapeHtml(when(s.last))}` : `${s.count} times on ${s.days} day${s.days === 1 ? "" : "s"} · last ${escapeHtml(when(s.last))} · first ${escapeHtml(when(s.first))}`}${s.worst ? ` · worst ${s.worst} of 5` : ""}</span></div></summary>
+      <ul class="timeline sym-times">${s.times.map(t => `
+        <li><button type="button" class="link-btn" data-day="${escapeHtml(t.date)}" title="Open this day">${escapeHtml(when(t.date))}</button>
+          <span class="hint">${t.time ? escapeHtml(t.time) : "—"}</span>
+          ${t.severity ? `<span class="sev-dot sev-${t.severity}" title="How bad: ${t.severity} of 5">${t.severity}</span>` : ""}
+          ${t.note ? `<span class="sym-note">${escapeHtml(t.note)}</span>` : ""}</li>`).join("")}</ul>
+    </details>`).join("") : `<p class="hint">No symptom matches “${escapeHtml(q)}”.</p>`) +
+    (h.cut ? `<p class="hint">Showing the newest ${h.total} — choose a shorter time to see older ones in full.</p>` : "");
+}
+$("#symHistDays").addEventListener("change", withErrors(loadSymptomHistory));
+$("#symHistFilter").addEventListener("input", drawSymptomHistory);
+$("#symHistList").addEventListener("click", withErrors(async (e) => {
+  const b = e.target.closest("button[data-day]");
+  if (!b) return;
+  await setDate(b.dataset.day);
+  window.scrollTo({ top: 0, behavior: "smooth" });
+}));
 
 // ---------- weight ----------
 $("#weightDate").value = state.date;
@@ -2209,6 +2251,7 @@ async function refreshAll() {
     loadChoices(),
     loadSymptomDay(),
     $("#tab-symptoms").classList.contains("active") ? loadPatterns() : null,
+    $("#tab-symptoms").classList.contains("active") ? loadSymptomHistory() : null,
   ]);
 }
 
@@ -2375,7 +2418,7 @@ function openLink(r) {
 }
 
 // First paint: a loading hint in every list until its data is in.
-["#foodLogList", "#savedFoodsList", "#weightList", "#dayTimeline", "#patternList", "#usersList", "#monthSummaryGrid"]
+["#foodLogList", "#savedFoodsList", "#weightList", "#dayTimeline", "#patternList", "#symHistList", "#usersList", "#monthSummaryGrid"]
   .forEach(sel => UI.loading($(sel)));
 
 (async function init() {

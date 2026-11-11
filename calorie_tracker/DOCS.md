@@ -160,6 +160,9 @@ Your own symptom diary, next to your food. It follows the date bar like the Food
   it's compared.
 - Patterns shows what came together, not what causes what. It gets better the more you log — food
   as well as symptoms. Talk to a doctor about symptoms that worry you.
+- **Every time**: each symptom you've logged — even just once — with how many times, its first and last
+  day and its worst; tap it for every time it came (date, time, how bad, note). All time by default, or the
+  last 30 days to a year; **Find a symptom** narrows a long list. Tap a date to open that day.
 - **⬇ Food & symptoms (CSV)**: everything in that time, in time order (date, time, food or symptom,
   details, severity, tags, calories, note) — to keep, or to take to a doctor.
 

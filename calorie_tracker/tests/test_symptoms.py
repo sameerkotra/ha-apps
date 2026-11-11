@@ -77,6 +77,25 @@ class Symptoms(ApiBase):
         self.assertEqual(self.c.delete(f"/api/symptoms/{s['id']}", headers=ALICE).status_code, 200)
         self.assertEqual(self.c.delete(f"/api/symptoms/{s['id']}", headers=ALICE).status_code, 404)
 
+    def test_history_lists_every_time_even_once(self):
+        self.add(symptom="Bloating", date=day(0), time="14:00", severity=2)
+        self.add(symptom="bloating", date=day(2), time="09:00", severity=4, note="after milk")
+        self.add(symptom="Bloating", date=day(2), time="21:00")
+        self.add(symptom="Hiccups", date=day(400), time="07:00", severity=1)        # once, long ago
+        self.add(symptom="Headache", h=BOB)                                         # someone else's
+        h = self.c.get("/api/symptoms/history", headers=ALICE).json()               # all time by default
+        self.assertEqual([s["name"] for s in h["symptoms"]], ["Bloating", "Hiccups"])
+        b = h["symptoms"][0]
+        self.assertEqual((b["count"], b["days"], b["last"], b["first"], b["worst"]), (3, 2, day(0), day(2), 4))
+        self.assertEqual([(t["date"], t["time"]) for t in b["times"]],
+                         [(day(0), "14:00"), (day(2), "21:00"), (day(2), "09:00")])
+        self.assertEqual(b["times"][2]["note"], "after milk")
+        self.assertEqual(h["symptoms"][1]["count"], 1)                              # logged once still shows
+        recent = self.c.get("/api/symptoms/history?days=30", headers=ALICE).json()
+        self.assertEqual([s["name"] for s in recent["symptoms"]], ["Bloating"])
+        self.assertEqual(self.c.get("/api/symptoms/history?days=7", headers=ALICE).status_code, 422)
+        self.assertEqual(self.c.get("/api/symptoms/history", headers=BOB).json()["symptoms"][0]["name"], "Headache")
+
     def test_checks(self):
         for bad in ({"severity": 0}, {"severity": 6}, {"time": "2pm"}, {"symptom": "   "}, {"symptom": "x" * 61},
                     {"date": (config.today() + timedelta(days=1)).isoformat()}, {"note": "x" * 501}):

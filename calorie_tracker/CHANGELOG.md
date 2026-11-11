@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.7.0
+
+- **Every time a symptom came:** a new **Every time** card on Symptoms lists each symptom you've logged — even just once — with its count, first and last day and worst, and opens to every time it came (date, time, how bad, note). All time by default (or the last 30 days to a year); tap a date to open that day.
+
 ## 2.6.3
 
 - **Updated dependencies:** FastAPI 0.162.0. Security and bug fixes; nothing changes in how the app works.

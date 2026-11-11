@@ -14,6 +14,7 @@ router = APIRouter(tags=["symptoms"])
 MAX_PER_DAY = 100           # symptom entries one person can log on one day
 QUICK = 12                  # one-tap symptoms offered
 RANGES = (30, 90, 180, 365)
+HISTORY_MAX = 5000          # occurrences one History answer lists (newest first)
 
 
 @router.get("/api/symptoms")
@@ -72,6 +73,34 @@ def choices(user: dict = Depends(get_acting_user)):
     starter = [t.lower() for t in settings.word_list(settings.get("food_tag_list"))]
     tags = starter + sorted(own_tags - set(starter))
     return {"symptoms": quick[:max(QUICK, len(used))], "tags": tags}
+
+
+@router.get("/api/symptoms/history")
+def history(days: int = Query(0), user: dict = Depends(get_acting_user)):
+    """Every time each symptom was logged — even once — in the last `days` days (0: all time): per symptom (the
+    spelling used last; "bloating" and "Bloating" are one) its count, first and last day and every occurrence,
+    newest first. The symptoms come most recent first."""
+    if days and days not in RANGES:
+        raise HTTPException(422, "days: 0 (all time) or one of " + ", ".join(map(str, RANGES)))
+    since = _range(days)[0].isoformat() if days else "0000-01-01"
+    with db.get_conn() as conn:
+        rows = db.rows_to_list(conn.execute(
+            "SELECT id, date, time, symptom, severity, note FROM symptom_logs WHERE user_id = ? AND date >= ? "
+            "ORDER BY date DESC, COALESCE(time, '') DESC, id DESC LIMIT ?", (user["id"], since, HISTORY_MAX + 1)))
+    cut = len(rows) > HISTORY_MAX
+    rows = rows[:HISTORY_MAX]
+    groups: dict = {}
+    for r in rows:
+        g = groups.setdefault(r["symptom"].lower(), {"name": r["symptom"], "times": []})
+        g["times"].append({"id": r["id"], "date": r["date"], "time": r["time"], "severity": r["severity"],
+                           "note": r["note"]})
+    out = []
+    for g in groups.values():
+        t = g["times"]
+        sev = [x["severity"] for x in t if x["severity"]]
+        out.append({"name": g["name"], "count": len(t), "days": len({x["date"] for x in t}), "last": t[0]["date"],
+                    "first": t[-1]["date"], "worst": max(sev) if sev else None, "times": t})
+    return {"days": days, "total": len(rows), "cut": cut, "symptoms": out}
 
 
 def _range(days: int) -> tuple[date_type, date_type]:
