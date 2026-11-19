@@ -4,11 +4,11 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>Splitpot</title>
-<link rel="stylesheet" href="fonts/fonts.css?v=2.8.3" />
-<script src="common/theme-boot.js?v=2.8.3"></script>
-<link rel="stylesheet" href="common/themes.css?v=2.8.3" />
-<link rel="stylesheet" href="common/settings.css?v=2.8.3" />
-<link rel="stylesheet" href="style.css?v=2.8.3" />
+<link rel="stylesheet" href="fonts/fonts.css?v=2.9.0" />
+<script src="common/theme-boot.js?v=2.9.0"></script>
+<link rel="stylesheet" href="common/themes.css?v=2.9.0" />
+<link rel="stylesheet" href="common/settings.css?v=2.9.0" />
+<link rel="stylesheet" href="style.css?v=2.9.0" />
 </head>
 <body>
   <div class="app">
@@ -69,7 +69,7 @@
       </header>
       <!-- First run (admin_users empty): shown on every page, to everyone -->
       <div id="noAdminBanner" class="setup-banner" role="alert" hidden></div>
-      <!-- Summary: the overall balance, and spending searched by days, amounts, who paid and group -->
+      <!-- Summary: the overall balance, and spending searched by days, what for, amounts, who paid and group -->
       <section id="view-summary" class="view">
         <div class="ledger-panel">
           <div class="view-head"><h1>Summary</h1>
@@ -77,7 +77,7 @@
               <button type="button" class="split-btn active" role="tab" aria-selected="true" data-sumview="spending">Spending</button>
               <button type="button" class="split-btn" role="tab" aria-selected="false" data-sumview="activity">Activity</button>
             </div></div>
-          <p class="hint">Spending by group and by person, for the days and amounts you choose. Settle-up payments aren't spending, so they're left out.</p>
+          <p class="hint">Spending by group and by person, for the days, words and amounts you choose. Settle-up payments aren't spending, so they're left out.</p>
 
           <form id="summaryForm" class="search-form" autocomplete="off">
             <div class="field">
@@ -93,6 +93,7 @@
             </div>
             <div class="field"><label for="sumFrom">From</label><input type="date" id="sumFrom" required></div>
             <div class="field"><label for="sumTo">To</label><input type="date" id="sumTo" required></div>
+            <div class="field wide"><label for="sumWhat">What for</label><input type="search" id="sumWhat" maxlength="200" placeholder="e.g. groceries" enterkeyhint="search"></div>
             <button type="button" id="sumMoreBtn" class="btn ghost more-filters-btn" aria-expanded="false" aria-controls="summaryForm">More filters</button>
             <div class="field more-filter"><label for="sumMin">Amount from</label><input type="number" id="sumMin" min="0" step="0.01" inputmode="decimal" placeholder="any"></div>
             <div class="field more-filter"><label for="sumMax">Amount to</label><input type="number" id="sumMax" min="0" step="0.01" inputmode="decimal" placeholder="any"></div>
@@ -369,12 +370,12 @@
   <div id="modalRoot"></div>
   <div id="toastRoot" class="toast-root" aria-live="polite"></div>
 
-  <script src="common/ui.js?v=2.8.3"></script>
-  <script src="common/settings.js?v=2.8.3"></script>
-  <script src="common/people.js?v=2.8.3"></script>
-  <script src="common/backnav.js?v=2.8.3"></script>
-  <script src="common/whoami.js?v=2.8.3"></script>
-  <script src="common/deeplink.js?v=2.8.3"></script>
-  <script src="app.js?v=2.8.3"></script>
+  <script src="common/ui.js?v=2.9.0"></script>
+  <script src="common/settings.js?v=2.9.0"></script>
+  <script src="common/people.js?v=2.9.0"></script>
+  <script src="common/backnav.js?v=2.9.0"></script>
+  <script src="common/whoami.js?v=2.9.0"></script>
+  <script src="common/deeplink.js?v=2.9.0"></script>
+  <script src="app.js?v=2.9.0"></script>
 </body>
 </html>

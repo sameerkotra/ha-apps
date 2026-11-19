@@ -2731,9 +2731,10 @@ def search_events(actor: Optional[str] = Query(None, max_length=200), groupId: O
 @router.get("/report")
 def report(start: str = Query(..., alias="from", max_length=10), end: str = Query(..., alias="to", max_length=10),
            min_amount: Optional[Money] = Query(None, alias="min"), max_amount: Optional[Money] = Query(None, alias="max"),
-           paidBy: Optional[str] = Query(None, max_length=64), groupId: Optional[str] = Query(None, max_length=64)):
+           paidBy: Optional[str] = Query(None, max_length=64), groupId: Optional[str] = Query(None, max_length=64),
+           q: Optional[str] = Query(None, max_length=200)):
     """The Summary page: the expenses (not settle-up payments) dated in a range of the household's days, within an
-    amount range, paid by someone, in a group — their total, by group (total, how many), by person (what they paid,
+    amount range, paid by someone, in a group, whose "What for" has every word of `q` in it (any case) — their total, by group (total, how many), by person (what they paid,
     and their share of these expenses) and the expenses themselves (newest first, at most REPORT_ROWS)."""
     a, b = day_bounds(start, end)
     check_amounts(min_amount, max_amount)
@@ -2751,6 +2752,10 @@ def report(start: str = Query(..., alias="from", max_length=10), end: str = Quer
     if groupId:
         where.append("e.group_id = ?")
         args.append(groupId)
+    if q and q.strip():
+        for word in q.split()[:8]:
+            where.append("e.description LIKE ? ESCAPE '\\'")
+            args.append("%" + word.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%")
     cond = " AND ".join(where)
     c = "CAST(ROUND({} * 100) AS INTEGER)"
     with get_conn() as conn:

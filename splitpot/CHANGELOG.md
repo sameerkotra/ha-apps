@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.9.0
+
+- **Search the Summary by What for**: type a word (or a few) in **What for** and the Spending figures, By group,
+  By person and Transactions cover only the expenses whose description has them — "groceries", "costco milk".
+  Any case; **Clear** empties it.
+
 ## 2.8.3
 
 - **Updated dependencies:** FastAPI 0.162.0. Security and bug fixes; nothing changes in how the app works.

@@ -1675,6 +1675,8 @@ $('#sumPeriod').addEventListener('change', (e) => {
   $(id).addEventListener('change', runSummarySoon);
 });
 ['#sumMin', '#sumMax'].forEach((id) => $(id).addEventListener('input', () => { markMoreFilters(); runSummarySoon(); }));
+// What for: words in the expense's description, every one of them (any case); the browser's ✕ clears it at once
+$('#sumWhat').addEventListener('input', (e) => { if (e.target.value === '') runSummary(); else runSummarySoon(); });
 ['#sumPaidBy', '#sumGroup'].forEach((id) => $(id).addEventListener('change', () => { markMoreFilters(); runSummary(); }));
 
 // Phones: Amount, Paid by and Group fold under "More filters" (the button says how many are set).
@@ -1713,6 +1715,8 @@ async function runSummary() {
   amountParams($('#sumMin'), $('#sumMax'), q);
   if ($('#sumPaidBy').value) q.set('paidBy', $('#sumPaidBy').value);
   if ($('#sumGroup').value) q.set('groupId', $('#sumGroup').value);
+  const what = $('#sumWhat').value.trim();
+  if (what) q.set('q', what);
   if (!q.get('from') || !q.get('to')) { err.textContent = 'Pick the days.'; return; }
   const box = $('#summaryResult');
   if (!box.firstChild || box.querySelector('.ui-error')) UI.loading(box);
@@ -1730,7 +1734,10 @@ async function runSummary() {
   box.classList.remove('is-loading');
   const day = (iso) => new Date(iso + 'T12:00:00').toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' });
   const head = `<div class="period-summary"><strong>${money(r.total)}</strong> across ${r.count} expense${r.count === 1 ? '' : 's'} · ${day(r.from)} – ${day(r.to)}</div>`;
-  if (!r.count) { box.innerHTML = head + '<div class="empty-note">No expenses match.</div>'; return; }
+  if (!r.count) {
+    box.innerHTML = head + `<div class="empty-note">${what ? `No expenses with “${escapeHtml(what)}” in What for match.` : 'No expenses match.'}</div>`;
+    return;
+  }
   const max = Math.max(1, ...r.byGroup.map((g) => g.total));
   const groups = r.byGroup.map((g) => `
     <div class="bar-row">
@@ -1787,7 +1794,7 @@ $('#summaryForm').addEventListener('submit', (e) => { e.preventDefault(); runSum
 $('#sumClear').addEventListener('click', () => {
   $('#sumPeriod').value = 'this-month';
   setSummaryPeriod('this-month');
-  ['#sumMin', '#sumMax', '#sumPaidBy', '#sumGroup'].forEach((id) => { $(id).value = ''; });
+  ['#sumWhat', '#sumMin', '#sumMax', '#sumPaidBy', '#sumGroup'].forEach((id) => { $(id).value = ''; });
   markMoreFilters();
   runSummary();
 });

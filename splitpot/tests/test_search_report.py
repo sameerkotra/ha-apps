@@ -113,6 +113,22 @@ class Report(Base):
                 self.report(422, **bad)
         self.assertEqual(self.c.get("/api/report", headers=ALICE).status_code, 422)          # a range is needed
 
+    def test_what_for(self):
+        self.expense(4, paid_by="c", description="Milk at COSTCO")
+        self.expense(6, paid_by="c", description="50% off_sale")
+        r = self.report(q="groceries")
+        self.assertEqual((r["total"], r["count"], [g["name"] for g in r["byGroup"]]), (30, 1, ["House"]))
+        self.assertEqual({p["name"]: (p["paid"], p["share"]) for p in r["byPerson"]},
+                         {"Ann": (30, 10), "Ben": (0, 10), "Cat": (0, 10)})
+        self.assertEqual([t["description"] for t in self.report(q="costco milk")["transactions"]], ["Milk at COSTCO"])
+        self.assertEqual(self.report(q="milk bread")["count"], 0)                   # every word must be there
+        self.assertEqual([t["description"] for t in self.report(q="50%")["transactions"]], ["50% off_sale"])
+        self.assertEqual(self.report(q="5%")["count"], 0)                          # % and _ are letters
+        self.assertEqual(self.report(q="f_")["count"], 1)
+        self.assertEqual(self.report(q="   ")["count"], 4)                          # blank: no word filter
+        self.assertEqual(self.report(q="fuel", paidBy="a")["count"], 0)             # with the other filters
+        self.report(422, q="x" * 201)
+
     def test_the_last_day_is_counted_whole(self):
         self.expense(7, paid_by="c", description="Late", date="2026-08-31")
         r = self.report(**{"from": "2026-08-31", "to": "2026-08-31"})

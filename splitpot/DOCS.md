@@ -199,7 +199,9 @@ Two views at the top: **Spending** (shown first) and **Activity**.
 
 - **Spending**: pick a **Period** — this month (shown when the page opens),
   last month, this week, last week, this year, or **Date range…** with your
-  own From and To — and, if you like, an **Amount from / to**, who it was
+  own From and To — and, if you like, words in **What for** (the expense's
+  description: every word you type must be in it, in any case, so "costco
+  milk" finds "Milk at Costco"), an **Amount from / to**, who it was
   **Paid by** and a **Group** (under **More filters** on a phone). The figures
   follow as you change them (**Show** runs it straight away). You see:
   - the total and how many expenses;
