@@ -266,6 +266,22 @@ fieldset.section legend { font-weight: 600; padding: 0 4px; }
 .bm-host { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .bm-actions { display: flex; flex: none; }
 .bm-actions .icon-btn { min-width: 36px; min-height: 36px; }
+.bm-fold-all { display: flex; justify-content: flex-end; margin-top: 4px; }
+.bm-fold-all .link-btn { padding: 6px 2px; min-height: 32px; }
+.bm-group { display: flex; flex-direction: column; gap: 8px; margin-top: 6px; }
+.bm-group-head { display: flex; align-items: center; gap: 6px; border-bottom: 1px solid var(--border); }
+.bm-group-toggle { flex: 1; min-width: 0; display: flex; align-items: center; gap: 8px; background: none; border: 0; color: inherit;
+  font: inherit; font-weight: 600; text-align: left; cursor: pointer; padding: 8px 4px; min-height: 44px; border-radius: 8px; }
+.bm-group-toggle:hover:not(:disabled) { background: var(--panel-hover); }
+.bm-group-toggle:focus-visible { outline: 2px solid var(--accent); }
+.bm-group-toggle:disabled { cursor: default; }
+.bm-caret { display: inline-block; width: 1rem; flex: none; line-height: 1; text-align: center; transition: transform 0.15s; transform: rotate(90deg); }
+.bm-group.closed .bm-caret { transform: none; }
+.bm-group-name { overflow-wrap: anywhere; }
+.bm-group-count { font-weight: 400; background: var(--panel-hover); border-radius: 999px; padding: 0 8px; }
+.bm-group-items { display: flex; flex-direction: column; gap: 8px; padding-left: 10px; }
+.bm-group-items[hidden] { display: none; }
+@media (prefers-reduced-motion: reduce) { .bm-caret { transition: none; } }
 .bm-chrome { margin-top: 14px; }
 .bm-chrome .hint { margin: 4px 0 0; }
 @media (max-width: 760px) { .bm-host { white-space: normal; overflow-wrap: anywhere; } }

@@ -18,7 +18,7 @@
   const openModal = (title, content, opts) => UI.openModal(title, content, Object.assign({ escape: "stack" }, opts || {}));
 
   const state = { me: null, sites: [], sitesError: null, view: "sites", site: null, adminTab: "sites", admin: null,
-    reorderBm: false, reorderSites: false, addSitePending: false };
+    reorderBm: false, bmClosed: null, reorderSites: false, addSitePending: false };
   const isAdmin = () => !!(state.me && state.me.user.isAdmin);
   const PROBLEM = new Set(["down", "needs_attention"]);
 
@@ -208,40 +208,144 @@
 
   function hostOf(url) { try { return new URL(url).host; } catch (e) { return url; } }
 
+  // Groups: the bookmarks with the same group sit together under a header that folds away. Each person's folded groups
+  // are remembered in this browser (by name, any case). Bookmarks in no group come first, then each group in the order
+  // its first bookmark has.
+  const BM_CLOSED_KEY = "bookmarkGroupsClosed";
+  function closedGroups() {
+    if (!state.bmClosed) {
+      let got = [];
+      try { got = JSON.parse(UI.lsGet(BM_CLOSED_KEY) || "[]"); } catch (e) { got = []; }
+      state.bmClosed = new Set(Array.isArray(got) ? got.map((x) => String(x).toLowerCase()) : []);
+    }
+    return state.bmClosed;
+  }
+  function setGroupClosed(names, closed) {
+    const set = closedGroups();
+    names.forEach((n) => { if (closed) set.add(n.toLowerCase()); else set.delete(n.toLowerCase()); });
+    UI.lsSet(BM_CLOSED_KEY, JSON.stringify([...set]));
+  }
+  function bookmarkGroups(list) {
+    const loose = [], byKey = new Map();
+    list.forEach((b) => {
+      if (!b.group) { loose.push(b); return; }
+      const k = b.group.toLowerCase();
+      if (!byKey.has(k)) byKey.set(k, { name: b.group, items: [] });
+      byKey.get(k).items.push(b);
+    });
+    return { loose, groups: [...byKey.values()] };
+  }
+  function groupNames() { return bookmarkGroups(state.bookmarks || []).groups.map((g) => g.name); }
+
   function renderBookmarks() {
     const list = state.bookmarks || [];
     const admin = isAdmin();                                    // the order is everyone's: admins set it
+    const { loose, groups } = bookmarkGroups(list);
     const rb = $("#bmReorderBtn");
-    rb.hidden = !admin || list.length < 2;
+    rb.hidden = !admin || (list.length < 2 && groups.length < 2);
     if (rb.hidden) state.reorderBm = false;
     reorderLook(rb, state.reorderBm);
+    const reorder = admin && state.reorderBm;
     const empty = clear($("#noBookmarks"));
     empty.hidden = !!list.length;
     if (!list.length) mount(empty, UI.empty("No bookmarks yet", "Add the pages the household opens often — the school's site, the bin calendar, a recipe."));
-    const box = clear($("#bookmarkList"));
-    list.forEach((b, i) => {
+    const closed = closedGroups();
+
+    // Expand all / Collapse all, once there are two groups or more
+    const fold = clear($("#bmFoldAll"));
+    fold.hidden = groups.length < 2 || reorder;
+    if (!fold.hidden) {
+      const allClosed = groups.every((g) => closed.has(g.name.toLowerCase()));
+      fold.append(h("button", { type: "button", class: "link-btn", onclick: () => {
+        setGroupClosed(groups.map((g) => g.name), !allClosed); renderBookmarks();
+      } }, allClosed ? "Expand all" : "Collapse all"));
+    }
+
+    // the order on screen, which ▲▼ change (and send in full)
+    const saveOrder = async (ids) => {
+      try { state.bookmarks = (await api("api/bookmarks/reorder", { method: "POST", body: { ids } })).bookmarks; renderBookmarks(); }
+      catch (e) { toast(e.message, true); openBookmarks(); }
+    };
+    const shown = (gs) => [...loose, ...gs.flatMap((g) => g.items)].map((b) => b.id);
+    const row = (b, siblings, j) => {
       const link = bookmarkLink(b.url);
-      const move = async (d) => {
-        const ids = list.map((x) => x.id);
-        const [x] = ids.splice(i, 1);
-        ids.splice(i + d, 0, x);
-        try { state.bookmarks = (await api("api/bookmarks/reorder", { method: "POST", body: { ids } })).bookmarks; renderBookmarks(); }
-        catch (e) { toast(e.message, true); openBookmarks(); }
+      const move = (d) => {
+        const ids = shown(groups);
+        const a = ids.indexOf(b.id), c = ids.indexOf(siblings[j + d].id);
+        [ids[a], ids[c]] = [ids[c], ids[a]];
+        saveOrder(ids);
       };
-      const reorder = admin && state.reorderBm;
       const actions = h("div", { class: "bm-actions" },
-        reorder ? h("button", { type: "button", class: "icon-btn", title: "Move up", "aria-label": `Move ${b.name} up`, disabled: i === 0, onclick: () => move(-1) }, "▲") : null,
-        reorder ? h("button", { type: "button", class: "icon-btn", title: "Move down", "aria-label": `Move ${b.name} down`, disabled: i === list.length - 1, onclick: () => move(1) }, "▼") : null,
+        reorder ? h("button", { type: "button", class: "icon-btn", title: "Move up", "aria-label": `Move ${b.name} up`, disabled: j === 0, onclick: () => move(-1) }, "▲") : null,
+        reorder ? h("button", { type: "button", class: "icon-btn", title: "Move down", "aria-label": `Move ${b.name} down`, disabled: j === siblings.length - 1, onclick: () => move(1) }, "▼") : null,
         !reorder && b.canEdit ? moreBtn(`More for ${b.name}`, () => [
           { label: "✎ Edit…", onclick: () => editBookmark(b) },
           { label: "🗑 Delete…", danger: true, onclick: () => deleteBookmark(b) }]) : null);
-      box.append(h("div", { class: "bookmark" },
+      return h("div", { class: "bookmark" },
         h("a", { class: "bm-link", href: link.href, target: link.target || null, rel: "noopener noreferrer", title: b.url },
           h("span", { class: "bm-icon", "aria-hidden": "true" }, b.icon || "🔖"),
           h("span", { class: "bm-text" }, h("span", { class: "bm-name" }, b.name),
             h("span", { class: "bm-host dim small" }, hostOf(b.url) + (b.addedBy ? ` · added by ${b.addedBy}` : "")))),
-        actions));
+        actions);
+    };
+
+    const box = clear($("#bookmarkList"));
+    loose.forEach((b, j) => box.append(row(b, loose, j)));
+    groups.forEach((g, gi) => {
+      const isClosed = !reorder && closed.has(g.name.toLowerCase());   // reordering shows every group open
+      const itemsId = `bmGroup${gi}`;
+      const moveGroup = (d) => {
+        const gs = groups.slice();
+        [gs[gi], gs[gi + d]] = [gs[gi + d], gs[gi]];
+        saveOrder(shown(gs));
+      };
+      const head = h("div", { class: "bm-group-head" },
+        h("button", { type: "button", class: "bm-group-toggle", "aria-expanded": isClosed ? "false" : "true", "aria-controls": itemsId,
+          disabled: reorder, onclick: () => { setGroupClosed([g.name], !isClosed); renderBookmarks(); } },
+          h("span", { class: "bm-caret", "aria-hidden": "true" }, "▸"),
+          h("span", { class: "bm-group-name" }, g.name),
+          h("span", { class: "bm-group-count dim small" }, String(g.items.length))),
+        h("div", { class: "bm-actions" },
+          reorder ? h("button", { type: "button", class: "icon-btn", title: "Move group up", "aria-label": `Move group ${g.name} up`, disabled: gi === 0, onclick: () => moveGroup(-1) }, "▲") : null,
+          reorder ? h("button", { type: "button", class: "icon-btn", title: "Move group down", "aria-label": `Move group ${g.name} down`, disabled: gi === groups.length - 1, onclick: () => moveGroup(1) }, "▼") : null,
+          !reorder ? h("button", { type: "button", class: "icon-btn", title: `Add a bookmark to ${g.name}`, "aria-label": `Add a bookmark to ${g.name}`, onclick: () => editBookmark(null, g.name) }, "＋") : null,
+          !reorder && admin ? moreBtn(`More for group ${g.name}`, () => [
+            { label: "✎ Rename group…", onclick: () => renameGroup(g) },
+            { label: "Ungroup", onclick: () => ungroup(g) }]) : null));
+      box.append(h("section", { class: "bm-group" + (isClosed ? " closed" : "") }, head,
+        h("div", { class: "bm-group-items", id: itemsId, hidden: isClosed }, g.items.map((b, j) => row(b, g.items, j)))));
     });
+  }
+
+  async function renameGroup(g) {
+    const input = h("input", { class: "input", value: g.name, maxlength: 40, list: "bmGroupNames", autocapitalize: "words" });
+    const names = h("datalist", { id: "bmGroupNames" }, groupNames().filter((n) => n !== g.name).map((n) => h("option", { value: n })));
+    const err = h("p", { class: "error" });
+    const save = h("button", { type: "submit", class: "btn-primary" }, "Rename");
+    const form = h("form", { class: "site-form" },
+      field("Group name", input, "Type another group's name to put these bookmarks in it. Leave empty to ungroup them."), names, err,
+      h("div", { class: "row-between" }, h("span"), save));
+    const m = openModal(`Rename “${g.name}”`, form);
+    setTimeout(() => { input.focus(); input.select(); }, 0);
+    form.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      err.textContent = "";
+      save.disabled = true;
+      try {
+        const wasClosed = closedGroups().has(g.name.toLowerCase());
+        state.bookmarks = (await api("api/bookmarks/rename-group", { method: "POST", body: { from: g.name, to: input.value } })).bookmarks;
+        if (input.value.trim()) setGroupClosed([input.value.trim()], wasClosed);
+        renderBookmarks(); m.close(); toast(input.value.trim() ? "Group renamed" : "Ungrouped");
+      } catch (x) { err.textContent = x.message; save.disabled = false; }
+    });
+  }
+
+  async function ungroup(g) {
+    if (!await UI.confirmDialog("Ungroup?", `Take the ${g.items.length} bookmark${g.items.length === 1 ? "" : "s"} out of “${g.name}”? They stay, in no group.`, { okLabel: "Ungroup" })) return;
+    try {
+      state.bookmarks = (await api("api/bookmarks/rename-group", { method: "POST", body: { from: g.name, to: "" } })).bookmarks;
+      renderBookmarks(); toast("Ungrouped");
+    } catch (x) { toast(x.message, true); }
   }
 
   // the ↕ Reorder switch (Bookmarks and Admin → Sites): ▲▼ only while it's on
@@ -258,18 +362,21 @@
     catch (x) { if (onError) onError(x); else toast(x.message, true); return false; }
   }
 
-  function editBookmark(b) {
+  function editBookmark(b, inGroup) {
     const f = {
       name: h("input", { class: "input", value: b ? b.name : "", maxlength: 80, placeholder: "Router" }),
       url: h("input", { class: "input", value: b ? b.url : "", maxlength: 2000, placeholder: "https://example.com", inputmode: "url", autocapitalize: "off", spellcheck: "false" }),
       icon: h("input", { class: "input icon-input", value: b && b.icon ? b.icon : "", maxlength: 8, placeholder: "🔖" }),
+      group: h("input", { class: "input", value: b ? b.group || "" : inGroup || "", maxlength: 40, placeholder: "No group", list: "bmGroupList", autocapitalize: "words" }),
     };
+    const groupList = h("datalist", { id: "bmGroupList" }, groupNames().map((n) => h("option", { value: n })));
     const err = h("p", { class: "error" });
     const save = h("button", { type: "submit", class: "btn-primary" }, b ? "Save" : "Add");
     const del = b ? h("button", { type: "button", class: "btn-ghost danger" }, "Delete") : h("span");
     const form = h("form", { class: "site-form" },
       field("Address", f.url, "A web address — http:// or https://. Everyone here sees it; it opens in each person's browser, not through this app."),
-      field("Name", f.name, "Leave empty to use the site's address."), field("Icon (an emoji, optional)", f.icon), err,
+      field("Name", f.name, "Leave empty to use the site's address."), field("Icon (an emoji, optional)", f.icon),
+      field("Group (optional)", f.group, "Bookmarks with the same group sit together, under a header you can fold away. Pick one or type a new name."), groupList, err,
       h("div", { class: "row-between" }, del, save));
     const m = openModal(b ? "Edit bookmark" : "Add a bookmark", form);
     setTimeout(() => f.url.focus(), 0);
@@ -277,7 +384,7 @@
       e.preventDefault();
       err.textContent = "";
       save.disabled = true;
-      const body = { name: f.name.value, url: f.url.value, icon: f.icon.value };
+      const body = { name: f.name.value, url: f.url.value, icon: f.icon.value, group: f.group.value };
       try {
         const r = b ? await api(`api/bookmarks/${b.id}`, { method: "PUT", body }) : await api("api/bookmarks", { method: "POST", body });
         state.bookmarks = r.bookmarks; renderBookmarks(); m.close(); toast(b ? "Saved" : "Bookmark added");

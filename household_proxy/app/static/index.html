@@ -4,10 +4,10 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <title>Household Proxy</title>
-<script src="common/theme-boot.js?v=0.7.3"></script>
-<link rel="stylesheet" href="common/themes.css?v=0.7.3">
-<link rel="stylesheet" href="common/settings.css?v=0.7.3">
-<link rel="stylesheet" href="style.css?v=0.7.3">
+<script src="common/theme-boot.js?v=0.8.0"></script>
+<link rel="stylesheet" href="common/themes.css?v=0.8.0">
+<link rel="stylesheet" href="common/settings.css?v=0.8.0">
+<link rel="stylesheet" href="style.css?v=0.8.0">
 </head>
 <body>
 <header class="topbar" id="topbar">
@@ -44,7 +44,9 @@
   <p class="hint one-line">The household's links — everyone here sees them.</p>
   <details class="about"><summary>How they open, and who can change them</summary>
     <p>On a phone they open in Chrome, on a computer in a new tab. Anyone can add one; whoever added it (or an admin)
-      can change it with ⋯, and admins set the order with ↕ Reorder.</p></details>
+      can change it with ⋯, and admins set the order with ↕ Reorder. Put bookmarks in a group (in Add or Edit) to keep
+      them together; tap a group's name to fold it away or open it again — that's remembered on this device.</p></details>
+  <div id="bmFoldAll" class="bm-fold-all" hidden></div>
   <div id="bookmarkList" class="bookmark-list" aria-live="polite"></div>
   <div id="noBookmarks" hidden></div>
   <div class="bm-chrome" id="bmChromeRow" hidden>
@@ -102,12 +104,12 @@
 
 <div id="toastRoot" class="toast-root"></div>
 <div id="modalRoot"></div>
-<script src="common/ui.js?v=0.7.3"></script>
-<script src="common/settings.js?v=0.7.3"></script>
-<script src="common/people.js?v=0.7.3"></script>
-<script src="common/backnav.js?v=0.7.3"></script>
-<script src="common/whoami.js?v=0.7.3"></script>
-<script src="common/deeplink.js?v=0.7.3"></script>
-<script src="app.js?v=0.7.3"></script>
+<script src="common/ui.js?v=0.8.0"></script>
+<script src="common/settings.js?v=0.8.0"></script>
+<script src="common/people.js?v=0.8.0"></script>
+<script src="common/backnav.js?v=0.8.0"></script>
+<script src="common/whoami.js?v=0.8.0"></script>
+<script src="common/deeplink.js?v=0.8.0"></script>
+<script src="app.js?v=0.8.0"></script>
 </body>
 </html>

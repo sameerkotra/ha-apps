@@ -53,6 +53,42 @@ class Bookmarks(ProxyCase):
         self.assertEqual(self.c.post("/api/bookmarks/reorder", json={"ids": [a]}, headers=ADMIN).status_code, 409)
         self.assertEqual(self.c.post("/api/bookmarks/reorder", json={"ids": "x"}, headers=ADMIN).status_code, 422)
 
+    def test_groups(self):
+        a = self.add(name="Bins", group="  Home   stuff ").json()["bookmarks"][0]
+        self.assertEqual(a["group"], "Home stuff")                                    # spaces tidied
+        got = self.add(CAROL, name="School", group="home STUFF").json()["bookmarks"]
+        self.assertEqual([b["group"] for b in got], ["Home stuff", "Home stuff"])     # joins it, never split by case
+        c = self.add(name="Loose").json()["bookmarks"][2]
+        self.assertIsNone(c["group"])
+        self.assertEqual(self.add(group="x" * 41).status_code, 422)
+        body = {"name": "Bins", "url": "https://bins.example.org"}                      # no "group": it stays put
+        self.assertEqual(self.c.put(f"/api/bookmarks/{a['id']}", json=body, headers=BOB).json()["bookmarks"][0]["group"],
+                         "Home stuff")
+        r = self.c.put(f"/api/bookmarks/{a['id']}", json={**body, "group": ""}, headers=BOB)
+        self.assertIsNone(r.json()["bookmarks"][0]["group"])                         # empty: out of the group
+        self.assertEqual(self.get("/api/bookmarks", ADMIN).json()["bookmarks"][1]["group"], "Home stuff")
+
+    def test_admins_rename_groups(self):
+        self.add(name="A", group="Work")
+        self.add(name="B", group="work")
+        self.add(name="C", group="School")
+        rename = lambda who, **b: self.c.post("/api/bookmarks/rename-group", json=b, headers=who)
+        self.assertEqual(rename(BOB, **{"from": "Work", "to": "Job"}).status_code, 403)
+        self.assertEqual([b["group"] for b in rename(ADMIN, **{"from": "WORK", "to": "Job"}).json()["bookmarks"]],
+                         ["Job", "Job", "School"])
+        self.assertEqual([b["group"] for b in rename(ADMIN, **{"from": "job", "to": "school"}).json()["bookmarks"]],
+                         ["School", "School", "School"])                              # merged into the existing one
+        self.assertEqual([b["group"] for b in rename(ADMIN, **{"from": "School", "to": ""}).json()["bookmarks"]],
+                         [None, None, None])                                          # ungrouped
+        self.assertEqual(rename(ADMIN, **{"from": "Nope", "to": "X"}).status_code, 404)
+        self.assertEqual(rename(ADMIN, **{"from": "", "to": "X"}).status_code, 422)
+
+    def test_older_database_gets_the_group_column(self):
+        with db.get_conn() as conn:
+            conn.executescript("ALTER TABLE bookmarks DROP COLUMN group_name;")
+        db.init_db()
+        self.assertEqual(self.add(group="Kids").json()["bookmarks"][0]["group"], "Kids")
+
     def test_turned_off_people_see_none(self):
         self.add()
         with db.get_conn() as conn:

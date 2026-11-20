@@ -76,6 +76,19 @@ Anyone can add a bookmark; the person who added it, or an admin, can change or d
 change the order (**↕ Reorder**, then ▲▼). Bookmarks are plain links: they don't go through the proxy, so a bookmark to a site on
 your network only works where that site can be reached. Don't put passwords in an address — everyone can see it.
 
+### Groups
+
+Give a bookmark a **Group** when you add or edit it — pick one of the groups already there or type a new name
+(`work` joins an existing `Work`). Bookmarks with the same group sit together under a header with how many there
+are; bookmarks in no group stay at the top.
+
+- **Fold a group away**: tap its name (▸ / ▾). Each phone or computer remembers which groups it folded.
+  **Collapse all** / **Expand all** show once there are two groups or more.
+- **＋** on a group's header adds a bookmark straight into that group.
+- Admins: **⋯** on a group's header has **Rename group…** (typing another group's name merges the two) and
+  **Ungroup** (the bookmarks stay, in no group). In **↕ Reorder**, ▲▼ on a group's header move the whole group,
+  and ▲▼ on a bookmark move it within its group.
+
 ## Admin → Sites
 
 Add, edit, delete and reorder the sites: select a site (or **⋯ → Edit**) to change or delete it, and **↕ Reorder**

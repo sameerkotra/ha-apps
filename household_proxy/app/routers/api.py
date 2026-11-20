@@ -83,6 +83,12 @@ def reorder_bookmarks(body: dict = Body(...), user: dict = Depends(get_current_u
     return _bookmark_call(bookmarks.reorder, user, (body or {}).get("ids") if isinstance(body, dict) else None)
 
 
+@router.post("/bookmarks/rename-group")
+def rename_bookmark_group(body: dict = Body(...), user: dict = Depends(get_current_user)):
+    auth.require_enabled(user)
+    return _bookmark_call(bookmarks.rename_group, user, body if isinstance(body, dict) else {})
+
+
 # --------------------------------------------------------------------------------------------- admin: sites
 
 def _site_error(e: Exception):

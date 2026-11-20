@@ -215,6 +215,7 @@ CREATE TABLE IF NOT EXISTS bookmarks (
     name TEXT NOT NULL,
     url TEXT NOT NULL,                    -- http(s) only
     icon TEXT,                            -- an emoji, or NULL
+    group_name TEXT,                      -- the group it sits in (shown together, folds away), or NULL
     position INTEGER NOT NULL DEFAULT 0,
     created_by TEXT,                      -- the person who added it (users.id)
     created_at TEXT NOT NULL
@@ -230,7 +231,7 @@ CREATE TABLE IF NOT EXISTS app_settings (
 """
 
 # Columns added after their table was first made (older databases and restored backups get them at start-up).
-MIGRATIONS: dict = {"access_log": [("seconds", "REAL")]}
+MIGRATIONS: dict = {"access_log": [("seconds", "REAL")], "bookmarks": [("group_name", "TEXT")]}
 
 # Bumped by every init_db() (start-up, restore): caches (settings, sites) drop what they hold when it changes.
 generation = 0

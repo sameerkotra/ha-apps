@@ -196,6 +196,47 @@ class Browser(unittest.TestCase):
         expect(page.locator("#bookmarkList a.bm-link")).to_have_attribute("href", "https://example.org/bins?w=1")
         android.close()
 
+    def test_bookmark_groups_fold_away(self):
+        import helpers
+        c = helpers.client()
+        for name, group in (("Loose", None), ("Bins", "Home"), ("Router", "Home"), ("Term dates", "School")):
+            r = c.post("/api/bookmarks", json={"name": name, "url": f"example.org/{len(name)}", "group": group}, headers=ADMIN)
+            self.assertEqual(r.status_code, 200, r.text)
+        from playwright.sync_api import expect
+        page = self.browser.new_page()
+        errors = []
+        page.on("pageerror", lambda e: errors.append(str(e)))
+        page.goto(f"http://127.0.0.1:{self.front_port}{PREFIX}/#/bookmarks")
+        expect(page.locator("#bookmarkList > .bookmark .bm-name")).to_have_text(["Loose"])     # no group: first
+        heads = page.locator(".bm-group-name")
+        expect(heads).to_have_text(["Home", "School"])
+        expect(page.locator(".bm-group-count")).to_have_text(["2", "1"])
+        home = page.locator(".bm-group").first
+        expect(home.locator(".bm-name")).to_have_text(["Bins", "Router"])
+        home.locator(".bm-group-toggle").click()                                               # fold it away
+        expect(home.locator(".bm-group-items")).to_be_hidden()
+        expect(home.locator(".bm-group-toggle")).to_have_attribute("aria-expanded", "false")
+        page.reload()                                                                          # remembered here
+        expect(page.locator(".bm-group").first.locator(".bm-group-items")).to_be_hidden()
+        fold = page.locator("#bmFoldAll .link-btn")
+        expect(fold).to_have_text("Collapse all")                                              # School is still open
+        fold.click()
+        expect(page.locator(".bm-group-items").nth(1)).to_be_hidden()
+        expect(fold).to_have_text("Expand all")
+        fold.click()
+        expect(page.locator(".bm-group-items").first).to_be_visible()
+        expect(page.locator(".bm-group-items").nth(1)).to_be_visible()
+        page.locator(".bm-group").nth(1).get_by_role("button", name="Add a bookmark to School").click()
+        expect(page.locator(".modal input[list=bmGroupList]")).to_have_value("School")
+        page.keyboard.press("Escape")
+        page.locator("#bmReorderBtn").click()                                                  # admins move groups
+        page.get_by_role("button", name="Move group School up").click()
+        expect(heads).to_have_text(["School", "Home"])
+        self.assertEqual([b["name"] for b in c.get("/api/bookmarks", headers=ADMIN).json()["bookmarks"]],
+                         ["Loose", "Term dates", "Bins", "Router"])
+        self.assertEqual(errors, [])
+        page.close()
+
 
 if __name__ == "__main__":
     unittest.main()

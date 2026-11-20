@@ -2,6 +2,14 @@
 
 All notable changes to Household Proxy. See the [repository](https://github.com/sameerkotra/ha-apps).
 
+## 0.8.0
+
+- **Bookmark groups**: give a bookmark a **Group** in Add or Edit (pick one or type a new name) and the bookmarks
+  with the same group sit together under a header. Tap a group's name to fold it away or open it again — each
+  device remembers what it folded; **Collapse all / Expand all** appear once there are two groups. **＋** on a
+  group's header adds a bookmark straight into it. Admins can **Rename** or **Ungroup** a group (**⋯**) and move
+  whole groups with **↕ Reorder**. Bookmarks in no group stay at the top.
+
 ## 0.7.3
 
 - **Updated dependencies:** FastAPI 0.162.0, python-multipart 0.0.33, websockets 17.4. Security and bug fixes; nothing changes in how the app works.

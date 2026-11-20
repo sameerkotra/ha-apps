@@ -273,6 +273,16 @@ A **Bookmarks** tab (`#/bookmarks`, between the sites and Monitor): the househol
 - API (each requires an enabled person; each returns `{bookmarks: [{id, name, url, icon, addedBy, canEdit}]}`):
   `GET /api/bookmarks`; `POST /api/bookmarks {name, url, icon}`; `PUT /api/bookmarks/{id}` (403 not yours, 404);
   `DELETE /api/bookmarks/{id}`; `POST /api/bookmarks/reorder {ids}` (admins; 409 unless exactly every id, 422).
+- **Groups (0.8.0)**: column `bookmarks.group_name` (NULL = none; added to older databases at start-up). `POST`/`PUT`
+  take `group` (spaces tidied, ≤ 40, 422 longer; empty = none; a name matching an existing group in any case takes
+  that group's spelling; a `PUT` without `group` keeps it); each bookmark returns `group`.
+  `POST /api/bookmarks/rename-group {from, to}` (admins, 403; `from` any case, 404 none, 422 empty; `to` empty =
+  ungroup, another group's name = merge). The page shows bookmarks in no group first, then each group (in the order
+  of its first bookmark) under a header button (▸ caret, name, count; `aria-expanded`) that folds its rows away;
+  folded groups are per browser (`localStorage.bookmarkGroupsClosed`, lower-case names). **Collapse all / Expand
+  all** (`#bmFoldAll`) with ≥ 2 groups. Header: **＋** (Add with the group filled in) and, for admins, ⋯ Rename
+  group… / Ungroup. ↕ Reorder opens every group: ▲▼ on a header move the group, on a row within its group; the full
+  on-screen order is sent to `/reorder`. The Add/Edit form has **Group (optional)** with a datalist of the groups.
 
 ## 6. Manifest
 
