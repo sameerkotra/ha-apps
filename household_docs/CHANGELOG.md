@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.9.0
+
+- **Your Splitpot balance in a sheet**: `=SPLITPOT.BALANCE()` shows your overall balance in Splitpot, and
+  `=SPLITPOT.BALANCE("Trip")` your balance in one of your groups (+ you're owed, − you owe). Each person sees their
+  own; it refreshes every few minutes while the sheet is open. Needs Splitpot 2.10.0 or later.
+
 ## 1.8.3
 
 - **Updated dependencies:** FastAPI 0.162.0, pypdf 6.21.4. Security and bug fixes; nothing changes in how the app works.

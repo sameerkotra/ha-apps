@@ -3,7 +3,9 @@
    (tests/js/sheetcalc.test.js). Formulas are tokenised and parsed into a tree, then compiled into closures —
    never eval (the page's CSP forbids it anyway).
 
-     SheetCalc.workbook({today})          a workbook: tabs, cells, the dependency graph, recalculation
+     SheetCalc.workbook({today, external}) a workbook: tabs, cells, the dependency graph, recalculation; `external(name,
+                                          arg)` answers what comes from another app (SPLITPOT.BALANCE), or an error
+       wb.setExternal(fn) / wb.refreshExternal()  that answer changed: recalculate the cells that use it
        wb.setTabs(names)                  the tab names in order (formulas are recompiled)
        wb.set(tab, ref, raw)              one cell (raw: number | string | boolean | null; "=…" is a formula)
        wb.recalc()                        everything (topological order, cycles → #CYCLE!)
@@ -870,6 +872,17 @@
   // --- dates
   const dnum = (ctx, a) => { const v = ctx.ev(a); if (isErr(v)) return v; const n = toNum(v); return isErr(n) ? n : (n < 0 ? ERR["#NUM!"] : n); };
   def("TODAY", "", "Today's date (Home Assistant's time zone).", "=TODAY()", (args, ctx) => ctx.today(), { min: 0, max: 0, volatile: true });
+  // --- from the other household apps (the page asks them; here only what it has been told)
+  def("SPLITPOT.BALANCE", "[group]", "Your own balance in Splitpot: overall (no group), or in one of your groups (+ you're owed, − you owe). Everyone who opens the sheet sees their own.",
+    '=SPLITPOT.BALANCE("Trip")', (args, ctx) => {
+      let group = null;
+      if (args.length && args[0].k !== "missing") {
+        const g = ctx.ev(args[0]);
+        if (isErr(g)) return g;
+        if (g !== null && String(g).trim() !== "") group = String(g).trim();
+      }
+      return ctx.external("splitpot.balance", group);
+    }, { min: 0, max: 1, volatile: true });
   def("DAYS", "end date, start date", "Days from the start date to the end date.", "=DAYS(C2, B2)", (args, ctx) => {
     const e = dnum(ctx, args[0]); if (isErr(e)) return e;
     const s = dnum(ctx, args[1]); if (isErr(s)) return s;
@@ -1024,6 +1037,7 @@
     const tabs = [];
     const byName = new Map();
     let todayFn = opts.today || (() => todaySerial());
+    let externalFn = opts.external || null;
     let dirtyAll = true;
     let budget = WORK_BUDGET;
 
@@ -1045,6 +1059,11 @@
       num(a) { if (!a || a.k === "missing") return 0; const v = scalar(a.fn(ctx)); return toNum(v); },
       bool(a) { const v = scalar(a.fn(ctx)); return toBool(v); },
       today() { return todayFn(); },
+      external(name, arg) {
+        if (!externalFn) return new CalcError("#N/A", "Only in the app: another app's figures aren't available here.");
+        const v = externalFn(name, arg);
+        return v === undefined ? ERR["#N/A"] : v;
+      },
     };
     const wb = {
       tabs,
@@ -1108,6 +1127,9 @@
       /** Volatile formulas (TODAY) again — e.g. after midnight. */
       refreshToday() { const vol = []; for (const t of tabs) for (const cell of t.cells.values()) if (cell.f && cell.volatile) vol.push([t, cell.c, cell.r]); if (vol.length) evaluate(dependents(vol, true)); },
       setToday(fn) { todayFn = fn; },
+      setExternal(fn) { externalFn = fn; },
+      /** Another app answered (or its answer changed): the cells that use it, and what depends on them. */
+      refreshExternal() { wb.refreshToday(); },
       formulaCount() { let n = 0; for (const t of tabs) for (const cell of t.cells.values()) if (cell.f) n++; return n; },
     };
     function same(a, b) { return a === b || (isErr(a) && isErr(b) && a.code === b.code); }

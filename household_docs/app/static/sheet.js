@@ -280,6 +280,56 @@
     return { marks, cache: keep };
   }
 
+  // ================================================================ =SPLITPOT.BALANCE() (SPEC §8.2)
+  // Your own balance, asked from Splitpot (through the server: POST api/splitpot/balance, then the request is polled)
+  // the first time a formula needs it, and again when a sheet is in use past BALANCE_STALE. Until the first answer
+  // the cells show #N/A ("Asking Splitpot…"); a refresh keeps the last answer on screen meanwhile. Shared by every
+  // sheet opened in this page; each sheet recalculates when an answer comes.
+  const BALANCE_STALE = 5 * 60 * 1000;
+  const balance = { state: null, data: null, error: null, at: 0, asking: null, listeners: new Set() };
+  function askBalance() {
+    if (balance.asking) return balance.asking;
+    balance.state = "asking";
+    balance.asking = (async () => {
+      try {
+        const apps = D.state.me && D.state.me.apps;
+        if (apps && apps.splitpot === false) {
+          throw new Error("Splitpot isn't available — it isn't installed, it isn't running, or Docs runs outside Home Assistant.");
+        }
+        const req = await api("api/splitpot/balance", { method: "POST", body: {} });
+        const end = Date.now() + ((req.expiresIn || 120) + 5) * 1000;
+        for (;;) {
+          await new Promise((r) => setTimeout(r, 700));
+          const r = await api(`api/bus/requests/${encodeURIComponent(req.request)}`);
+          if (r.state === "done") { Object.assign(balance, { state: "done", data: r.result, error: null }); break; }
+          if (r.state === "failed") throw new Error(r.error || "Splitpot didn't answer.");
+          if (Date.now() > end) throw new Error("Splitpot didn't answer in time — is it running?");
+        }
+      } catch (e) {
+        Object.assign(balance, { state: "failed", data: null, error: (e && e.message) || "Splitpot couldn't be asked." });
+      } finally {
+        balance.at = Date.now();
+        balance.asking = null;
+        for (const fn of [...balance.listeners]) { try { fn(); } catch (x) { /* that sheet has gone */ } }
+      }
+    })();
+    return balance.asking;
+  }
+  function balanceStale() { return balance.state !== "asking" && Date.now() - balance.at > BALANCE_STALE; }
+  /** What SPLITPOT.BALANCE(group?) is now: a number, or #N/A saying why not (yet). */
+  function splitpotBalance(group) {
+    if (balance.state === null || balanceStale()) askBalance();
+    const d = balance.data;
+    if (!d) {
+      return new S.CalcError("#N/A", balance.state === "failed" ? balance.error : "Asking Splitpot for your balance…");
+    }
+    if (group === null) return d.overall;
+    const want = group.toLowerCase();
+    const hits = (d.groups || []).filter((g) => g.name.trim().toLowerCase() === want);
+    if (!hits.length) return new S.CalcError("#N/A", `You aren't in a Splitpot group called “${group}”.`);
+    return Math.round(hits.reduce((t, g) => t + g.amount * 100, 0)) / 100;      // two groups of that name: both
+  }
+
   // ================================================================ the editor
   D.editors.sheet = function sheetEditor(page, doc, ctx) {
     const me = D.state.me;
@@ -299,11 +349,19 @@
     };
     const csv = doc.format === "csv";
     const canEdit = !!doc.canEdit;
-    let wb = S.workbook({ today: () => todayIn(tz) });
+    let usesBalance = false;            // a formula here asked for SPLITPOT.BALANCE (so it's refreshed while open)
+    const external = (name, arg) => {
+      if (name !== "splitpot.balance") return S.ERR["#NAME?"];
+      usesBalance = true;
+      return splitpotBalance(arg);
+    };
+    const onBalance = () => { wb.refreshExternal(); bumpData(); st.marks = null; st.condCache = null; draw(); };
+    balance.listeners.add(onBalance);
+    let wb = S.workbook({ today: () => todayIn(tz), external });
     const grids = () => st.sheet.tabs.filter((t) => t.kind === "grid");
     const cur = () => st.sheet.tabs[st.tab];
     function loadEngine() {
-      wb = S.workbook({ today: () => todayIn(tz) });
+      wb = S.workbook({ today: () => todayIn(tz), external });
       wb.setTabs(grids().map((t) => t.name));
       for (const t of grids()) {
         for (const [ref, cell] of Object.entries(t.cells)) if (cell.v !== null && cell.v !== undefined) wb.set(t.name, ref, cell.v, !!cell.q);
@@ -1992,6 +2050,7 @@
       window.removeEventListener("pagehide", onPageHide); window.removeEventListener("beforeunload", onUnload);
       page.classList.remove("sheet-page");
       clearInterval(st.poller); clearTimeout(st.retry);
+      balance.listeners.delete(onBalance);
     };
     // leaving(): saves first; false when that didn't work (the router asks "Leave without saving?"); leaving(true)
     // leaves anyway (review 2026-10 DFI1)
@@ -2009,6 +2068,7 @@
       if (document.visibilityState !== "visible") return;
       const day = todayIn(tz);
       if (day !== lastDay) { lastDay = day; wb.refreshToday(); bumpData(); st.marks = null; st.condCache = null; draw(); }
+      if (usesBalance && balanceStale()) askBalance();      // the balance, again every few minutes while it's in use
       try {
         const e = await api(`api/docs/${doc.id}/etag`);
         if (head && head.editing) { head.editing.hidden = !e.editing; head.editing.textContent = e.editing ? `${e.editing} is editing` : ""; }

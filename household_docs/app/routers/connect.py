@@ -263,3 +263,25 @@ def to_todo(node_id: str, body: dict = Body(...), user: dict = Depends(require_u
 @router.get("/admin/connected-apps")
 def connected_apps(admin: dict = Depends(require_admin)):
     return am.connected_apps()
+
+
+# ---------------------------------------------------------------- =SPLITPOT.BALANCE() in a sheet (§8.2)
+BALANCE_REUSE = 60                  # seconds: an answer (or a question on its way) this recent is used again
+@router.post("/splitpot/balance")
+def splitpot_balance(user: dict = Depends(require_user)):
+    """Ask Splitpot for this person's own balance (a sheet with =SPLITPOT.BALANCE() polls the request). Nothing about
+    the sheet is sent — only who is asking."""
+    with db.get_conn() as conn:
+        recent = conn.execute("SELECT id FROM bus_requests WHERE user_id = ? AND kind = 'balance' AND created_at >= ? "
+                              "AND state != 'failed' ORDER BY created_at DESC LIMIT 1",
+                              (user["id"], config.ago_iso(seconds=BALANCE_REUSE))).fetchone()
+        if recent is not None:              # several sheets (or tabs) opened at once share one question
+            return {"request": recent["id"], "expiresIn": int(am.LIST_EXPIRES.total_seconds())}
+        rid, ref = am.new_request(conn, user, "balance", None)
+    try:
+        am.send(am.SPLITPOT, "splitpot.balance.get", {"requested_by": user["id"]}, ref, expires_in=am.LIST_EXPIRES)
+    except HTTPException as e:
+        with db.get_conn() as conn:
+            am._finish(conn, rid, error=str(e.detail))
+        raise
+    return {"request": rid, "expiresIn": int(am.LIST_EXPIRES.total_seconds())}

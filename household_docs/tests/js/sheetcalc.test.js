@@ -537,3 +537,39 @@ test("TODAY, DATE and EOMONTH results show as dates without a format of their ow
   assert.strictEqual(S.formulaFormat("=B2*2", fmtOf({ B2: "date" })), null);
   assert.strictEqual(S.formulaFormat("=SUM(", null), null);                     // a broken formula: no format
 });
+
+// ---------------------------------------------------------------- figures from another app (SPLITPOT.BALANCE)
+test("SPLITPOT.BALANCE asks the page, and is recalculated when the answer comes", () => {
+  let answer = null;
+  const asked = [];
+  const wb = S.workbook({ today: () => TODAY, external: (name, arg) => {
+    asked.push([name, arg]);
+    if (answer === null) return new S.CalcError("#N/A", "Asking Splitpot…");
+    if (arg === null) return answer.overall;
+    const g = answer.groups.find((x) => x.name.toLowerCase() === arg.toLowerCase());
+    return g ? g.amount : new S.CalcError("#N/A", "No such group");
+  } });
+  wb.setTabs(["S"]);
+  wb.set("S", "A1", "=SPLITPOT.BALANCE()");
+  wb.set("S", "A2", '=SPLITPOT.BALANCE("trip")');
+  wb.set("S", "A3", "=A1*2");
+  wb.set("S", "A4", '=SPLITPOT.BALANCE("")');
+  wb.set("S", "A5", '=SPLITPOT.BALANCE(1, 2)');
+  wb.set("S", "A6", '=IFERROR(SPLITPOT.BALANCE("Nope"), 0)');
+  wb.recalc();
+  assert.ok(err("#N/A")(wb.value("S", "A1")));
+  assert.strictEqual(wb.value("S", "A1").why, "Asking Splitpot…");
+  answer = { overall: -125.5, groups: [{ name: "Trip", amount: -200 }] };
+  wb.refreshExternal();
+  assert.strictEqual(wb.value("S", "A1"), -125.5);
+  assert.strictEqual(wb.value("S", "A2"), -200);
+  assert.strictEqual(wb.value("S", "A3"), -251);                    // what depends on it follows
+  assert.strictEqual(wb.value("S", "A4"), -125.5);                  // an empty group: overall
+  assert.ok(err("#VALUE!")(wb.value("S", "A5")));
+  assert.strictEqual(wb.value("S", "A6"), 0);
+  assert.ok(asked.some(([n, a]) => n === "splitpot.balance" && a === "trip"));
+  assert.ok(S.FUNCTIONS["SPLITPOT.BALANCE"]);
+  const bare = S.workbook({ today: () => TODAY });                    // no page (an export, a test): #N/A
+  bare.setTabs(["S"]); bare.set("S", "A1", "=SPLITPOT.BALANCE()"); bare.recalc();
+  assert.ok(err("#N/A")(bare.value("S", "A1")));
+});

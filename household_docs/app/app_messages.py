@@ -2,8 +2,9 @@
 
 Household Docs asks Household Chat for the chats a person may post in (`chat.chats.list`) and has it post a card
 (`chat.card`); it asks Household Todo for the lists a person may add to (`todo.lists.list`) and turns checklist
-items into tasks (`todo.items.add`). Every request names the person (`requested_by`) — Chat and Todo check
-everything against their own rules. The only kinds Docs answers are the Household Assistant's (`assist.tools.list`,
+items into tasks (`todo.items.add`); it asks Splitpot for the balance of the person looking at a sheet
+(`splitpot.balance.get`, for =SPLITPOT.BALANCE(); §8.2). Every request names the person (`requested_by`) — Chat,
+Todo and Splitpot check everything against their own rules. The only kinds Docs answers are the Household Assistant's (`assist.tools.list`,
 `assist.tool.call`; tools.py), installed at start.
 
 - **Requests** (`bus_requests`): each send is a row the page polls (`GET /api/bus/requests/{id}`). Answers find
@@ -33,8 +34,8 @@ from .common import app_bus as bus
 logger = logging.getLogger("app_messages")
 
 SLUG = "household_docs"
-CHAT, TODO = "household_chat", "household_todo"
-WANTS = ["chat.card", "chat.chats.list", "todo.items.add", "todo.lists.list"]
+CHAT, TODO, SPLITPOT = "household_chat", "household_todo", "splitpot"
+WANTS = ["chat.card", "chat.chats.list", "splitpot.balance.get", "todo.items.add", "todo.lists.list"]
 CAN = ["assist.tool.call", "assist.tools.list"]               # the Household Assistant asks (tools.py)
 LIST_EXPIRES = timedelta(minutes=2)            # a list is answered at once or not at all (§6 there)
 MAX_DATA = 6800                                # bytes of a message's data: the whole event stays under 8 KB
@@ -177,6 +178,7 @@ def status() -> dict:
     started = bus.default.started
     return {"chat": bool(started and bus.available(CHAT, "chat.chats.list") and bus.available(CHAT, "chat.card")),
             "todo": bool(started and bus.available(TODO, "todo.lists.list") and bus.available(TODO, "todo.items.add")),
+            "splitpot": bool(started and bus.available(SPLITPOT, "splitpot.balance.get")),
             "panel": panel()}
 
 
@@ -231,15 +233,17 @@ def send(to: str, kind: str, data: dict, ref: str, *, expires_in=timedelta(hours
     return mid
 
 
-APP_NAMES = {CHAT: "Household Chat", TODO: "Household Todo"}
+APP_NAMES = {CHAT: "Household Chat", TODO: "Household Todo", SPLITPOT: "Splitpot"}
 
 
 def nack_text(app: str, reason: str | None, detail: str | None) -> str:
     """A nack in plain words (§6 there: reasons and details)."""
     name = APP_NAMES.get(app, "The other app")
+    if app == SPLITPOT and reason == "not_allowed" and detail == "off":
+        return "An admin has turned off showing Splitpot balances in Docs (Splitpot → Admin → App settings)."
     if reason == "not_allowed" and detail == "no_access":
         return (f"Open {name} once first (or ask an admin to turn it on for you) — it doesn't know you yet."
-                if app == TODO else f"{name} says you can't use it — open it once first, or ask an admin to turn it "
+                if app in (TODO, SPLITPOT) else f"{name} says you can't use it — open it once first, or ask an admin to turn it "
                                     "on for you.")
     if reason == "not_allowed" and detail == "read_only":
         return "You can't post in that chat right now."
@@ -463,6 +467,33 @@ def on_todo(msg, conn) -> None:
     _wake.set()
 
 
+def _money(x):
+    return round(float(x), 2) if isinstance(x, (int, float)) and not isinstance(x, bool) and abs(x) < 1e12 else None
+
+
+def on_balance(msg, conn) -> None:
+    """Splitpot's answer: the person's own balance (overall and per group), kept with their request only."""
+    r = _request_of(conn, msg, "balance")
+    if r is None or r["state"] != "pending":
+        return
+    kind, reason, detail = _answer_parts(msg)
+    if kind == "ack":
+        res = msg.result if isinstance(msg.result, dict) else {}
+        overall = _money(res.get("overall"))
+        if overall is None:
+            _finish(conn, r["id"], error="Splitpot's answer had no balance in it.")
+            return
+        groups = []
+        for g in (res.get("groups") if isinstance(res.get("groups"), list) else [])[:100]:
+            if isinstance(g, dict) and isinstance(g.get("name"), str) and _money(g.get("amount")) is not None:
+                groups.append({"name": g["name"][:80], "amount": _money(g["amount"])})
+        cur = res.get("currency")
+        _finish(conn, r["id"], result={"overall": overall, "groups": groups,
+                                       "currency": cur if isinstance(cur, str) and re.match(r"^[A-Za-z]{3}$", cur) else None})
+    elif kind == "nack":
+        _finish(conn, r["id"], error=nack_text(SPLITPOT, reason, detail))
+
+
 def on_answer(msg, conn) -> None:
     """Every answer goes through here: route by ref."""
     ref = msg.ref or ""
@@ -476,9 +507,11 @@ def on_answer(msg, conn) -> None:
         on_lists(msg, conn)
     elif ref.startswith("todo:"):
         on_todo(msg, conn)
+    elif ref.startswith("balance:"):
+        on_balance(msg, conn)
 
 
-for _prefix in ("chats:", "members:", "card:", "lists:", "todo:"):
+for _prefix in ("chats:", "members:", "card:", "lists:", "todo:", "balance:"):
     bus.on_reply(_prefix, on_answer)
 
 
@@ -641,8 +674,11 @@ def _send_result(conn, sid: str) -> dict:
 
 
 def prune(conn) -> int:
-    """Hourly: requests older than 7 days (the page stopped asking long ago); sends of checklists that are gone."""
+    """Hourly: requests older than 7 days (the page stopped asking long ago) — a Splitpot balance after an hour (a
+    person's money isn't kept); sends of checklists that are gone."""
     n = conn.execute("DELETE FROM bus_requests WHERE created_at < ?", (config.ago_iso(days=7),)).rowcount
+    n += conn.execute("DELETE FROM bus_requests WHERE kind = 'balance' AND created_at < ?",
+                      (config.ago_iso(hours=1),)).rowcount
     n += conn.execute("DELETE FROM todo_sends WHERE node_id NOT IN (SELECT id FROM nodes)").rowcount
     return n
 

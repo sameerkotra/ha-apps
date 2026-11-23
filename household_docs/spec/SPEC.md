@@ -726,6 +726,22 @@ most 32 767 characters, a formula 8 192; 50 colour rules and 10 charts per tab; 
 - Runs in the browser. Saves send what was typed and the computed values; the server writes both into the file
   (formula + cached value in `.xlsx`, so Excel and other apps show the numbers straight away).
 - An **ƒ** button lists functions with examples; typing `=SU` suggests `SUM`, `SUMIF`, `SUMIFS`.
+- **`SPLITPOT.BALANCE([group])`** — the balance in Splitpot of the person **looking at the sheet** (+ owed, − owes):
+  overall, or in their group of that name (any case; two of theirs with that name: both added; an empty name =
+  overall; not theirs → `#N/A` "You aren't in a Splitpot group called …"). The page asks the server
+  (`POST /api/splitpot/balance` → `{request, expiresIn}`; then `GET /api/bus/requests/{id}` every 0.7 s), which asks
+  Splitpot over the app bus (`splitpot.balance.get {requested_by}`, APP_MESSAGES_SPEC §6.8; ref `balance:<id>`, a
+  list's 2-minute expiry; nothing about the sheet is sent). One question per person a minute (a request less than
+  60 s old that hasn't failed is handed out again); the answer `{overall, groups: [{name, amount}], currency}` is
+  kept with that person's request and deleted after an hour (`prune`). In the page one answer serves every sheet; it
+  is asked the first time a formula needs it and again every 5 minutes while a sheet using it is open (the last
+  answer stays on screen meanwhile). Until the first answer, and when Splitpot refuses or isn't there (`me.apps.
+  splitpot` false: not installed or not said hello, or Docs outside Home Assistant), the cells are `#N/A` with the
+  reason on hover (Splitpot's nacks in plain words: *Open Splitpot once first* for `no_access`, *An admin has turned
+  off showing Splitpot balances in Docs* for `off`). The engine itself only calls `workbook({external})`; it is
+  volatile, recalculated with what depends on it when an answer comes (`refreshExternal`). Saved values are the
+  saver's own (a `.xlsx` or a Home Assistant sensor of such a cell shows the balance of whoever saved last); Excel
+  doesn't know the function.
 
 ### 8.3 `.csv` sheets
 - One tab; cells are values or `=` formulas (Excel and LibreOffice read those as formulas). Formats, widths, colours

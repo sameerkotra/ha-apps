@@ -379,7 +379,7 @@ class ChatTests(BusBase):
 
     def test_me_connected_apps_and_admin_card(self):
         me = self.ok(self.get("/api/me"))
-        self.assertEqual(me["apps"], {"chat": True, "todo": True, "panel": "/a1b2c3d4_household_docs"})
+        self.assertEqual(me["apps"], {"chat": True, "todo": True, "splitpot": False, "panel": "/a1b2c3d4_household_docs"})
         out = self.ok(self.get("/api/admin/connected-apps", ASHA))
         self.assertTrue(out["on"] and out["connected"])
         self.assertEqual(sorted((a["slug"], a["active"]) for a in out["apps"]), [("household_chat", True), ("household_todo", True)])
@@ -387,7 +387,7 @@ class ChatTests(BusBase):
         hello = [e for e in self.fake.events() if e.get("kind") == "hello" and e.get("from") == "household_docs"][0]
         self.assertEqual((hello["data"]["can"], hello["data"]["wants"]),
                          (["assist.tool.call", "assist.tools.list"],                 # the Household Assistant asks
-                          ["chat.card", "chat.chats.list", "todo.items.add", "todo.lists.list"]))
+                          ["chat.card", "chat.chats.list", "splitpot.balance.get", "todo.items.add", "todo.lists.list"]))
 
 
 class NotThereTests(BusBase):
@@ -413,6 +413,75 @@ class NotThereTests(BusBase):
         self.assertEqual(r.status_code, 409)
         self.assertIn("inside Home Assistant", r.json()["detail"])
         self.assertEqual(self.ok(self.get("/api/admin/connected-apps", ASHA)), {"on": False, "connected": False, "apps": []})
+
+
+class FakeSplitpot:
+    """Splitpot as far as Docs can tell: splitpot.balance.get for the asking person only."""
+
+    def __init__(self, api, ws_url, tmp):
+        self.bus = app_bus.AppBus(api_base=api, ws_url=ws_url, token="t0k", outbox_thread=False)
+        self.asked, self.nack = [], None
+        self.balances = {"u_kabir": {"currency": "INR", "overall": -125.5,
+                                     "groups": [{"name": "Flat", "amount": 74.5}, {"name": "Trip", "amount": -200}]}}
+        self.bus.handler("splitpot.balance.get")(self.on_balance)
+        self.bus.start("splitpot", "Splitpot", "2.10.0", db=lambda: sqlite3.connect(os.path.join(tmp, "splitpot.db"), timeout=10))
+
+    def on_balance(self, msg, conn):
+        self.asked.append(msg.data)
+        if self.nack:
+            raise app_bus.Nack(*self.nack)
+        b = self.balances.get(msg.data["requested_by"])
+        if b is None:
+            raise app_bus.Nack("not_allowed", "no_access")
+        return dict(b, more=False)
+
+
+class SplitpotTests(BusBase):
+    PEERS = ()
+
+    def setUp(self):
+        super().setUp()
+        self.sp = FakeSplitpot(self.bus_api, self.fake.ws_url, self.tmp)
+        wait_until(lambda: am.bus.available(am.SPLITPOT, "splitpot.balance.get"), what="Splitpot's hello")
+
+    def tearDown(self):
+        self.sp.bus.stop()
+        super().tearDown()
+
+    def test_my_balance_for_a_sheet(self):
+        self.assertTrue(self.ok(self.get("/api/me"))["apps"]["splitpot"])
+        req = self.ok(self.post("/api/splitpot/balance", {}))
+        self.assertEqual(req["expiresIn"], 120)
+        r = self.wait_request(req["request"])
+        self.assertEqual(r["state"], "done", r)
+        self.assertEqual(r["result"], {"overall": -125.5, "currency": "INR",
+                                       "groups": [{"name": "Flat", "amount": 74.5}, {"name": "Trip", "amount": -200.0}]})
+        self.assertEqual(self.sp.asked, [{"requested_by": "u_kabir"}])           # only who is asking: nothing else
+        again = self.ok(self.post("/api/splitpot/balance", {}))                  # a second sheet, a moment later
+        self.assertEqual(again["request"], req["request"])
+        self.assertEqual(len(self.sp.asked), 1)
+        self.assertEqual(self.get(f"/api/bus/requests/{req['request']}", MEERA).status_code, 404)   # only theirs
+
+    def test_not_a_splitpot_person_or_turned_off(self):
+        r = self.wait_request(self.ok(self.post("/api/splitpot/balance", {}, MEERA))["request"], MEERA)
+        self.assertEqual(r["state"], "failed")
+        self.assertIn("Open Splitpot once first", r["error"])
+        self.sp.nack = ("not_allowed", "off")
+        r = self.wait_request(self.ok(self.post("/api/splitpot/balance", {}, DEV))["request"], DEV)
+        self.assertIn("turned off showing Splitpot balances", r["error"])
+
+    def test_a_balance_is_not_kept(self):
+        r = self.wait_request(self.ok(self.post("/api/splitpot/balance", {}))["request"])
+        with db.get_conn() as conn:
+            conn.execute("UPDATE bus_requests SET created_at = '2000-01-01T00:00:00+00:00' WHERE id = ?", (r["id"],))
+            am.prune(conn)
+            self.assertIsNone(conn.execute("SELECT 1 FROM bus_requests WHERE id = ?", (r["id"],)).fetchone())
+
+    def test_without_splitpot(self):
+        am.stop()                                     # outside Home Assistant: no app messages at all
+        r = self.post("/api/splitpot/balance", {})
+        self.assertEqual(r.status_code, 409)
+        self.assertIn("inside Home Assistant", r.json()["detail"])
 
 
 class TodoTests(BusBase):

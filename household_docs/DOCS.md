@@ -193,6 +193,16 @@ the cell and the line under the grid says what's wrong. `=TODAY()`, `=DATE(…)`
 of days (`=TODAY()+30`, or `=B2+30` on a date) show as dates; a date minus a date (`=TODAY()-B2`, `=DAYS(…)`) is a number
 of days. Pick another format to show it differently.
 
+**Your Splitpot balance in a sheet.** If the household uses **Splitpot**, `=SPLITPOT.BALANCE()` shows your
+overall balance there and `=SPLITPOT.BALANCE("Trip")` your balance in one of your groups (+ you're owed, − you owe)
+— use them like any number (`=SPLITPOT.BALANCE()*-1`, `=IF(SPLITPOT.BALANCE()<0, "Settle up!", "")`). Each person
+who opens the sheet sees **their own** balance: Splitpot only ever tells Docs about the person looking. The cell
+shows `#N/A` for a moment while Splitpot is asked, and is brought up to date every few minutes while the sheet is
+open. Still `#N/A`? Select the cell to see why — usually Splitpot isn't installed or running, you haven't opened
+Splitpot yet, or its admin turned this off (Splitpot → Admin → App settings → *Show balances in Household Docs*).
+The number saved with the file (what Excel, a download or **Show in Home Assistant** see) is the balance of whoever
+saved the sheet last.
+
 **Working with the grid.** Drag or Shift+click to select; the line under the grid then shows the **Sum, Average,
 Count, Min and Max**. Each column letter has a **▾** (on a phone: the selected column's) that opens the same
 column menu as right-clicking it. **Ctrl+C / Ctrl+V** copy and paste with Excel and Google Sheets (and within the sheet, where
