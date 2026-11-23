@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.10.0
+
+- **Your balance in Household Docs**: a sheet in Household Docs can show your Splitpot balance with
+  `=SPLITPOT.BALANCE()` (overall) or `=SPLITPOT.BALANCE("Trip")` (one group). Each person sees only their own.
+  **Admin → App settings → Other household apps → Show balances in Household Docs** turns it off (on by default).
+
 ## 2.9.0
 
 - **Search the Summary by What for**: type a word (or a few) in **What for** and the Spending figures, By group,

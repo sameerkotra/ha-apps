@@ -341,6 +341,21 @@ satellites; the assistant asks as them, with every check of its page (§6). Ques
 (§6.6), so the recorder exclusion (§8) applies. The integration says `hello` (`can: ["assist.answer"]`) when it
 starts, so the assistant's Connected apps shows it.
 
+### 6.8 A person's Splitpot balance in a Docs sheet (Household Docs → Splitpot; Docs spec §8.2)
+
+| Kind | Direction | Data |
+|---|---|---|
+| `splitpot.balance.get` | Docs → Splitpot | `{requested_by}` |
+| ack result | Splitpot → Docs | `{currency: <ISO code>, overall: <number>, groups: [{name, amount}] (≤ 100), more: bool}` |
+
+For `=SPLITPOT.BALANCE([group])` in a sheet: the balance of the person **looking at the sheet** (`requested_by`) —
+their net in each Splitpot group they are a member of and the sum (+ they're owed, − they owe), as Splitpot's group
+pages show it. Never anyone else's: Splitpot matches the person by their Home Assistant login and answers nothing
+about other people. Sent like a list (§6: `expires_in` ≈ 2 minutes; Docs asks again when the sheet is opened).
+Splitpot answers only `household_docs` (`not_allowed sender`); `not_allowed no_access` (not an enabled Splitpot
+person; Docs: "Open Splitpot once first"), `not_allowed off` (Splitpot's App setting *Show balances in Household
+Docs* is off), `invalid requested_by`. Amounts are contents (§8: the recorder exclusion applies).
+
 ## 7. First use (to be specified and built later): planning a duel in Household Arcade
 
 1. Arcade → *Play with someone* → **Plan for later**: pick the person (or people), the game, and 2–4 times.

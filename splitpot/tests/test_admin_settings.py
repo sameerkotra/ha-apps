@@ -22,7 +22,7 @@ from test_app import ADMIN, ALICE, Base, hdr
 IMPOSTOR = hdr("u_eve", "adminy", "eve")   # admin's display name, but not listed
 # notifications are off on a new install (and on an existing one: no row means the default)
 DEFAULTS = {"ha_sync_enabled": True, "sync_interval_minutes": 5, "currency": "USD", "notify_charges": False,
-            "notify_payments": True, "assistant_answers": False, "max_groups_per_person": 200,
+            "notify_payments": True, "assistant_answers": False, "docs_answers": True, "max_groups_per_person": 200,
             "max_entries_per_group": 20000, "writes_per_minute": 60, "keep_activity_days": 365, "bus_signing_key": ""}
 
 

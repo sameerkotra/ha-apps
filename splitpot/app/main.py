@@ -661,6 +661,10 @@ SETTINGS = [
              "who owes whom, and what was spent, by whom and how much. Off until an admin turns it on; each person can "
              "still turn it off for themselves under My settings."),
     settings_core.Setting(
+        "docs_answers", True, "Show balances in Household Docs", group="apps", strict=True,
+        help="Lets a sheet in Household Docs show a person their own Splitpot balance (=SPLITPOT.BALANCE()): overall, "
+             "or in one of their groups. Each person only ever gets their own balance; nobody else's."),
+    settings_core.Setting(
         "max_groups_per_person", 200, "Groups per person", group="limits", min=0, max=10000, strict=True,
         help="The most groups one person can be in; creating a group or adding someone past it is refused. "
              "0 = no limit."),
@@ -691,6 +695,8 @@ SETTINGS_GROUPS = [settings_core.Group("money", "Money"), settings_core.Group("h
                                        "know. Everyone who opens Splitpot sees every group; the Household Assistant "
                                        "is more private — it tells each person only about the groups they are in, "
                                        "and Splitpot doesn't answer it until you turn this on."),
+                   settings_core.Group("apps", "Other household apps",
+                                       "What Splitpot tells the other household apps when they ask for a person."),
                    settings_core.Group("limits", "Limits",
                                        "Generous caps so one person (or a stuck script) can't fill the database.")]
 
@@ -710,6 +716,8 @@ def _settings_log_event(conn, changed, current, merged, user):
             return f"settle-up notifications {onoff(merged[k])}"
         if k == "assistant_answers":
             return f"Household Assistant answers {onoff(merged[k])}"
+        if k == "docs_answers":
+            return f"balances in Household Docs {onoff(merged[k])}"
         if k == "currency":
             return f"currency {current[k]} → {merged[k]}"
         if k == "bus_signing_key":                       # a secret: never written anywhere

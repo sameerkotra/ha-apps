@@ -302,6 +302,17 @@ recorder:
       - household_apps
 ```
 
+## Your balance in Household Docs
+
+If the household also uses **Household Docs**, a sheet there can show your
+Splitpot balance: type `=SPLITPOT.BALANCE()` in a cell for your overall balance,
+or `=SPLITPOT.BALANCE("Trip")` for one of your groups (+ you're owed, − you owe,
+in the app's currency). Each person who opens the sheet sees **their own**
+balance — Splitpot only ever tells Docs about the person who's looking, matched
+by their Home Assistant login. An admin can turn it off under **Admin → App
+settings → Other household apps → Show balances in Household Docs** (on by
+default).
+
 ## Look and navigation
 
 - **Theme**: Midnight (dark, the default), Slate (dark blue-grey), Daylight
@@ -345,8 +356,8 @@ page", and the server refuses its functions. It has three tabs.
 
 ### App settings
 
-Household-wide settings, in five cards (Money, Home Assistant, Notifications,
-Household Assistant and Limits), with a
+Household-wide settings, in six cards (Money, Home Assistant, Notifications,
+Household Assistant, Other household apps and Limits), with a
 line under each setting saying what it does, its range and its default. Your
 changes are kept until you select **Save settings** at the bottom (it shows
 how many unsaved changes there are); **Discard changes** puts everything back.
@@ -362,6 +373,7 @@ activity log.
 | Notify people about new charges | off | Phone notifications for new charges (see *Phone notifications* above). |
 | Also notify settle-up payments | on | The two people in a recorded settle-up payment are told too. Greyed out while the switch above is off. |
 | Answer the Household Assistant | off | Lets the Household Assistant app tell people the balances and recent expenses of their own groups (see *The Household Assistant*). |
+| Show balances in Household Docs | on | Lets a sheet in Household Docs show each person their own balance (see *Your balance in Household Docs*). Nobody gets anyone else's. |
 | App-messages signing key | empty | A secret shared by every household app (paste the same key in each one's App settings). With a key, Splitpot refuses messages from other apps that aren't signed with it; without one, any app on Home Assistant's network could send messages as any other. Never shown again after saving, and left out of backups. |
 | Groups per person | `200` | The most groups one person can be in. 0 = no limit. |
 | Entries per group | `20000` | The most expenses and payments in one group; start a new group past it. 0 = no limit. |

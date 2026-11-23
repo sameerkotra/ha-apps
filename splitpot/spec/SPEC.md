@@ -285,6 +285,12 @@ Shared code as in the other apps: `common/ha_notify.py` (sending: notify action,
 - **Off by default** (App settings → **Answer the Household Assistant**, `assistant_answers`: the assistant only ever tells a person about their own groups, so it is opt-in); a
   person can also turn it off on My settings (`users.assistant_ok`, default on; `PUT /me/prefs {assistantOk}`).
   Otherwise `nack not_allowed` (`off` / `person_off`). Links open each group in the answer on the sidebar page (`/group/<id>`, as the notifications do).
+- It answers **Household Docs**' `splitpot.balance.get` (APP_MESSAGES_SPEC §6.8; for `=SPLITPOT.BALANCE()`
+  in a sheet): `{requested_by}` → `{currency, overall, groups: [{name, amount}], more}` — the asking person's own net
+  in each group they are in (`group_net`, by `groups.created_at`, at most 100) and the sum, + owed / − owes. Only
+  from `household_docs` (else `nack not_allowed sender`); the person matched by `users.ha_user_id` (unlinked or
+  disabled → `nack not_allowed no_access`); App settings → Other household apps → **Show balances in Household
+  Docs** (`docs_answers`, **on** by default — nothing but the person's own figures) off → `nack not_allowed off`.
 
 ## 8. Background jobs
 

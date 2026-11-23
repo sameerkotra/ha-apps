@@ -12,7 +12,7 @@ import os
 import unittest
 from datetime import datetime, timedelta, timezone
 
-from app import config, main, tools
+from app import app_messages, config, main, tools
 from app.common import app_bus
 from common_tests.ingress import identity_headers, ingress_client
 
@@ -105,6 +105,37 @@ class ToolTests(unittest.TestCase):
     def assertNack(self, res, reason, detail):
         self.assertIsInstance(res, app_bus.Nack, res)
         self.assertEqual((res.reason, res.detail), (reason, detail))
+
+    def balance(self, uid, sender="household_docs"):
+        now = datetime.now(timezone.utc)
+        env = {"id": app_bus.new_ulid(now), "v": 1, "from": sender, "to": "splitpot", "kind": "splitpot.balance.get",
+               "kv": 1, "reply_to": None, "ref": "balance:r1", "sent": now.isoformat(),
+               "expires": (now + timedelta(seconds=120)).isoformat(), "data": {"requested_by": uid}}
+        with main.get_conn() as conn:
+            try:
+                return app_messages.on_balance(app_bus.Message(env), conn)
+            except app_bus.Nack as n:
+                return n
+
+    def test_balance_for_household_docs(self):
+        """=SPLITPOT.BALANCE() in a Docs sheet: only the asking person's own balance, overall and per group — on
+        even while the Household Assistant's switch is off."""
+        self.settings(assistant_answers=False)
+        self.assertEqual(self.balance("HA_RAVI"), {"currency": "USD", "overall": -110.0, "more": False,
+                                                   "groups": [{"name": "Flat", "amount": -10.0},
+                                                              {"name": "Trip", "amount": -100.0}]})
+        self.assertEqual(self.balance("ha_asha")["groups"], [{"name": "Flat", "amount": 50.0}])   # not Trip
+        self.assertEqual(self.balance("ha_mia")["overall"], 60.0)
+        self.assertNack(self.balance("ha_nobody"), "not_allowed", "no_access")
+        self.assertNack(self.balance("ha_ravi", sender="household_assistant"), "not_allowed", "sender")
+        self.assertNack(self.balance(""), "invalid", "requested_by")
+        with main.get_conn() as conn:
+            conn.execute("UPDATE users SET disabled = 1 WHERE id = 'ravi'")
+            conn.commit()
+        self.assertNack(self.balance("ha_ravi"), "not_allowed", "no_access")
+        self.settings(docs_answers=False)
+        self.assertNack(self.balance("ha_asha"), "not_allowed", "off")
+        self.assertIn("splitpot.balance.get", app_messages.bus.default._handlers)
 
     def test_off_by_default(self):
         self.settings(assistant_answers=False)
