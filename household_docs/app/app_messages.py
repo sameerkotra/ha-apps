@@ -3,8 +3,9 @@
 Household Docs asks Household Chat for the chats a person may post in (`chat.chats.list`) and has it post a card
 (`chat.card`); it asks Household Todo for the lists a person may add to (`todo.lists.list`) and turns checklist
 items into tasks (`todo.items.add`); it asks Splitpot for the balance of the person looking at a sheet
-(`splitpot.balance.get`, for =SPLITPOT.BALANCE(); §8.2). Every request names the person (`requested_by`) — Chat,
-Todo and Splitpot check everything against their own rules. The only kinds Docs answers are the Household Assistant's (`assist.tools.list`,
+(`splitpot.balance.get`, for =SPLITPOT.BALANCE(); §8.2) and Receipt Price Intelligence for the shopping list and
+prices (`receipt.sheet.get`, for =SHOPPING.TOTAL() …). Every request names the person (`requested_by`) — the other
+apps check everything against their own rules. The only kinds Docs answers are the Household Assistant's (`assist.tools.list`,
 `assist.tool.call`; tools.py), installed at start.
 
 - **Requests** (`bus_requests`): each send is a row the page polls (`GET /api/bus/requests/{id}`). Answers find
@@ -34,8 +35,9 @@ from .common import app_bus as bus
 logger = logging.getLogger("app_messages")
 
 SLUG = "household_docs"
-CHAT, TODO, SPLITPOT = "household_chat", "household_todo", "splitpot"
-WANTS = ["chat.card", "chat.chats.list", "splitpot.balance.get", "todo.items.add", "todo.lists.list"]
+CHAT, TODO, SPLITPOT, RECEIPTS = "household_chat", "household_todo", "splitpot", "receipt_price_intelligence"
+WANTS = ["chat.card", "chat.chats.list", "receipt.sheet.get", "splitpot.balance.get", "todo.items.add",
+         "todo.lists.list"]
 CAN = ["assist.tool.call", "assist.tools.list"]               # the Household Assistant asks (tools.py)
 LIST_EXPIRES = timedelta(minutes=2)            # a list is answered at once or not at all (§6 there)
 MAX_DATA = 6800                                # bytes of a message's data: the whole event stays under 8 KB
@@ -179,6 +181,7 @@ def status() -> dict:
     return {"chat": bool(started and bus.available(CHAT, "chat.chats.list") and bus.available(CHAT, "chat.card")),
             "todo": bool(started and bus.available(TODO, "todo.lists.list") and bus.available(TODO, "todo.items.add")),
             "splitpot": bool(started and bus.available(SPLITPOT, "splitpot.balance.get")),
+            "receipts": bool(started and bus.available(RECEIPTS, "receipt.sheet.get")),
             "panel": panel()}
 
 
@@ -233,7 +236,8 @@ def send(to: str, kind: str, data: dict, ref: str, *, expires_in=timedelta(hours
     return mid
 
 
-APP_NAMES = {CHAT: "Household Chat", TODO: "Household Todo", SPLITPOT: "Splitpot"}
+APP_NAMES = {CHAT: "Household Chat", TODO: "Household Todo", SPLITPOT: "Splitpot",
+             RECEIPTS: "Receipt Price Intelligence"}
 
 
 def nack_text(app: str, reason: str | None, detail: str | None) -> str:
@@ -241,9 +245,15 @@ def nack_text(app: str, reason: str | None, detail: str | None) -> str:
     name = APP_NAMES.get(app, "The other app")
     if app == SPLITPOT and reason == "not_allowed" and detail == "off":
         return "An admin has turned off showing Splitpot balances in Docs (Splitpot → Admin → App settings)."
+    if app == RECEIPTS and reason == "not_allowed" and detail == "off":
+        return (f"An admin has turned off showing the shopping list in Docs ({name} → Admin → App settings → Other "
+                "household apps).")
+    if app == RECEIPTS and detail == "home":
+        return (f"{name} has more than one home, so a sheet can't tell which shopping list to use."
+                if reason == "invalid" else f"{name} has no home yet.")
     if reason == "not_allowed" and detail == "no_access":
         return (f"Open {name} once first (or ask an admin to turn it on for you) — it doesn't know you yet."
-                if app in (TODO, SPLITPOT) else f"{name} says you can't use it — open it once first, or ask an admin to turn it "
+                if app in (TODO, SPLITPOT, RECEIPTS) else f"{name} says you can't use it — open it once first, or ask an admin to turn it "
                                     "on for you.")
     if reason == "not_allowed" and detail == "read_only":
         return "You can't post in that chat right now."
@@ -494,6 +504,46 @@ def on_balance(msg, conn) -> None:
         _finish(conn, r["id"], error=nack_text(SPLITPOT, reason, detail))
 
 
+def _text(x, n):
+    return " ".join(x.split())[:n] if isinstance(x, str) and x.strip() else None
+
+
+def on_shopping(msg, conn) -> None:
+    """Receipt Price Intelligence's answer: the shopping list's totals and the asked items' prices."""
+    r = _request_of(conn, msg, "shopping")
+    if r is None or r["state"] != "pending":
+        return
+    kind, reason, detail = _answer_parts(msg)
+    if kind == "nack":
+        _finish(conn, r["id"], error=nack_text(RECEIPTS, reason, detail))
+        return
+    if kind != "ack":
+        return
+    res = msg.result if isinstance(msg.result, dict) else {}
+    lst = res.get("list") if isinstance(res.get("list"), dict) else {}
+    count = lst.get("count")
+    if _money(lst.get("total")) is None or not isinstance(count, int) or isinstance(count, bool):
+        _finish(conn, r["id"], error="Receipt Price Intelligence's answer had no shopping list in it.")
+        return
+    stores = []
+    for s in (lst.get("stores") if isinstance(lst.get("stores"), list) else [])[:20]:
+        if isinstance(s, dict) and _text(s.get("name"), 60) and _money(s.get("total")) is not None \
+                and isinstance(s.get("count"), int) and not isinstance(s.get("count"), bool):
+            stores.append({"name": _text(s["name"], 60), "count": s["count"], "total": _money(s["total"])})
+    prices = []
+    for p in (res.get("prices") if isinstance(res.get("prices"), list) else [])[:30]:
+        if isinstance(p, dict) and _text(p.get("item"), 100):
+            prices.append({"item": _text(p["item"], 100), "name": _text(p.get("name"), 80),
+                           "price": _money(p.get("price")), "store": _text(p.get("store"), 60)})
+    unpriced = lst.get("unpriced")
+    cur = res.get("currency")
+    _finish(conn, r["id"], result={
+        "list": {"count": count, "total": _money(lst["total"]), "stores": stores,
+                 "unpriced": unpriced if isinstance(unpriced, int) and not isinstance(unpriced, bool) else 0},
+        "prices": prices, "home": _text(res.get("home"), 80),
+        "currency": cur if isinstance(cur, str) and re.match(r"^[A-Za-z]{3}$", cur) else None})
+
+
 def on_answer(msg, conn) -> None:
     """Every answer goes through here: route by ref."""
     ref = msg.ref or ""
@@ -509,9 +559,11 @@ def on_answer(msg, conn) -> None:
         on_todo(msg, conn)
     elif ref.startswith("balance:"):
         on_balance(msg, conn)
+    elif ref.startswith("shopping:"):
+        on_shopping(msg, conn)
 
 
-for _prefix in ("chats:", "members:", "card:", "lists:", "todo:", "balance:"):
+for _prefix in ("chats:", "members:", "card:", "lists:", "todo:", "balance:", "shopping:"):
     bus.on_reply(_prefix, on_answer)
 
 
@@ -674,10 +726,10 @@ def _send_result(conn, sid: str) -> dict:
 
 
 def prune(conn) -> int:
-    """Hourly: requests older than 7 days (the page stopped asking long ago) — a Splitpot balance after an hour (a
-    person's money isn't kept); sends of checklists that are gone."""
+    """Hourly: requests older than 7 days (the page stopped asking long ago) — a Splitpot balance or the shopping
+    list's prices after an hour (money isn't kept); sends of checklists that are gone."""
     n = conn.execute("DELETE FROM bus_requests WHERE created_at < ?", (config.ago_iso(days=7),)).rowcount
-    n += conn.execute("DELETE FROM bus_requests WHERE kind = 'balance' AND created_at < ?",
+    n += conn.execute("DELETE FROM bus_requests WHERE kind IN ('balance', 'shopping') AND created_at < ?",
                       (config.ago_iso(hours=1),)).rowcount
     n += conn.execute("DELETE FROM todo_sends WHERE node_id NOT IN (SELECT id FROM nodes)").rowcount
     return n

@@ -1,7 +1,8 @@
-"""=SPLITPOT.BALANCE() in a sheet, in headless Chromium (Playwright) against the real app (SPEC §8.2): the cells show
-#N/A while Splitpot is asked, then the person's own balance (overall and per group) and what depends on it; a
-refusal shows why on the cell. Splitpot's side is played by the page's network (the server's side is
-test_connect.SplitpotTests). Skipped without Playwright."""
+"""The other apps' figures in a sheet, in headless Chromium (Playwright) against the real app (SPEC §8.2):
+=SPLITPOT.BALANCE() — #N/A while Splitpot is asked, then the person's own balance (overall and per group) and what
+depends on it, a refusal's reason on the cell; =SHOPPING.TOTAL/COUNT/PRICE/STORE() — the items named in the sheet
+sent in one question, the list's totals (overall and for a store) and prices. The other apps are played by the page's
+network (the server's side is test_connect.SplitpotTests / ShoppingTests). Skipped without Playwright."""
 import _env  # noqa: F401  (must be first)
 
 import json
@@ -84,6 +85,60 @@ class SplitpotBalance(PdfViewer):
         self.cell(p, 0, 0).wait_for()
         self.until(p, "(document.querySelector('td.cell[data-c=\"0\"][data-r=\"0\"]').title || '').includes('Open Splitpot')")
         self.assertEqual(self.cell(p, 0, 0).inner_text(), "#N/A")
+
+
+    def test_the_shopping_list(self):
+        it = self.ok(self.post("/api/docs", {"kind": "sheet", "name": "Groceries", "parentId": None}, KABIR), 201)
+        etag = self.open(it["id"], KABIR)["etag"]
+        cells = {"A1": {"v": "=SHOPPING.TOTAL()"}, "A2": {"v": '=SHOPPING.TOTAL("valuco")'}, "A3": {"v": "=SHOPPING.COUNT()"},
+                 "A4": {"v": '=SHOPPING.PRICE("Milk")'}, "A5": {"v": '=SHOPPING.STORE("milk")'},
+                 "A6": {"v": '=SHOPPING.PRICE("saffron")'}, "A7": {"v": "=A4*2"}}
+        self.ok(self.patch(f"/api/docs/{it['id']}", {"etag": etag, "sheet": {"tabs": [grid("Sheet1", cells)]}}, KABIR))
+        ctx = self.browser.new_context(extra_http_headers=KABIR, viewport={"width": 900, "height": 900})
+        self.addCleanup(ctx.close)
+        p = ctx.new_page()
+        problems, sent = [], []
+        p.on("pageerror", lambda e: problems.append(str(e)))
+        known = {"milk": ("2% Milk", 2.99, "Valuco #1"), "saffron": ("Saffron", None, None)}
+
+        def me(route):
+            r = route.fetch()
+            body = r.json()
+            body.setdefault("apps", {})["receipts"] = True
+            route.fulfill(response=r, body=json.dumps(body))
+
+        def ask(route):
+            sent.append(json.loads(route.request.post_data or "{}").get("items", []))
+            route.fulfill(status=200, content_type="application/json",
+                          body=json.dumps({"request": f"s{len(sent)}", "expiresIn": 120}))
+
+        def poll(route):
+            items = sent[int(route.request.url.rsplit("/s", 1)[1]) - 1]
+            prices = [{"item": n, "name": known.get(n.lower(), (None,))[0],
+                       "price": known.get(n.lower(), (None, None))[1], "store": known.get(n.lower(), (None, None, None))[2]}
+                      for n in items]
+            out = {"state": "done", "error": None, "result": {
+                "list": {"count": 3, "total": 17.48, "unpriced": 1, "stores": [{"name": "Valuco #1", "count": 1, "total": 5.98},
+                                                                              {"name": "Freshmart #2", "count": 1, "total": 11.5}]},
+                "prices": prices, "home": "Maple Street", "currency": "USD"}}
+            route.fulfill(status=200, content_type="application/json", body=json.dumps(out))
+        p.route("**/api/me", me)
+        p.route("**/api/receipts/shopping", ask)
+        p.route("**/api/bus/requests/s*", poll)
+        p.goto(self.base + "#/doc/" + it["id"])
+        self.cell(p, 0, 0).wait_for()
+        self.until(p, "document.querySelector('td.cell[data-c=\"0\"][data-r=\"6\"]').textContent.includes('5.98')")
+        texts = [self.cell(p, 0, r).inner_text() for r in range(7)]
+        self.assertIn("17.48", texts[0])
+        self.assertIn("5.98", texts[1])                     # what's cheapest at Valuco
+        self.assertEqual(texts[2], "3")
+        self.assertIn("2.99", texts[3])
+        self.assertEqual(texts[4], "Valuco #1")
+        self.assertEqual(texts[5], "#N/A")
+        self.assertIn("No price known for Saffron", self.cell(p, 0, 5).get_attribute("title"))
+        self.assertEqual([sorted(n.lower() for n in s) for s in sent][-1], ["milk", "saffron"])
+        self.assertLessEqual(len(sent), 2)                  # the names go together, not one question per cell
+        self.assertEqual(problems, [])
 
 
 # the borrowed class's own tests run in their own file

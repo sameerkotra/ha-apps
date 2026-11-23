@@ -742,6 +742,18 @@ most 32 767 characters, a formula 8 192; 50 colour rules and 10 charts per tab; 
   volatile, recalculated with what depends on it when an answer comes (`refreshExternal`). Saved values are the
   saver's own (a `.xlsx` or a Home Assistant sensor of such a cell shows the balance of whoever saved last); Excel
   doesn't know the function.
+- **`SHOPPING.TOTAL([store])`, `SHOPPING.COUNT([store])`, `SHOPPING.PRICE(item)`, `SHOPPING.STORE(item)`** — from
+  Receipt Price Intelligence's shopping list (household data: the same for everyone who has opened that app): the
+  list's estimated total (each item at its cheapest store × quantity, ticked-off left out) and how many items are
+  left, overall or for the stores whose name contains `store` (any case; none → 0); an item's lowest price now and
+  that store (the item as that app matches it; unknown → `#N/A` "… doesn't know an item called …", no price → `#N/A`
+  "No price known for …"). Asked as the balance is (`POST /api/receipts/shopping {items?}` → the request; the app
+  bus's `receipt.sheet.get {requested_by, items?}`, APP_MESSAGES_SPEC §6.9, ref `shopping:<id>`): the page sends the
+  item names its formulas use (at most 30 different in the page, any case once; past that `#N/A`), a new name asks
+  again right after the recalculation that met it, the same question from the same person within a minute gets the
+  same request (`data.key`), answers are deleted after an hour, refreshed every 5 minutes while in use. Refusals in
+  plain words: not opened that app yet, *turned off* (its App setting *Show the shopping list and prices in Household
+  Docs*), more than one home (`invalid home`), no home. `me.apps.receipts` says whether the app is there.
 
 ### 8.3 `.csv` sheets
 - One tab; cells are values or `=` formulas (Excel and LibreOffice read those as formulas). Formats, widths, colours

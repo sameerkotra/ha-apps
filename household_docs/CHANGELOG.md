@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.10.0
+
+- **The shopping list in a sheet**: `=SHOPPING.TOTAL()` (what the list will cost at the cheapest stores),
+  `=SHOPPING.COUNT()` (items left), both also for one store, and `=SHOPPING.PRICE("milk")` / `=SHOPPING.STORE("milk")`
+  (an item's lowest price now and where), from Receipt Price Intelligence. Refreshes every few minutes while the sheet
+  is open. Needs Receipt Price Intelligence 1.6.0 or later.
+
 ## 1.9.0
 
 - **Your Splitpot balance in a sheet**: `=SPLITPOT.BALANCE()` shows your overall balance in Splitpot, and

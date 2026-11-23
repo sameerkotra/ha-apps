@@ -573,3 +573,24 @@ test("SPLITPOT.BALANCE asks the page, and is recalculated when the answer comes"
   bare.setTabs(["S"]); bare.set("S", "A1", "=SPLITPOT.BALANCE()"); bare.recalc();
   assert.ok(err("#N/A")(bare.value("S", "A1")));
 });
+
+test("SHOPPING.TOTAL / COUNT / PRICE / STORE ask the page for the shopping list", () => {
+  const asked = [];
+  const wb = S.workbook({ today: () => TODAY, external: (name, arg) => {
+    asked.push([name, arg]);
+    if (name === "shopping.total") return arg === null ? 41.5 : 12;
+    if (name === "shopping.count") return arg === null ? 7 : 2;
+    if (name === "shopping.price") return arg === "milk" ? 2.99 : new S.CalcError("#N/A", "No price known");
+    if (name === "shopping.store") return "Valuco #1";
+    return S.ERR["#NAME?"];
+  } });
+  wb.setTabs(["S"]);
+  const cells = { A1: "=SHOPPING.TOTAL()", A2: '=SHOPPING.TOTAL("Valuco")', A3: "=SHOPPING.COUNT()", A4: '=SHOPPING.PRICE("milk")',
+    A5: '=SHOPPING.STORE("milk")', A6: '=SHOPPING.PRICE("saffron")', A7: "=SHOPPING.PRICE()", A8: '=A4*2', A9: '=SHOPPING.COUNT("")' };
+  for (const [k, v] of Object.entries(cells)) wb.set("S", k, v);
+  wb.recalc();
+  assert.deepStrictEqual(["A1", "A2", "A3", "A4", "A5", "A8", "A9"].map((r) => wb.value("S", r)), [41.5, 12, 7, 2.99, "Valuco #1", 5.98, 7]);
+  assert.ok(err("#N/A")(wb.value("S", "A6")));
+  assert.ok(err("#VALUE!")(wb.value("S", "A7")));                     // an item is needed
+  assert.ok(asked.some(([n, a]) => n === "shopping.total" && a === "Valuco"));
+});

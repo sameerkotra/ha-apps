@@ -285,3 +285,44 @@ def splitpot_balance(user: dict = Depends(require_user)):
             am._finish(conn, rid, error=str(e.detail))
         raise
     return {"request": rid, "expiresIn": int(am.LIST_EXPIRES.total_seconds())}
+
+
+# ---------------------------------------------------------------- =SHOPPING.TOTAL() … in a sheet (§8.2)
+SHOPPING_ITEMS = 30
+
+
+@router.post("/receipts/shopping")
+def receipts_shopping(body: dict = Body(default={}), user: dict = Depends(require_user)):
+    """{items?: [names]} — ask Receipt Price Intelligence for the shopping list's totals and these items' lowest
+    prices (a sheet with =SHOPPING.… polls the request). Only the names a formula uses are sent, nothing else about
+    the sheet. The same question from the same person within a minute gets the same request."""
+    raw = body.get("items") if isinstance(body, dict) else None
+    if raw is None:
+        raw = []
+    if not isinstance(raw, list) or len(raw) > SHOPPING_ITEMS:
+        raise HTTPException(422, f"At most {SHOPPING_ITEMS} items.")
+    items: list[str] = []
+    for x in raw:
+        if not isinstance(x, str) or not 0 < len(" ".join(x.split())) <= 100:
+            raise HTTPException(422, "An item is 1–100 characters.")
+        name = " ".join(x.split())
+        if name.lower() not in (i.lower() for i in items):
+            items.append(name)
+    key = json.dumps(sorted(i.lower() for i in items))
+    with db.get_conn() as conn:
+        for r in conn.execute("SELECT id, data FROM bus_requests WHERE user_id = ? AND kind = 'shopping' "
+                              "AND created_at >= ? AND state != 'failed' ORDER BY created_at DESC LIMIT 5",
+                              (user["id"], config.ago_iso(seconds=BALANCE_REUSE))):
+            if json.loads(r["data"] or "{}").get("key") == key:
+                return {"request": r["id"], "expiresIn": int(am.LIST_EXPIRES.total_seconds())}
+        rid, ref = am.new_request(conn, user, "shopping", None, data={"key": key})
+    data = {"requested_by": user["id"]}
+    if items:
+        data["items"] = items
+    try:
+        am.send(am.RECEIPTS, "receipt.sheet.get", data, ref, expires_in=am.LIST_EXPIRES)
+    except HTTPException as e:
+        with db.get_conn() as conn:
+            am._finish(conn, rid, error=str(e.detail))
+        raise
+    return {"request": rid, "expiresIn": int(am.LIST_EXPIRES.total_seconds())}

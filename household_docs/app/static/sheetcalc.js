@@ -4,7 +4,7 @@
    never eval (the page's CSP forbids it anyway).
 
      SheetCalc.workbook({today, external}) a workbook: tabs, cells, the dependency graph, recalculation; `external(name,
-                                          arg)` answers what comes from another app (SPLITPOT.BALANCE), or an error
+                                          arg)` answers what comes from another app (SPLITPOT.BALANCE, SHOPPING.*), or an error
        wb.setExternal(fn) / wb.refreshExternal()  that answer changed: recalculate the cells that use it
        wb.setTabs(names)                  the tab names in order (formulas are recompiled)
        wb.set(tab, ref, raw)              one cell (raw: number | string | boolean | null; "=…" is a formula)
@@ -883,6 +883,21 @@
       }
       return ctx.external("splitpot.balance", group);
     }, { min: 0, max: 1, volatile: true });
+  const textArg = (args, ctx) => {          // an optional text argument: null when left out or empty
+    if (!args.length || args[0].k === "missing") return null;
+    const v = ctx.ev(args[0]);
+    if (isErr(v)) return v;
+    return v === null || String(v).trim() === "" ? null : String(v).trim();
+  };
+  const shoppingFn = (what) => (args, ctx) => { const a = textArg(args, ctx); return isErr(a) ? a : ctx.external("shopping." + what, a); };
+  def("SHOPPING.TOTAL", "[store]", "The shopping list's estimated cost in Receipt Price Intelligence: each item at the store where it's cheapest, times its quantity (ticked-off items left out). With a store: only what's cheapest there.",
+    "=SHOPPING.TOTAL()", shoppingFn("total"), { min: 0, max: 1, volatile: true });
+  def("SHOPPING.COUNT", "[store]", "How many items are left on the shopping list in Receipt Price Intelligence (with a store: those cheapest there).",
+    "=SHOPPING.COUNT()", shoppingFn("count"), { min: 0, max: 1, volatile: true });
+  def("SHOPPING.PRICE", "item", "An item's lowest price now in Receipt Price Intelligence (at the store SHOPPING.STORE names).",
+    '=SHOPPING.PRICE("milk")', shoppingFn("price"), { min: 1, max: 1, volatile: true });
+  def("SHOPPING.STORE", "item", "The store where an item is cheapest now, in Receipt Price Intelligence.",
+    '=SHOPPING.STORE("milk")', shoppingFn("store"), { min: 1, max: 1, volatile: true });
   def("DAYS", "end date, start date", "Days from the start date to the end date.", "=DAYS(C2, B2)", (args, ctx) => {
     const e = dnum(ctx, args[0]); if (isErr(e)) return e;
     const s = dnum(ctx, args[1]); if (isErr(s)) return s;

@@ -379,7 +379,8 @@ class ChatTests(BusBase):
 
     def test_me_connected_apps_and_admin_card(self):
         me = self.ok(self.get("/api/me"))
-        self.assertEqual(me["apps"], {"chat": True, "todo": True, "splitpot": False, "panel": "/a1b2c3d4_household_docs"})
+        self.assertEqual(me["apps"], {"chat": True, "todo": True, "splitpot": False, "receipts": False,
+                                       "panel": "/a1b2c3d4_household_docs"})
         out = self.ok(self.get("/api/admin/connected-apps", ASHA))
         self.assertTrue(out["on"] and out["connected"])
         self.assertEqual(sorted((a["slug"], a["active"]) for a in out["apps"]), [("household_chat", True), ("household_todo", True)])
@@ -387,7 +388,8 @@ class ChatTests(BusBase):
         hello = [e for e in self.fake.events() if e.get("kind") == "hello" and e.get("from") == "household_docs"][0]
         self.assertEqual((hello["data"]["can"], hello["data"]["wants"]),
                          (["assist.tool.call", "assist.tools.list"],                 # the Household Assistant asks
-                          ["chat.card", "chat.chats.list", "splitpot.balance.get", "todo.items.add", "todo.lists.list"]))
+                          ["chat.card", "chat.chats.list", "receipt.sheet.get", "splitpot.balance.get", "todo.items.add",
+                           "todo.lists.list"]))
 
 
 class NotThereTests(BusBase):
@@ -482,6 +484,80 @@ class SplitpotTests(BusBase):
         r = self.post("/api/splitpot/balance", {})
         self.assertEqual(r.status_code, 409)
         self.assertIn("inside Home Assistant", r.json()["detail"])
+
+
+class FakeReceipts:
+    """Receipt Price Intelligence as far as Docs can tell: receipt.sheet.get."""
+
+    def __init__(self, api, ws_url, tmp):
+        self.bus = app_bus.AppBus(api_base=api, ws_url=ws_url, token="t0k", outbox_thread=False)
+        self.asked, self.nack = [], None
+        self.prices = {"milk": ("2% Milk", 2.99, "Valuco #1"), "saffron": ("Saffron", None, None)}
+        self.bus.handler("receipt.sheet.get")(self.on_sheet)
+        self.bus.start("receipt_price_intelligence", "Receipt Price Intelligence", "1.6.0",
+                       db=lambda: sqlite3.connect(os.path.join(tmp, "receipts.db"), timeout=10))
+
+    def on_sheet(self, msg, conn):
+        self.asked.append(msg.data)
+        if self.nack:
+            raise app_bus.Nack(*self.nack)
+        if msg.data["requested_by"] not in ("u_kabir", "u_meera"):
+            raise app_bus.Nack("not_allowed", "no_access")
+        prices = []
+        for n in msg.data.get("items", []):
+            hit = self.prices.get(n.lower())
+            prices.append({"item": n, "name": hit[0] if hit else None, "price": hit[1] if hit else None,
+                           "store": hit[2] if hit else None})
+        return {"currency": "USD", "home": "Maple Street",
+                "list": {"count": 3, "total": 17.48, "unpriced": 1,
+                         "stores": [{"name": "Valuco #1", "count": 1, "total": 5.98},
+                                    {"name": "Freshmart #2", "count": 1, "total": 11.5}]},
+                "prices": prices}
+
+
+class ShoppingTests(BusBase):
+    PEERS = ()
+
+    def setUp(self):
+        super().setUp()
+        self.rx = FakeReceipts(self.bus_api, self.fake.ws_url, self.tmp)
+        wait_until(lambda: am.bus.available(am.RECEIPTS, "receipt.sheet.get"), what="Receipts' hello")
+
+    def tearDown(self):
+        self.rx.bus.stop()
+        super().tearDown()
+
+    def test_the_list_and_prices_for_a_sheet(self):
+        self.assertTrue(self.ok(self.get("/api/me"))["apps"]["receipts"])
+        req = self.ok(self.post("/api/receipts/shopping", {"items": ["Milk", "saffron", "MILK", "caviar"]}))
+        r = self.wait_request(req["request"])
+        self.assertEqual(r["state"], "done", r)
+        self.assertEqual(r["result"]["list"], {"count": 3, "total": 17.48, "unpriced": 1,
+                                               "stores": [{"name": "Valuco #1", "count": 1, "total": 5.98},
+                                                          {"name": "Freshmart #2", "count": 1, "total": 11.5}]})
+        self.assertEqual(r["result"]["prices"], [
+            {"item": "Milk", "name": "2% Milk", "price": 2.99, "store": "Valuco #1"},
+            {"item": "saffron", "name": "Saffron", "price": None, "store": None},
+            {"item": "caviar", "name": None, "price": None, "store": None}])
+        self.assertEqual(self.rx.asked, [{"requested_by": "u_kabir", "items": ["Milk", "saffron", "caviar"]}])
+        same = self.ok(self.post("/api/receipts/shopping", {"items": ["caviar", "MILK", "Saffron"]}))
+        self.assertEqual(same["request"], req["request"])                       # the same question, a moment later
+        other = self.ok(self.post("/api/receipts/shopping", {}))               # another question: asked
+        self.assertNotEqual(other["request"], req["request"])
+        self.wait_request(other["request"])
+        self.assertEqual(self.rx.asked[-1], {"requested_by": "u_kabir"})
+        for bad in ({"items": "milk"}, {"items": [""]}, {"items": ["x" * 101]}, {"items": [f"i{n}" for n in range(31)]}):
+            self.assertEqual(self.post("/api/receipts/shopping", bad).status_code, 422, bad)
+
+    def test_refusals_in_plain_words(self):
+        r = self.wait_request(self.ok(self.post("/api/receipts/shopping", {}, DEV))["request"], DEV)
+        self.assertIn("Open Receipt Price Intelligence once first", r["error"])
+        self.rx.nack = ("invalid", "home")
+        r = self.wait_request(self.ok(self.post("/api/receipts/shopping", {"items": ["a"]}))["request"])
+        self.assertIn("more than one home", r["error"])
+        self.rx.nack = ("not_allowed", "off")
+        r = self.wait_request(self.ok(self.post("/api/receipts/shopping", {"items": ["b"]}))["request"])
+        self.assertIn("turned off showing the shopping list", r["error"])
 
 
 class TodoTests(BusBase):

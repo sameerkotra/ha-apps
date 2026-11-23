@@ -203,6 +203,19 @@ Splitpot yet, or its admin turned this off (Splitpot → Admin → App settings 
 The number saved with the file (what Excel, a download or **Show in Home Assistant** see) is the balance of whoever
 saved the sheet last.
 
+**The shopping list in a sheet.** If the household uses **Receipt Price Intelligence**, a sheet can use its shopping
+list and prices — the same for everyone:
+
+- `=SHOPPING.TOTAL()` — what the list will cost: each item at the store where it's cheapest, times its quantity
+  (ticked-off items left out). `=SHOPPING.TOTAL("Valuco")` — only the items cheapest at that store.
+- `=SHOPPING.COUNT()` — how many items are left on the list (`=SHOPPING.COUNT("Valuco")` at one store).
+- `=SHOPPING.PRICE("milk")` — an item's lowest price now; `=SHOPPING.STORE("milk")` — the store where it is.
+
+A budget line like `=B2-SHOPPING.TOTAL()` or a price check like `=IF(SHOPPING.PRICE("milk")>3, "wait", "buy")` works
+as you'd expect. Up to 30 different items' prices can be used in the sheets you have open. `#N/A`? Select the cell:
+usually the app hasn't heard of that item, has no price for it yet, isn't running, you haven't opened it yet, or it
+has more than one home (then a sheet can't tell which list to use).
+
 **Working with the grid.** Drag or Shift+click to select; the line under the grid then shows the **Sum, Average,
 Count, Min and Max**. Each column letter has a **▾** (on a phone: the selected column's) that opens the same
 column menu as right-clicking it. **Ctrl+C / Ctrl+V** copy and paste with Excel and Google Sheets (and within the sheet, where

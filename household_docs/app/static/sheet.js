@@ -280,54 +280,100 @@
     return { marks, cache: keep };
   }
 
-  // ================================================================ =SPLITPOT.BALANCE() (SPEC §8.2)
-  // Your own balance, asked from Splitpot (through the server: POST api/splitpot/balance, then the request is polled)
-  // the first time a formula needs it, and again when a sheet is in use past BALANCE_STALE. Until the first answer
-  // the cells show #N/A ("Asking Splitpot…"); a refresh keeps the last answer on screen meanwhile. Shared by every
-  // sheet opened in this page; each sheet recalculates when an answer comes.
-  const BALANCE_STALE = 5 * 60 * 1000;
-  const balance = { state: null, data: null, error: null, at: 0, asking: null, listeners: new Set() };
-  function askBalance() {
-    if (balance.asking) return balance.asking;
-    balance.state = "asking";
-    balance.asking = (async () => {
-      try {
-        const apps = D.state.me && D.state.me.apps;
-        if (apps && apps.splitpot === false) {
-          throw new Error("Splitpot isn't available — it isn't installed, it isn't running, or Docs runs outside Home Assistant.");
+  // ================================================================ figures from the other household apps (SPEC §8.2)
+  // =SPLITPOT.BALANCE() asks Splitpot, =SHOPPING.TOTAL/COUNT/PRICE/STORE() Receipt Price Intelligence — through the
+  // server (POST the app's URL, then the request is polled), the first time a formula needs it and again every
+  // EXTERNAL_STALE while a sheet using it is open. Until the first answer the cells show #N/A ("Asking …"); a refresh
+  // keeps the last answer on screen meanwhile. One answer serves every sheet open in this page; each sheet
+  // recalculates when an answer comes.
+  const EXTERNAL_STALE = 5 * 60 * 1000;
+  function asker(url, appKey, appName, body) {
+    const a = { state: null, data: null, error: null, at: 0, asking: null, again: false, listeners: new Set() };
+    a.stale = () => a.state !== "asking" && Date.now() - a.at > EXTERNAL_STALE;
+    a.ask = () => {
+      if (a.asking) { a.again = true; return a.asking; }
+      a.state = "asking";
+      a.asking = (async () => {
+        try {
+          const apps = D.state.me && D.state.me.apps;
+          if (apps && apps[appKey] === false) {
+            throw new Error(`${appName} isn't available — it isn't installed, it isn't running, or Docs runs outside Home Assistant.`);
+          }
+          const req = await api(url, { method: "POST", body: body ? body() : {} });
+          const end = Date.now() + ((req.expiresIn || 120) + 5) * 1000;
+          for (;;) {
+            await new Promise((r) => setTimeout(r, 700));
+            const r = await api(`api/bus/requests/${encodeURIComponent(req.request)}`);
+            if (r.state === "done") { Object.assign(a, { state: "done", data: r.result, error: null }); break; }
+            if (r.state === "failed") throw new Error(r.error || `${appName} didn't answer.`);
+            if (Date.now() > end) throw new Error(`${appName} didn't answer in time — is it running?`);
+          }
+        } catch (e) {
+          Object.assign(a, { state: "failed", data: null, error: (e && e.message) || `${appName} couldn't be asked.` });
+        } finally {
+          a.at = Date.now();
+          a.asking = null;
+          for (const fn of [...a.listeners]) { try { fn(); } catch (x) { /* that sheet has gone */ } }
+          if (a.again) { a.again = false; a.ask(); }
         }
-        const req = await api("api/splitpot/balance", { method: "POST", body: {} });
-        const end = Date.now() + ((req.expiresIn || 120) + 5) * 1000;
-        for (;;) {
-          await new Promise((r) => setTimeout(r, 700));
-          const r = await api(`api/bus/requests/${encodeURIComponent(req.request)}`);
-          if (r.state === "done") { Object.assign(balance, { state: "done", data: r.result, error: null }); break; }
-          if (r.state === "failed") throw new Error(r.error || "Splitpot didn't answer.");
-          if (Date.now() > end) throw new Error("Splitpot didn't answer in time — is it running?");
-        }
-      } catch (e) {
-        Object.assign(balance, { state: "failed", data: null, error: (e && e.message) || "Splitpot couldn't be asked." });
-      } finally {
-        balance.at = Date.now();
-        balance.asking = null;
-        for (const fn of [...balance.listeners]) { try { fn(); } catch (x) { /* that sheet has gone */ } }
-      }
-    })();
-    return balance.asking;
+      })();
+      return a.asking;
+    };
+    /** The answer to use now (asking first when there is none or it's old), or null. */
+    a.now = () => { if (a.state === null || a.stale()) a.ask(); return a.data; };
+    a.waiting = (what) => new S.CalcError("#N/A", a.state === "failed" ? a.error : `Asking ${appName} for ${what}…`);
+    return a;
   }
-  function balanceStale() { return balance.state !== "asking" && Date.now() - balance.at > BALANCE_STALE; }
-  /** What SPLITPOT.BALANCE(group?) is now: a number, or #N/A saying why not (yet). */
+
+  const balance = asker("api/splitpot/balance", "splitpot", "Splitpot");
+  /** SPLITPOT.BALANCE(group?): your own balance — a number, or #N/A saying why not (yet). */
   function splitpotBalance(group) {
-    if (balance.state === null || balanceStale()) askBalance();
-    const d = balance.data;
-    if (!d) {
-      return new S.CalcError("#N/A", balance.state === "failed" ? balance.error : "Asking Splitpot for your balance…");
-    }
+    const d = balance.now();
+    if (!d) return balance.waiting("your balance");
     if (group === null) return d.overall;
     const want = group.toLowerCase();
     const hits = (d.groups || []).filter((g) => g.name.trim().toLowerCase() === want);
     if (!hits.length) return new S.CalcError("#N/A", `You aren't in a Splitpot group called “${group}”.`);
     return Math.round(hits.reduce((t, g) => t + g.amount * 100, 0)) / 100;      // two groups of that name: both
+  }
+
+  // The shopping list: the items whose price a sheet asks for are sent with the question (at most SHOPPING_ITEMS
+  // different ones in this page); a new one asks again straight after the cells that named it are worked out.
+  const SHOPPING_ITEMS = 30;
+  const shoppingNames = new Map();                 // lower case → as first typed
+  let shoppingSent = 0;                            // how many names the last question carried
+  const shopping = asker("api/receipts/shopping", "receipts", "Receipt Price Intelligence",
+    () => { shoppingSent = shoppingNames.size; return { items: [...shoppingNames.values()] }; });
+  let shoppingSoon = null;
+  function wantItem(name) {
+    const k = name.toLowerCase();
+    if (shoppingNames.has(k)) return true;
+    if (shoppingNames.size >= SHOPPING_ITEMS) return false;
+    shoppingNames.set(k, name);
+    if (!shoppingSoon) {
+      shoppingSoon = setTimeout(() => { shoppingSoon = null; if (shoppingNames.size > shoppingSent) shopping.ask(); }, 0);
+    }
+    return true;
+  }
+  const storeMatch = (want) => (s) => s.name.toLowerCase().includes(want.toLowerCase());
+  /** SHOPPING.TOTAL / COUNT (store?), SHOPPING.PRICE / STORE (item): a number or text, or #N/A saying why not. */
+  function shoppingValue(what, arg) {
+    if (what === "total" || what === "count") {
+      const d = shopping.now();
+      if (!d) return shopping.waiting("the shopping list");
+      const key = what === "total" ? "total" : "count";
+      if (arg === null) return d.list[key];
+      const hit = d.list.stores.filter(storeMatch(arg));
+      return what === "total" ? Math.round(hit.reduce((t, s) => t + s.total * 100, 0)) / 100 : hit.reduce((t, s) => t + s.count, 0);
+    }
+    if (arg === null) return S.ERR["#VALUE!"];
+    if (!wantItem(arg)) return new S.CalcError("#N/A", `At most ${SHOPPING_ITEMS} different items' prices in the sheets open here.`);
+    const d = shopping.now();
+    const p = d && (d.prices || []).find((x) => x.item.toLowerCase() === arg.toLowerCase());
+    if (!p) return shopping.state === "failed" ? shopping.waiting("prices") : new S.CalcError("#N/A", `Asking Receipt Price Intelligence about “${arg}”…`);
+    if (!p.name) return new S.CalcError("#N/A", `Receipt Price Intelligence doesn't know an item called “${arg}” yet.`);
+    if (p.price === null || p.price === undefined) return new S.CalcError("#N/A", `No price known for ${p.name} yet.`);
+    return what === "price" ? p.price : p.store;
   }
 
   // ================================================================ the editor
@@ -349,14 +395,15 @@
     };
     const csv = doc.format === "csv";
     const canEdit = !!doc.canEdit;
-    let usesBalance = false;            // a formula here asked for SPLITPOT.BALANCE (so it's refreshed while open)
+    const uses = new Set();             // the other apps' figures this sheet's formulas asked for (refreshed while open)
     const external = (name, arg) => {
-      if (name !== "splitpot.balance") return S.ERR["#NAME?"];
-      usesBalance = true;
-      return splitpotBalance(arg);
+      if (name === "splitpot.balance") { uses.add(balance); return splitpotBalance(arg); }
+      if (name.startsWith("shopping.")) { uses.add(shopping); return shoppingValue(name.slice(9), arg); }
+      return S.ERR["#NAME?"];
     };
-    const onBalance = () => { wb.refreshExternal(); bumpData(); st.marks = null; st.condCache = null; draw(); };
-    balance.listeners.add(onBalance);
+    const onAnswer = () => { wb.refreshExternal(); bumpData(); st.marks = null; st.condCache = null; draw(); };
+    balance.listeners.add(onAnswer);
+    shopping.listeners.add(onAnswer);
     let wb = S.workbook({ today: () => todayIn(tz), external });
     const grids = () => st.sheet.tabs.filter((t) => t.kind === "grid");
     const cur = () => st.sheet.tabs[st.tab];
@@ -2050,7 +2097,8 @@
       window.removeEventListener("pagehide", onPageHide); window.removeEventListener("beforeunload", onUnload);
       page.classList.remove("sheet-page");
       clearInterval(st.poller); clearTimeout(st.retry);
-      balance.listeners.delete(onBalance);
+      balance.listeners.delete(onAnswer);
+      shopping.listeners.delete(onAnswer);
     };
     // leaving(): saves first; false when that didn't work (the router asks "Leave without saving?"); leaving(true)
     // leaves anyway (review 2026-10 DFI1)
@@ -2068,7 +2116,7 @@
       if (document.visibilityState !== "visible") return;
       const day = todayIn(tz);
       if (day !== lastDay) { lastDay = day; wb.refreshToday(); bumpData(); st.marks = null; st.condCache = null; draw(); }
-      if (usesBalance && balanceStale()) askBalance();      // the balance, again every few minutes while it's in use
+      for (const a of uses) if (a.stale()) a.ask();         // the other apps' figures, again every few minutes
       try {
         const e = await api(`api/docs/${doc.id}/etag`);
         if (head && head.editing) { head.editing.hidden = !e.editing; head.editing.textContent = e.editing ? `${e.editing} is editing` : ""; }
