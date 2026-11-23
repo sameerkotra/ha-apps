@@ -192,6 +192,8 @@ _SPEC: dict[str, tuple[Any, dict]] = {
     "shopping_nearby_meters": (250, {"min": 0, "max": 3000}),
     # Household Assistant (app/tools.py): off until an admin turns it on — what a household spends is private
     "assistant_answers": (False, {}),
+    # Household Docs (app_messages.py): the shopping list's totals and items' prices in a sheet
+    "docs_answers": (True, {}),
     # Advanced
     "log_level": ("INFO", {}),
     "bus_signing_key": ("", {"max_length": 200}),
@@ -213,6 +215,7 @@ GROUPS: list[tuple[str, str, str]] = [
     ("assistant", "Household Assistant",
      "The Household Assistant app answers questions from what the household apps know. Prices and spending are private, "
      "so this app doesn't answer it until you turn it on."),
+    ("apps", "Other household apps", "What this app tells the other household apps when someone there asks."),
     ("advanced", "Advanced", ""),
 ]
 
@@ -365,6 +368,10 @@ FIELDS: dict[str, tuple[str, str, str]] = {
                           "Lets the Household Assistant app tell the people in this household what's on the shopping list "
                           "and where it's cheapest, an item's prices by store, and spending by store or category — and add "
                           "to the shopping list when someone taps to confirm. Off until you turn it on."),
+    "docs_answers": ("apps", "Show the shopping list and prices in Household Docs",
+                     "Lets a sheet in Household Docs show the shopping list's estimated total and how many items are "
+                     "left (=SHOPPING.TOTAL(), =SHOPPING.COUNT()), and an item's lowest price and store "
+                     "(=SHOPPING.PRICE(\"milk\")), to the people who have opened this app."),
     "log_level": ("advanced", "Log level", "Use Debug only while troubleshooting."),
     "bus_signing_key": ("advanced", "App-messages signing key",
                         "The same key in every household app (Admin → App settings there). Without one, any app on "

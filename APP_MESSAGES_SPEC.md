@@ -356,6 +356,23 @@ Splitpot answers only `household_docs` (`not_allowed sender`); `not_allowed no_a
 person; Docs: "Open Splitpot once first"), `not_allowed off` (Splitpot's App setting *Show balances in Household
 Docs* is off), `invalid requested_by`. Amounts are contents (§8: the recorder exclusion applies).
 
+### 6.9 The shopping list and prices in a Docs sheet (Household Docs → Receipt Price Intelligence; Docs spec §8.2)
+
+| Kind | Direction | Data |
+|---|---|---|
+| `receipt.sheet.get` | Docs → Receipts | `{requested_by, items?: [name (1–100)] (≤ 30)}` |
+| ack result | Receipts → Docs | `{currency, home, list: {count, total, unpriced, stores: [{name, count, total}] (≤ 20)}, prices: [{item, name \| null, price \| null, store \| null}]}` |
+
+For `=SHOPPING.TOTAL([store])`, `=SHOPPING.COUNT([store])`, `=SHOPPING.PRICE(item)` and `=SHOPPING.STORE(item)` in a
+sheet. The household's shopping list (not ticked off): how many items, the estimated total at each item's cheapest
+store (× quantity) overall and per store, and how many have no known price; and for each name the sheet uses, the item
+it is in the app (the Household Assistant's own match) with its lowest price and store now. Household data — the same
+for everyone who has opened the app — so `requested_by` only has to be a known person there (`not_allowed
+no_access`). Sent like a list (§6: `expires_in` ≈ 2 minutes). Receipts answers only `household_docs` (`not_allowed
+sender`); `not_allowed off` (its App setting *Show the shopping list and prices in Household Docs* is off); `invalid
+home` with more than one home, `not_found home` with none; `invalid items` / `invalid requested_by`. Prices are
+contents (§8: the recorder exclusion applies).
+
 ## 7. First use (to be specified and built later): planning a duel in Household Arcade
 
 1. Arcade → *Play with someone* → **Plan for later**: pick the person (or people), the game, and 2–4 times.

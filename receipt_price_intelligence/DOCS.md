@@ -447,6 +447,19 @@ recorder:
       - household_apps
 ```
 
+### In a Household Docs sheet
+
+If the household also uses **Household Docs**, a sheet there can use the shopping list and your prices:
+
+- `=SHOPPING.TOTAL()` — the list's estimated cost (each item at the store where it's cheapest, times its quantity;
+  ticked-off items left out); `=SHOPPING.TOTAL("Valuco")` — only what's cheapest at that store.
+- `=SHOPPING.COUNT()` — how many items are left on the list; `=SHOPPING.COUNT("Valuco")` at one store.
+- `=SHOPPING.PRICE("milk")` — an item's lowest price now, and `=SHOPPING.STORE("milk")` the store where it is.
+
+Anyone who has opened this app sees the same figures there; they refresh every few minutes while the sheet is open.
+An administrator can turn it off under **Admin → App settings → Other household apps → Show the shopping list and
+prices in Household Docs** (on by default). With more than one home it isn't available.
+
 ## Importing receipts from a folder or email
 
 Set **Folder to import receipts from** (a folder under `/share`, for example `/share/receipts`) and photos and PDFs dropped there become drafts to review; handled files move to a `processed` folder (or `failed`) and are deleted after two weeks. Set the **Mail server (IMAP)** settings and PDF and image attachments of unread emails are imported the same way (the emails are marked as read; only attachments are used, at most 10 per email, and emails over 30 MB are skipped). The mail server's certificate is checked. With *Use SSL for mail* off, the connection is encrypted with STARTTLS; a server that offers neither is only used when *Allow mail login without encryption* is on. *Only import mail from* limits imports to some addresses or domains (`@example.com`); other emails are marked as read and skipped. An attachment already imported is not imported again. When a home already has *Receipts waiting at most* receipts being read or reviewed (200 by default), the folder and the mailbox wait: emails stay unread until some receipts are reviewed. Files in the folder are read only when they are ordinary files (links are left alone), and only real photos (JPEG, PNG, GIF, WebP, up to 40 million pixels) or PDFs are kept, whatever their names say. If you have more than one home, name the home imported receipts go to. Imported receipts are read by the model in the background and wait under *To review*. Nothing reaches your price history until you approve it. The receipts page shows a line about it at the bottom, with *Check now* in its ⋯ menu.

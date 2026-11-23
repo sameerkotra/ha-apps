@@ -163,6 +163,45 @@ class ToolTests(unittest.TestCase):
         res = self.call("receipt.shopping_list")
         self.assertEqual(res["items"], [{"item": "2% Milk", "qty": 2.0, "cheapest_at": "Valuco #1", "price": 2.99}])
 
+    def sheet(self, uid="u_pat", sender="household_docs", items=None):
+        from app import app_messages
+        now = datetime.now(timezone.utc)
+        data = {"requested_by": uid}
+        if items is not None:
+            data["items"] = items
+        env = {"id": self.app_bus.new_ulid(now), "v": 1, "from": sender, "to": "receipt_price_intelligence",
+               "kind": "receipt.sheet.get", "kv": 1, "reply_to": None, "ref": "shopping:r1", "sent": now.isoformat(),
+               "expires": (now + timedelta(seconds=120)).isoformat(), "data": data}
+        conn = sqlite3.connect(":memory:")
+        try:
+            return app_messages.on_sheet(self.app_bus.Message(env), conn)
+        except self.app_bus.Nack as n:
+            return n
+        finally:
+            conn.close()
+
+    def test_shopping_list_and_prices_for_a_docs_sheet(self):
+        """=SHOPPING.TOTAL / COUNT / PRICE in a Household Docs sheet — on even while the assistant's switch is off."""
+        import json
+        self.call("receipt.shopping_list.add", confirm=True, item="milk", qty=2)
+        self.call("receipt.shopping_list.add", confirm=True, item="saffron")             # never bought: no price
+        self.app_settings.update({"assistant_answers": False}, "test")
+        out = self.sheet(items=["MILK", "saffron", "milk"])
+        self.assertEqual((out["currency"], out["home"]), ("USD", "Maple Street"))
+        self.assertEqual(out["list"], {"count": 2, "total": 5.98, "unpriced": 1,
+                                       "stores": [{"name": "Valuco #1", "count": 1, "total": 5.98}]})
+        self.assertEqual(out["prices"][0], {"item": "MILK", "name": "2% Milk", "price": 2.99, "store": "Valuco #1"})
+        self.assertIsNone(out["prices"][1]["price"])
+        self.assertEqual(len(out["prices"]), 2)                                          # "milk" was asked already
+        self.assertIsNone(self.sheet(items=["caviar"])["prices"][0]["name"])            # not an item here
+        self.assertLess(len(json.dumps(self.sheet(items=[f"thing {n}" for n in range(30)]))), 6000)
+        self.assertNack(self.sheet(uid="u_nobody"), "not_allowed", "no_access")
+        self.assertNack(self.sheet(sender="household_assistant"), "not_allowed", "sender")
+        self.assertNack(self.sheet(items=["x"] * 31), "invalid", "items")
+        self.assertNack(self.sheet(items="milk"), "invalid", "items")
+        self.app_settings.update({"docs_answers": False}, "test")
+        self.assertNack(self.sheet(), "not_allowed", "off")
+
     def test_ticking_an_item_off_with_the_tap(self):
         from app.db import get_db_session
         from app.db.models import CommonItemAlias

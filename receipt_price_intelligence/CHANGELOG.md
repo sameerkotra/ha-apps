@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.6.0
+
+- **The shopping list in Household Docs**: a sheet in Household Docs can show the list's estimated total and how many
+  items are left (`=SHOPPING.TOTAL()`, `=SHOPPING.COUNT()`, also for one store) and an item's lowest price and store
+  (`=SHOPPING.PRICE("milk")`, `=SHOPPING.STORE("milk")`). **Admin → App settings → Other household apps** turns it
+  off (on by default).
+
 ## 1.5.2
 
 - **Updated dependencies:** FastAPI 0.162.0, python-multipart 0.0.33, Pydantic 2.14.2. Security and bug fixes; nothing changes in how the app works.

@@ -133,6 +133,17 @@ references are in [`docs/`](../docs): the API (`API.md`), the database (`DATABAS
   shown while the admin's switch is on; GET `/api/v1/me` `assistant`/`assistantOk`, PUT `/api/v1/me/assistant`
   `{assistantOk}`; off → `nack not_allowed person_off`). Links: the sidebar page from
   `assist_tools.sidebar_page`, with `/list` (the shopping list) or `/insights`.
+- It answers **Household Docs**' `receipt.sheet.get` (APP_MESSAGES_SPEC §6.9; for `=SHOPPING.TOTAL()`,
+  `=SHOPPING.COUNT()`, `=SHOPPING.PRICE()` and `=SHOPPING.STORE()` in a sheet; `app_messages.on_sheet`):
+  `{requested_by, items?: [names] (≤ 30, each 1–100)}` → `{currency, home, list: {count (not ticked off), total (each
+  priced item's cheapest price × quantity, `shoplist.get_list(online=False)`), unpriced, stores: [{name, count,
+  total}] (≤ 20)}, prices: [{item (as asked, duplicates in any case once), name (the item it is here — the
+  assistant's `_find_item` — or null), price, store (its cheapest now, `shoplist.cheapest(online=False)`; null when
+  none is known)}]}`. Only from `household_docs` (`nack not_allowed sender`); the person must have opened the app
+  (a `users` row; `nack not_allowed no_access`); one home (none → `not_found home`, several → `invalid home`);
+  `invalid items` / `invalid requested_by`. App settings → Other household apps → **Show the shopping list and
+  prices in Household Docs** (`docs_answers`, **on** by default) off → `nack not_allowed off`. Independent of the
+  assistant's switches.
 - **Sub-path links**: `/<page>/list`, `/receipts`, `/insights`, `/deals`, `/trip`, `/stores`. Home Assistant opens the
   start page; `app.js` loads `common/static/deeplink.js` (given the page by `/api/v1/me`'s `page`), which reads the
   rest of the path and goes to that page. A request for one of those paths reaching the app itself is redirected to
