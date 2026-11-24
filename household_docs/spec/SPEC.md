@@ -754,6 +754,7 @@ most 32 767 characters, a formula 8 192; 50 colour rules and 10 charts per tab; 
   same request (`data.key`), answers are deleted after an hour, refreshed every 5 minutes while in use. Refusals in
   plain words: not opened that app yet, *turned off* (its App setting *Show the shopping list and prices in Household
   Docs*), more than one home (`invalid home`), no home. `me.apps.receipts` says whether the app is there.
+  Both routes (`/api/splitpot/balance`, `/api/receipts/shopping`) are in `kids.BLOCKED`: children have no sheets.
 
 ### 8.3 `.csv` sheets
 - One tab; cells are values or `=` formulas (Excel and LibreOffice read those as formulas). Formats, widths, colours

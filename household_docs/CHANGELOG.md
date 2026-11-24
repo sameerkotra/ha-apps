@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.10.1
+
+- **Children's accounts**: asking Splitpot or Receipt Price Intelligence for a sheet's figures is refused for a child,
+  as sheets are (it made the automatic tests fail).
+
 ## 1.10.0
 
 - **The shopping list in a sheet**: `=SHOPPING.TOTAL()` (what the list will cost at the cheapest stores),

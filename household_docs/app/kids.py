@@ -7,7 +7,8 @@ An admin marks a person as a child (Admin → People). A child:
 - writes notes and checklists — no sheets (opening, saving, making, importing, exporting or converting one is
   refused, documents.py / sheets.py / docops.py / templates.py — Make a copy too: no sheet, no folder holding one);
 - can't share (Share…, Transfer, Send to chat with or without members' access), can't use AI, can't search with
-  regular expressions (search/engine.py).
+  regular expressions (search/engine.py), and can't ask Splitpot or Receipt Price Intelligence for a sheet's
+  figures (no sheets).
 
 Two layers: the routes in BLOCKED answer 403 to a child before anything else runs (auth.require_user); the
 routes in CHECKED are allowed but refuse the parts above where the content is known. Every other /api route a
@@ -28,6 +29,8 @@ BLOCKED = {
     ("POST", "/api/nodes/{node_id}/transfer"),
     ("GET", "/api/docs/{node_id}/export"), ("POST", "/api/docs/{node_id}/edit-copy"), ("POST", "/api/import"),
     ("POST", "/api/nodes/{node_id}/chat/chats"), ("POST", "/api/nodes/{node_id}/chat/card"),
+    # the other apps' figures for a sheet's formulas (§8.2): children have no sheets
+    ("POST", "/api/splitpot/balance"), ("POST", "/api/receipts/shopping"),
 }
 # every route under this prefix (the AI, §17.6)
 BLOCKED_PREFIXES = ("/api/ai",)
