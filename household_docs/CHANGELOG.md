@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.10.2
+
+- **Fixed:** a sheet using `=SPLITPOT.BALANCE()` or the `=SHOPPING.…()` functions opened **read only** after saving
+  ("Functions the app doesn't have"). The server's list of the functions it knows didn't have them; sheets already
+  showing that note open for editing again after the update.
+
 ## 1.10.1
 
 - **Children's accounts**: asking Splitpot or Receipt Price Intelligence for a sheet's figures is refused for a child,

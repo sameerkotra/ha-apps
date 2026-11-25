@@ -215,7 +215,8 @@ print(json.dumps({{"f": {{c: ws[c].value for c in ("B4", "C2", "E3", "E4", "B5",
 
     def test_function_lists_match_the_engine(self):
         js = read(os.path.join(HERE, "app", "static", "sheetcalc.js"))
-        names = set(re.findall(r'\bdef\("([A-Z]+)"', js))
+        names = set(re.findall(r'\bdef\("([A-Z][A-Z0-9.]*)"', js))   # dotted names too (SPLITPOT.BALANCE)
+        self.assertIn("SPLITPOT.BALANCE", names)
         self.assertEqual(names, set(M.KNOWN_FUNCTIONS))
 
     def test_formula_helpers(self):
@@ -242,6 +243,21 @@ class ForeignFiles(unittest.TestCase):
         self.assertFalse(out["owned"])
         cells = out["sheet"]["tabs"][0]["cells"]
         self.assertEqual(cells["B3"]["v"], "=SUM(B2:B2)")
+
+    def test_the_other_apps_functions_keep_it_editable(self):
+        """=SPLITPOT.BALANCE() and =SHOPPING.…() are the app's own functions: a file using them isn't read only."""
+        def formulas(wb, ws):
+            ws["C1"] = "=SPLITPOT.BALANCE()"
+            ws["C2"] = '=SHOPPING.TOTAL("Valuco")+SHOPPING.COUNT()+SHOPPING.PRICE("milk")'
+            ws["C3"] = '=SHOPPING.STORE("milk")'
+        out = self.features(foreign(formulas))
+        self.assertFalse(out["readOnly"], out["features"])
+        self.assertEqual(out["sheet"]["tabs"][0]["cells"]["C1"]["v"], "=SPLITPOT.BALANCE()")
+        sheet = M.clean_sheet(budget())
+        sheet["tabs"][0]["cells"]["Z1"] = {"v": '=SPLITPOT.BALANCE("Trip")'}
+        back = sheet_xlsx.read(sheet_xlsx.write(sheet, "EUR"))                # the app's own file, saved and opened
+        self.assertFalse(back["readOnly"], back["features"])
+        self.assertEqual(back["sheet"]["tabs"][0]["cells"]["Z1"]["v"], '=SPLITPOT.BALANCE("Trip")')
 
     def test_each_feature_makes_it_read_only(self):
         from openpyxl.chart import BarChart, Reference
